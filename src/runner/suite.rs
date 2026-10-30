@@ -58,7 +58,7 @@ pub async fn run(
             && target
                 .reset
                 .iter()
-                .any(|sql| sql.to_lowercase().contains("pg_terminate_backend"))
+                .any(|s| s.sql().to_lowercase().contains("pg_terminate_backend"))
         {
             eprintln!(
                 "warning: target '{}': reset terminates sessions, but the direct user has neither superuser \

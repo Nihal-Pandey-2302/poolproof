@@ -31,7 +31,51 @@ pub struct Target {
     /// Statements run on `direct` before every run to drop state leaked on the
     /// pooler's server connections, usually by terminating them. Without it,
     /// one scenario's leak can change the next one's result.
-    pub reset: Vec<String>,
+    pub reset: Vec<Statement>,
+}
+
+/// A SQL statement to run on Postgres. Errors show it as written, with `${NAME}`
+/// unexpanded, so a value substituted from the environment never reaches output.
+#[derive(Clone)]
+pub struct Statement {
+    sql: String,
+    written: String,
+}
+
+impl Statement {
+    /// A statement without substitutions, e.g. a scenario's setup.
+    pub fn plain(sql: &str) -> Self {
+        Statement {
+            sql: sql.to_string(),
+            written: sql.to_string(),
+        }
+    }
+
+    pub fn plain_all(sqls: &[String]) -> Vec<Self> {
+        sqls.iter().map(|sql| Self::plain(sql)).collect()
+    }
+
+    pub fn sql(&self) -> &str {
+        &self.sql
+    }
+
+    /// Whether anything was substituted. A server error can quote the statement's
+    /// text, so then only its SQLSTATE should be shown.
+    pub fn has_substitutions(&self) -> bool {
+        self.sql != self.written
+    }
+}
+
+impl fmt::Display for Statement {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.written)
+    }
+}
+
+impl fmt::Debug for Statement {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
+    }
 }
 
 /// A target as written in the file, before `${VAR}` substitution and URL parsing.
@@ -112,7 +156,12 @@ impl Target {
             reset: t
                 .reset
                 .iter()
-                .map(|sql| expand_vars(sql, env, |v| v.to_string(), &|_, _| true).context("reset"))
+                .map(|sql| {
+                    Ok(Statement {
+                        sql: expand_vars(sql, env, |v| v.to_string(), &|_, _| true).context("reset")?,
+                        written: sql.clone(),
+                    })
+                })
                 .collect::<Result<_>>()?,
             name: t.name,
             mode: t.mode,
