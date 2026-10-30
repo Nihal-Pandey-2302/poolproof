@@ -38,3 +38,57 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+
+  # Supavisor keeps tenants in its own metadata database, separate from `app`.
+  supavisor-meta:
+    image: postgres:17.11
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: supavisor
+    volumes:
+      - ./supavisor/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "supavisor"]
+      interval: 1s
+      retries: 30
+
+  supavisor:
+    image: supabase/supavisor:2.9.13
+    command: sh -c "/app/bin/migrate && /app/bin/server"
+    environment:
+      PORT: "4000"
+      PROXY_PORT_SESSION: "5452"
+      PROXY_PORT_TRANSACTION: "6543"
+      DATABASE_URL: ecto://postgres:postgres@supavisor-meta:5432/supavisor
+      CLUSTER_POSTGRES: "true"
+      # Dev-only secrets, as in Supavisor's own docker-compose.yml.
+      SECRET_KEY_BASE: "12345678901234567890121234567890123456789012345678903212345678901234567890123456789032123456789012345678901234567890323456789032"
+      VAULT_ENC_KEY: "12345678901234567890123456789032"
+      API_JWT_SECRET: dev
+      METRICS_JWT_SECRET: dev
+      REGION: local
+      ERL_AFLAGS: -proto_dist inet_tcp
+    ports:
+      - "56434:6543"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      supavisor-meta:
+        condition: service_healthy
+
+  # One-shot: creates the `pp` tenant (pool size 1, transaction mode). Clients connect
+  # as `postgres.pp`.
+  supavisor-tenant:
+    image: curlimages/curl:8.11.1
+    entrypoint: ["/add-tenant.sh"]
+    volumes:
+      - ./supavisor/add-tenant.sh:/add-tenant.sh:ro
+      - ./supavisor/tenant.json:/tenant.json:ro
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/done"]
+      interval: 1s
+      retries: 120
+    depends_on:
+      - supavisor
+

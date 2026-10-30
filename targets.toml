@@ -18,3 +18,11 @@ pooler = "postgres://postgres:postgres@127.0.0.1:56433/app"
 direct = "postgres://postgres:postgres@127.0.0.1:55432/app"
 mode = "transaction"
 reset = ["SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'"]
+
+[[target]]
+name = "supavisor-2.9.13-txn"
+# Supavisor finds the tenant from the user name: <user>.<tenant>.
+pooler = "postgres://postgres.pp:postgres@127.0.0.1:56434/app"
+direct = "postgres://postgres:postgres@127.0.0.1:55432/app"
+mode = "transaction"
+reset = ["SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'"]

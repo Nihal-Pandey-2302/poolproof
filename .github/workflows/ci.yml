@@ -19,7 +19,7 @@ jobs:
       - run: cargo test
 
       - name: Start test bed
-        run: docker compose -f docker/compose.yml up -d --wait
+        run: docker compose -f docker/compose.yml up -d --wait --wait-timeout 300
 
       - name: Run scenarios
         run: |
