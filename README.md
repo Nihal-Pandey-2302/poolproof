@@ -41,10 +41,9 @@ A failure is one of three kinds:
 - **error**: the pooler refused with an error where Postgres didn't. Loud, so you notice.
 - **hang**: no reply within 10 seconds, or replies that stop short of what Postgres sent.
 
-ERROR means there was nothing to compare: a target URL didn't answer before the run, the
-Postgres side of a step didn't get a real reply (connect failure, timeout, lost
-connection), or setup, teardown or reset failed. It only stops that scenario, and `run`
-exits 1 as for a FAIL.
+ERROR means there was nothing to compare: a target URL didn't answer before the run, a
+step on the Postgres side got no reply (timeout, connection failure), or setup, teardown
+or reset failed. It only stops that scenario, and `run` exits 1 as for a FAIL.
 
 ```text
 $ poolproof run --filter multi-statement
