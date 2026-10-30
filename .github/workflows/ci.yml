@@ -24,6 +24,15 @@ jobs:
       # RESULTS.md must be what the committed results render to.
       - run: cargo run -q -- report results/postgres-*.json | diff RESULTS.md -
 
+  # Advisories, licenses, banned crates and sources (deny.toml).
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check all
+
   # Every scenario against every pooler, once per Postgres version.
   suite:
     needs: test
