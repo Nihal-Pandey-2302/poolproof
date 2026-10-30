@@ -1,7 +1,9 @@
 # scan corpus
 
 Queries that real ORMs, drivers and tools send, with the findings `poolproof scan`
-should give for each. One file per source. `tests/scan_corpus.rs` runs every entry.
+should give for each. One file per source. `tests/scan_corpus.rs` runs every entry
+through the input path its `form` names (a pg_stat_statements CSV, a stderr log line or
+a SQL file), then the rules.
 
 ```toml
 [[query]]

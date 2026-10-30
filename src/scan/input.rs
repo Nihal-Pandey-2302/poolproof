@@ -50,11 +50,11 @@ pub fn load_queries(path: &Path, format: Option<InputFormat>) -> Result<Vec<Quer
         let file = File::open(path).with_context(|| format!("reading {name}"))?;
         Box::new(BufReader::with_capacity(1 << 16, file))
     };
-    load(reader, format).with_context(|| format!("reading {name}"))
+    read_queries(reader, format).with_context(|| format!("reading {name}"))
 }
 
-/// `format` None means a CSV file of either kind.
-fn load(mut reader: impl BufRead, format: Option<InputFormat>) -> Result<Vec<Query>> {
+/// Like [`load_queries`], from any reader. `format` None means a CSV file of either kind.
+pub fn read_queries(mut reader: impl BufRead, format: Option<InputFormat>) -> Result<Vec<Query>> {
     let mut queries = Queries::default();
     let log_lines = match format {
         None => load_csv(reader, None, &mut queries)?,
@@ -290,7 +290,7 @@ mod tests {
     use super::*;
 
     fn read(text: &str, format: Option<InputFormat>) -> Result<Vec<(String, u64, usize)>> {
-        Ok(load(text.as_bytes(), format)?
+        Ok(read_queries(text.as_bytes(), format)?
             .into_iter()
             .map(|q| (q.text, q.calls, q.line))
             .collect())
@@ -347,7 +347,7 @@ mod tests {
         let mut log = b"x LOG:  statement: SELECT '".to_vec();
         log.extend_from_slice(&[0xff, 0xfe]);
         log.extend_from_slice(b"'\nx LOG:  statement: LISTEN a\n");
-        let got: Vec<_> = load(log.as_slice(), Some(InputFormat::Log)).unwrap();
+        let got: Vec<_> = read_queries(log.as_slice(), Some(InputFormat::Log)).unwrap();
         assert_eq!(got.len(), 2);
         assert_eq!(got[1].text, "LISTEN a");
     }
