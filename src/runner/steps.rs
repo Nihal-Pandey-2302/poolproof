@@ -11,22 +11,11 @@ use super::raw::{ExchangeOpts, RawConn};
 use super::{Outcome, Timeouts};
 use crate::scenario::{Action, Scenario};
 
-/// Every client connects either straight to Postgres or through the pooler, never
-/// both, so all of a client's steps must agree on `direct`.
-fn check_clients(scenario: &Scenario) -> Result<()> {
-    let mut direct: HashMap<&str, bool> = HashMap::new();
-    for step in &scenario.steps {
-        if *direct.entry(&step.client).or_insert(step.direct) != step.direct {
-            bail!("client '{}' mixes direct and pooled steps", step.client);
-        }
-    }
-    Ok(())
-}
-
 /// Run a scenario's steps. `pooled` is where normal clients connect; `direct` is
 /// plain Postgres. For the baseline run both are the same URL.
 pub async fn run_steps(scenario: &Scenario, pooled: &str, direct: &str, t: &Timeouts) -> Result<Vec<Outcome>> {
-    check_clients(scenario)?;
+    // Loading already checks this; scenarios built in code don't go through loading.
+    scenario.check_clients()?;
     // In the baseline every client is on Postgres.
     let on_postgres = |step_direct: bool| step_direct || pooled == direct;
     let mut conns: HashMap<&str, Conn> = HashMap::new();
@@ -241,13 +230,6 @@ pub async fn run_steps(scenario: &Scenario, pooled: &str, direct: &str, t: &Time
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn bundled_scenarios_keep_clients_on_one_side() {
-        for scenario in crate::scenario::bundled().unwrap() {
-            check_clients(&scenario).unwrap_or_else(|e| panic!("{}: {e}", scenario.name));
-        }
-    }
 
     #[tokio::test]
     async fn send_client_cannot_mix_direct_and_pooled() {

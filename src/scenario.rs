@@ -219,6 +219,20 @@ impl Step {
     }
 }
 
+impl Scenario {
+    /// Every client connects either straight to Postgres or through the pooler, never
+    /// both, so all of a client's steps must agree on `direct`.
+    pub fn check_clients(&self) -> Result<()> {
+        let mut direct = std::collections::HashMap::new();
+        for step in &self.steps {
+            if *direct.entry(step.client.as_str()).or_insert(step.direct) != step.direct {
+                bail!("client '{}' mixes direct and pooled steps", step.client);
+            }
+        }
+        Ok(())
+    }
+}
+
 /// The scenarios in `scenarios/`, embedded at build time as (file name, contents).
 const BUNDLED: &[(&str, &str)] = include!(concat!(env!("OUT_DIR"), "/bundled.rs"));
 
@@ -230,6 +244,7 @@ fn parse(origin: &str, text: &str) -> Result<Scenario> {
     for step in &scenario.steps {
         step.action().with_context(|| format!("in {origin}"))?;
     }
+    scenario.check_clients().with_context(|| format!("in {origin}"))?;
     Ok(scenario)
 }
 
@@ -265,6 +280,17 @@ mod tests {
         let bundled = names(bundled().unwrap());
         assert!(!bundled.is_empty());
         assert_eq!(bundled, names(load_dir(&dir).unwrap()));
+    }
+
+    #[test]
+    fn loading_rejects_a_client_on_both_sides() {
+        let text = "name = 'm'\ndescription = ''\n[[step]]\nclient = 'a'\nsimple = 'SELECT 1'\n\
+                    [[step]]\nclient = 'a'\ndirect = true\nsimple = 'SELECT 1'\n";
+        let err = parse("m.toml", text).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("client 'a' mixes direct and pooled steps"),
+            "{err:#}"
+        );
     }
 
     #[test]
