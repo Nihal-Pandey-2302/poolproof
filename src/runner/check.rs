@@ -1,4 +1,6 @@
-use anyhow::{Context, Result};
+use std::time::Duration;
+
+use anyhow::{Context, Result, anyhow};
 use tokio::time::timeout;
 
 use super::compare::{FailKind, Mismatch, Verdict, baseline_failure};
@@ -13,20 +15,39 @@ pub const POOLER_UNREACHABLE: &str = "target unreachable: pooler:";
 /// Same for the target's direct (plain Postgres) URL.
 pub const DIRECT_UNREACHABLE: &str = "target unreachable: direct:";
 
+/// Limits for setup, teardown and reset statements. A pooler can leak a lock (some
+/// scenarios test exactly that), and a teardown blocked on it must fail, not hang the
+/// run. The statement timeout stays well above reset's 5 s wait per terminated backend.
+const DIRECT_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
+const DIRECT_STATEMENT_TIMEOUT: Duration = Duration::from_secs(30);
+/// Extra time on top of the statement timeout before giving up on the server itself.
+const DIRECT_GRACE: Duration = Duration::from_secs(5);
+
 async fn run_direct(url: &str, statements: &[String]) -> Result<()> {
     if statements.is_empty() {
         return Ok(());
     }
     let (client, driver, _) = connect(url).await?;
+    let limits = format!(
+        "SET lock_timeout = {}; SET statement_timeout = {}",
+        DIRECT_LOCK_TIMEOUT.as_millis(),
+        DIRECT_STATEMENT_TIMEOUT.as_millis()
+    );
+    execute(&client, &limits).await?;
     for sql in statements {
-        client
-            .batch_execute(sql)
-            .await
-            .with_context(|| format!("running `{sql}`"))?;
+        execute(&client, sql).await?;
     }
     drop(client);
-    let _ = driver.await;
+    let _ = timeout(STEP_TIMEOUT, driver).await;
     Ok(())
+}
+
+async fn execute(client: &tokio_postgres::Client, sql: &str) -> Result<()> {
+    let limit = DIRECT_STATEMENT_TIMEOUT + DIRECT_GRACE;
+    match timeout(limit, client.batch_execute(sql)).await {
+        Ok(res) => res.with_context(|| format!("running `{sql}`")),
+        Err(_) => Err(anyhow!("running `{sql}`: no reply within {limit:?}")),
+    }
 }
 
 /// Connect and run `SELECT 1` once.
@@ -211,6 +232,46 @@ mod tests {
             "took {:?}",
             started.elapsed()
         );
+    }
+
+    /// A Postgres URL for tests that need a real server, e.g. a throwaway container.
+    fn test_pg() -> String {
+        std::env::var("POOLPROOF_TEST_PG").expect("set POOLPROOF_TEST_PG to a Postgres URL")
+    }
+
+    #[tokio::test]
+    #[ignore = "needs POOLPROOF_TEST_PG"]
+    async fn teardown_blocked_by_a_held_lock_is_an_error() {
+        let url = test_pg();
+        let (holder, driver, _) = connect(&url).await.unwrap();
+        // Separate queries: a BEGIN later in the same string would take the CREATE
+        // into its transaction, and the table wouldn't exist for anyone else.
+        holder
+            .batch_execute("DROP TABLE IF EXISTS pp_c3_lock; CREATE TABLE pp_c3_lock ()")
+            .await
+            .unwrap();
+        holder.batch_execute("BEGIN; LOCK pp_c3_lock").await.unwrap();
+
+        let s = scenario("name = 't'\ndescription = 't'\nteardown = ['DROP TABLE pp_c3_lock']\nstep = []\n");
+        let started = Instant::now();
+        let checked = timeout(Duration::from_secs(30), check(&s, &url, &url, &[]))
+            .await
+            .expect("teardown hung");
+        let reason = reason(&checked);
+        assert!(
+            reason.starts_with("teardown (baseline): running `DROP TABLE pp_c3_lock`"),
+            "{reason}"
+        );
+        assert!(reason.contains("lock timeout"), "{reason}");
+        assert!(
+            started.elapsed() < DIRECT_STATEMENT_TIMEOUT,
+            "took {:?}",
+            started.elapsed()
+        );
+
+        holder.batch_execute("ROLLBACK; DROP TABLE pp_c3_lock").await.unwrap();
+        drop(holder);
+        let _ = driver.await;
     }
 
     #[tokio::test]
