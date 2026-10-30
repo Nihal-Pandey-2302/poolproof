@@ -70,11 +70,13 @@ jobs:
       # whose worst case can differ between machines. Error text can depend on timing too.
       - name: Compare with committed results
         run: |
-          verdicts='[.scenarios[] | select(.repeat > 1) | .name] as $timing
-            | .results[] | select(.scenario as $s | $timing | index($s) | not)
+          # The timing list comes from this run, so a scenario that just got repeat > 1
+          # is skipped on both sides before results/ is regenerated.
+          timing=$(jq -c '[.scenarios[] | select(.repeat > 1) | .name]' new.json)
+          verdicts='.results[] | select(.scenario as $s | $timing | index($s) | not)
             | "\(.target) \(.scenario) \(.result) \(.mismatch.kind // "")"'
-          if ! diff <(jq -r "$verdicts" results/postgres-${{ matrix.postgres }}.json | sort) \
-                    <(jq -r "$verdicts" new.json | sort); then
+          if ! diff <(jq -r --argjson timing "$timing" "$verdicts" results/postgres-${{ matrix.postgres }}.json | sort) \
+                    <(jq -r --argjson timing "$timing" "$verdicts" new.json | sort); then
             echo "::error::Verdicts changed on Postgres ${{ matrix.postgres }}. Run scripts/update-results.sh and commit."
             exit 1
           fi
