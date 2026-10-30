@@ -226,21 +226,6 @@ fn baseline_diff(scenario: &Scenario, first: &[Outcome], second: &[Outcome]) -> 
 
 /// Compare one pooler-side run with the baseline outcomes.
 fn compare(scenario: &Scenario, expected: &[Outcome], actual: Vec<Outcome>) -> Checked {
-    // A direct step that couldn't reach Postgres says nothing about the pooler. A
-    // TIMEOUT stays a failure: a lock the pooler leaked can block a direct observer.
-    let direct_failed = scenario.steps.iter().zip(&actual).position(|(step, outcome)| {
-        step.direct && matches!(outcome, Outcome::Error { code, .. } if code == "CONNECT" || code == "CLIENT")
-    });
-    if let Some(i) = direct_failed {
-        return Checked {
-            verdict: Verdict::Error {
-                reason: format!("postgres side failed at step {} (target run): {}", i + 1, actual[i]),
-            },
-            steps: expected.iter().cloned().zip(actual).collect(),
-            runs: 1,
-            failures: 0,
-        };
-    }
     let mismatch = scenario.steps.iter().enumerate().find_map(|(i, step)| {
         (!expected[i].matches(&actual[i], step.compare)).then(|| Mismatch {
             step: i + 1,
@@ -250,6 +235,22 @@ fn compare(scenario: &Scenario, expected: &[Outcome], actual: Vec<Outcome>) -> C
             actual: actual[i].clone(),
         })
     });
+    // A direct step that couldn't reach Postgres says nothing about the pooler, unless
+    // the pooler already went wrong at an earlier step. A TIMEOUT stays a failure: a
+    // lock the pooler leaked can block a direct observer.
+    if let Some(m) = &mismatch
+        && scenario.steps[m.step - 1].direct
+        && matches!(&m.actual, Outcome::Error { code, .. } if code == "CONNECT" || code == "CLIENT")
+    {
+        return Checked {
+            verdict: Verdict::Error {
+                reason: format!("postgres side failed at step {} (target run): {}", m.step, m.actual),
+            },
+            steps: expected.iter().cloned().zip(actual).collect(),
+            runs: 1,
+            failures: 0,
+        };
+    }
     let verdict = match mismatch {
         Some(mismatch) => Verdict::Fail { mismatch },
         None => Verdict::Pass,
@@ -330,6 +331,21 @@ mod tests {
                 "{reason}"
             );
         }
+        // A pooler bug at an earlier step isn't hidden by a later direct failure.
+        let s2 = scenario(
+            "name = 't'\ndescription = 't'\n[[step]]\nclient = 'app'\nsimple = 'SELECT 1'\n\
+             [[step]]\nclient = 'pg'\ndirect = true\nsimple = 'SELECT 1'\n",
+        );
+        let one = Outcome::Ok {
+            rows: vec![vec![Some("1".into())]],
+            tags: vec![1],
+        };
+        let checked = compare(
+            &s2,
+            &[one.clone(), one.clone()],
+            vec![Outcome::empty(), Outcome::error("CONNECT", "refused")],
+        );
+        assert!(matches!(&checked.verdict, Verdict::Fail { mismatch } if mismatch.step == 1));
         // A direct observer blocked by a lock the pooler leaked is the pooler's fault.
         let checked = compare(&s, &expected, vec![Outcome::error("TIMEOUT", "no reply")]);
         assert!(matches!(checked.verdict, Verdict::Fail { .. }));
