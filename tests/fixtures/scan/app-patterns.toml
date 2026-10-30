@@ -71,7 +71,6 @@ expect = ["discard"]
 sql = "LOAD 'auto_explain'"
 form = "pgss"
 expect = ["load"]
-pending = "F7"
 
 [[query]]
 sql = "PREPARE TRANSACTION 'order-42'"

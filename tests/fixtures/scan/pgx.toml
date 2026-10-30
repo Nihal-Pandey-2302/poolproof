@@ -15,7 +15,6 @@ note = "CopyFrom"
 sql = 'deallocate all'
 form = "pgss"
 expect = ["deallocate-all"]
-pending = "F7"
 note = "Conn.DeallocateAll, used to recover from 'prepared statement does not exist' behind PgBouncer"
 
 [[query]]

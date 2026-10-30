@@ -27,7 +27,7 @@ struct Entry {
 
 const FORMS: &[&str] = &["pgss", "pgss-17", "pgss-18", "log", "sql"];
 /// Rule IDs reserved for rules not written yet, so `expect` can name them.
-const PLANNED_RULES: &[&str] = &["deallocate-all", "load"];
+const PLANNED_RULES: &[&str] = &[];
 
 #[test]
 fn corpus() {

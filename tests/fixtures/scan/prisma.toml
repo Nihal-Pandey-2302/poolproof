@@ -28,7 +28,6 @@ note = "interactive transaction"
 sql = 'DEALLOCATE ALL'
 form = "pgss"
 expect = ["deallocate-all"]
-pending = "F7"
 note = "sent with ?pgbouncer=true to clear prepared statements on the server connection"
 
 [[query]]

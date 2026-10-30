@@ -219,6 +219,26 @@ pub fn scan(queries: &[Query]) -> Report {
                         prepare.name
                     ),
                 ),
+                NodeEnum::DeallocateStmt(deallocate) if deallocate.isall => push(
+                    "deallocate-all",
+                    Severity::Warn,
+                    "DEALLOCATE ALL drops every prepared statement on the server connection, \
+                     including other clients' when it is shared. Poolers that track protocol-level \
+                     prepared statements can lose track of them. Drivers send it to recover from \
+                     \"prepared statement does not exist\"; with a pooler that tracks statements \
+                     it is usually not needed."
+                        .to_string(),
+                ),
+                NodeEnum::LoadStmt(load) => push(
+                    "load",
+                    Severity::Warn,
+                    format!(
+                        "LOAD '{}' loads a library into the server process for the rest of the \
+                         session. Under transaction pooling, later transactions may run on a \
+                         connection without it, and other clients get it where they didn't ask.",
+                        load.filename
+                    ),
+                ),
                 _ => {}
             }
         }
@@ -369,6 +389,41 @@ mod tests {
                 .unwrap()
                 .contains("set_config(..., false)")
         );
+    }
+
+    #[test]
+    fn flags_deallocate_all_and_load() {
+        assert_eq!(rules("DEALLOCATE ALL"), vec!["deallocate-all"]);
+        assert_eq!(rules("deallocate prepare all"), vec!["deallocate-all"]);
+        assert_eq!(rules("LOAD 'auto_explain'"), vec!["load"]);
+        // Removing one SQL-level statement by name only touches that statement.
+        assert!(rules("DEALLOCATE get_user").is_empty());
+    }
+
+    #[test]
+    fn ignores_session_independent_statements() {
+        // COMMIT PREPARED works from any connection.
+        assert!(rules("PREPARE TRANSACTION 'order-42'").is_empty());
+        assert!(rules("COMMIT PREPARED 'order-42'").is_empty());
+        // Function-level SET applies only during the call; ALTER ROLE ... SET at next login.
+        assert!(rules("ALTER FUNCTION app.audit() SET search_path = app, pg_temp").is_empty());
+        assert!(rules("CREATE FUNCTION f() RETURNS int LANGUAGE sql SET work_mem = '64MB' AS 'SELECT 1'").is_empty());
+        assert!(rules("ALTER ROLE app SET statement_timeout = '30s'").is_empty());
+        assert!(rules("ALTER DATABASE app SET timezone = 'UTC'").is_empty());
+    }
+
+    #[test]
+    fn session_authorization_is_a_session_set() {
+        let findings = scan(&[query("SET SESSION AUTHORIZATION app_user", 1)]).findings;
+        assert_eq!(findings.iter().map(|f| f.rule).collect::<Vec<_>>(), vec!["session-set"]);
+        assert_eq!(
+            findings[0].scenarios,
+            vec![
+                "set-role-isolated-between-clients",
+                "set-role-reset-after-pinned-disconnect"
+            ]
+        );
+        assert_eq!(rules("RESET SESSION AUTHORIZATION"), vec!["session-set"]);
     }
 
     #[test]
