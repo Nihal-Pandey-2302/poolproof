@@ -204,6 +204,8 @@ mod tests {
         let t = for_scenario(&cli, &s);
         assert_eq!(t.step, Duration::from_millis(1500));
         assert_eq!(Timeouts { step: cli.step, ..t }, cli);
+        // Housekeeping waits keep their own timeout, however short the step is.
+        assert_eq!(t.housekeeping, cli.housekeeping);
     }
 
     #[test]

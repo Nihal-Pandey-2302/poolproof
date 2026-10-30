@@ -35,7 +35,7 @@ async fn run_direct(url: &str, statements: &[String], t: &Timeouts) -> Result<()
     // Close the session even after an error, so it's gone before the next phase
     // (e.g. a failed setup's session while teardown runs).
     drop(client);
-    let _ = timeout(t.step, driver).await;
+    let _ = timeout(t.housekeeping, driver).await;
     res
 }
 
@@ -50,9 +50,9 @@ async fn execute(client: &tokio_postgres::Client, sql: &str, t: &Timeouts) -> Re
 /// Connect and run `SELECT 1` once.
 async fn probe(url: &str, t: &Timeouts) -> Result<()> {
     let (client, driver, _) = connect(url, t).await?;
-    let res = timeout(t.step, client.simple_query("SELECT 1")).await;
+    let res = timeout(t.housekeeping, client.simple_query("SELECT 1")).await;
     drop(client);
-    let _ = timeout(t.step, driver).await;
+    let _ = timeout(t.housekeeping, driver).await;
     res.context("SELECT 1 timed out")??;
     Ok(())
 }

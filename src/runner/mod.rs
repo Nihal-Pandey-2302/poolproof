@@ -22,8 +22,14 @@ pub use pg::server_version;
 pub struct Timeouts {
     /// Connecting: TCP connect, startup and authentication together, one deadline.
     pub connect: Duration,
-    /// The reply to one step.
+    /// The reply to one step: the step timeout that `--step-timeout` and a scenario's
+    /// `timeout_ms` set. Only waits for replies the scenario asked for use it.
     pub step: Duration,
+    /// The harness's own waits: a backend's pid, a disconnected backend going away,
+    /// a driver finishing, probes and `SHOW server_version`. Never shortened per
+    /// scenario: if a disconnect wait gave up early, a baseline client's lock or temp
+    /// table could still be visible to the next step.
+    pub housekeeping: Duration,
     /// For `send` steps without a Sync: how long the server must be quiet before the
     /// replies are considered complete.
     pub quiet: Duration,
@@ -47,6 +53,7 @@ impl Default for Timeouts {
         Timeouts {
             connect: Duration::from_secs(10),
             step: Duration::from_secs(10),
+            housekeeping: Duration::from_secs(10),
             quiet: Duration::from_millis(500),
             notify: Duration::from_secs(1),
             ready: Duration::from_secs(10),
