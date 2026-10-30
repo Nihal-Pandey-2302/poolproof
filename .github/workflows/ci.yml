@@ -98,7 +98,14 @@ jobs:
           # The timing list comes from this run, so a scenario that just got repeat > 1
           # is skipped on both sides before results/ is regenerated.
           timing=$(jq -c '[.scenarios[] | select(.repeat > 1) | .name]' new.json)
-          flaky=$(grep -v '^#' results/known-flaky.txt | awk 'NF == 2 { print $1 " " $2 }' | jq -Rsc 'split("\n") | map(select(. != ""))')
+          # A malformed line would silently skip nothing, so it fails the step instead.
+          awk 'NF && $1 !~ /^#/ && NF != 2 { bad = 1
+                 printf "::error file=%s,line=%d::expected \"<target> <scenario>\", got: %s\n", FILENAME, FNR, $0 }
+               END { exit bad }' results/known-flaky.txt
+          flaky=$(awk 'NF == 2 && $1 !~ /^#/ { print $1 " " $2 }' results/known-flaky.txt | jq -Rsc 'split("\n") | map(select(. != ""))')
+          if [ "$flaky" != "[]" ]; then
+            { echo "### Not compared (results/known-flaky.txt)"; jq -r '.[] | "- \(.)"' <<<"$flaky"; } >> "$GITHUB_STEP_SUMMARY"
+          fi
           verdicts='.results[] | select(.scenario as $s | $timing | index($s) | not)
             | select("\(.target) \(.scenario)" as $k | $flaky | index($k) | not)
             | "\(.target) \(.scenario) \(.result) \(.mismatch.kind // "")"'
