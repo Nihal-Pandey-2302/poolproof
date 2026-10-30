@@ -1,0 +1,36 @@
+name = "cancel-under-saturated-pool"
+description = "A CancelRequest must still cancel the query when other clients are queued for a server connection."
+refs = ["https://github.com/pgdogdev/pgdog/issues/1362"]
+
+# a holds the only server connection in a transaction; b queues behind it.
+[[step]]
+client = "a"
+simple = "BEGIN"
+
+[[step]]
+client = "a"
+simple = "SELECT pg_sleep(8)::text"
+background = true
+
+[[step]]
+client = "b"
+simple = "SELECT pg_sleep(1)::text"
+background = true
+delay_ms = 200
+
+[[step]]
+client = "a"
+cancel = true
+delay_ms = 800
+
+[[step]]
+client = "a"
+wait = true
+
+[[step]]
+client = "a"
+simple = "ROLLBACK"
+
+[[step]]
+client = "b"
+wait = true

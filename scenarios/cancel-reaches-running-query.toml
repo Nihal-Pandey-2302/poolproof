@@ -1,0 +1,16 @@
+name = "cancel-reaches-running-query"
+description = "A CancelRequest must cancel the client's running query."
+
+[[step]]
+client = "a"
+simple = "SELECT pg_sleep(8)::text"
+background = true
+
+[[step]]
+client = "a"
+cancel = true
+delay_ms = 500
+
+[[step]]
+client = "a"
+wait = true

@@ -1,0 +1,16 @@
+name = "search-path-isolated-between-clients"
+description = "A client's empty search_path must still be empty after another client changed it."
+# Empty is the value pg_dump sets. On Postgres 18 with more than one server connection,
+# PgBouncer 1.26 replays it as `SET search_path=;` (pgbouncer#1663); the test bed is 17.
+
+[[step]]
+client = "a"
+simple = "SET search_path = ''"
+
+[[step]]
+client = "b"
+simple = "SET search_path = public"
+
+[[step]]
+client = "a"
+simple = "SHOW search_path"

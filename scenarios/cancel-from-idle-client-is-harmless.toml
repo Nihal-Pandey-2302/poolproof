@@ -1,0 +1,22 @@
+name = "cancel-from-idle-client-is-harmless"
+description = "A CancelRequest from a client with no running query must not cancel another client's query."
+# Deterministic form of a race: the server connection a just used now runs b's query.
+refs = ["https://github.com/pgdogdev/pgdog/issues/1505"]
+
+[[step]]
+client = "a"
+simple = "SELECT 'a done'::text"
+
+[[step]]
+client = "b"
+simple = "SELECT pg_sleep(2)::text"
+background = true
+
+[[step]]
+client = "a"
+cancel = true
+delay_ms = 300
+
+[[step]]
+client = "b"
+wait = true

@@ -1,0 +1,15 @@
+name = "listen-notify-delivered"
+description = "A client that ran LISTEN must receive NOTIFY messages sent by another client."
+refs = ["https://github.com/pgbouncer/pgbouncer/issues/655"]
+
+[[step]]
+client = "a"
+simple = "LISTEN pp_chan"
+
+[[step]]
+client = "b"
+simple = "NOTIFY pp_chan, 'hello'"
+
+[[step]]
+client = "a"
+notifications = true

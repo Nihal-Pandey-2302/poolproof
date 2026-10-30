@@ -1,0 +1,16 @@
+name = "aborted-transaction-not-reused"
+description = "A client that disconnects inside an aborted transaction must not pass it to the next client."
+refs = ["https://github.com/pgbouncer/pgbouncer/issues/1415"]
+
+# The timeout aborts the transaction and the rest of the string, so COMMIT never runs.
+[[step]]
+client = "a"
+simple = "BEGIN; SET LOCAL statement_timeout = 100; SELECT pg_sleep(1); COMMIT"
+
+[[step]]
+client = "a"
+disconnect = true
+
+[[step]]
+client = "b"
+simple = "SELECT 'b ok'::text"

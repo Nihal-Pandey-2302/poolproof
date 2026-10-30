@@ -106,19 +106,33 @@ client = "b"
 simple = "SELECT count(*) FROM pp_tmp"
 ```
 
-Step actions: `simple` (simple query protocol, can hold several statements), `prepare` +
-`name` and `execute` (extended protocol), `disconnect`. Adding `abandon_after_ms` to a
-`simple` step drops the connection without a goodbye if the query is still running after
-that long, like a client that crashed or timed out. Per step, `compare` can be `full`
-(default), `status` or `ignore`. Columns from `execute` should be cast to `text`.
+Step actions:
+
+- `simple`: simple query protocol, can hold several statements.
+- `prepare` + `name`, then `execute`: extended protocol. Cast columns to `text`.
+- `disconnect`: close the connection cleanly.
+- `wait`: collect the result of this client's `background` query.
+- `cancel`: send a CancelRequest with this client's key, through the same pooler.
+- `notifications`: the NOTIFY messages this client received since the last such step.
+
+Options on a `simple` step: `background = true` starts the query and moves on, so other
+clients can act while it runs. `abandon_after_ms` drops the connection without a goodbye
+if the query is still running after that long, like a client that crashed or timed out.
+
+Options on any step: `delay_ms` sleeps first, e.g. so a cancel lands while a query runs.
+`compare` can be `full` (default), `status` or `ignore`.
+
+`poolproof run -v --filter <name>` prints every step's result on Postgres and through the
+pooler. Use it on a new scenario: a PASS only means something if Postgres did what you
+expected.
 
 The best scenarios come from real bug reports. If your pooler bit you, a scenario with a
 link to the issue is the most useful contribution.
 
 ## Status
 
-Early. Not covered yet: Supavisor and RDS Proxy in the test bed, cancel requests,
-`LISTEN`/`NOTIFY` delivery, statement name collisions at the protocol level, and TLS.
+Early. Not covered yet: Supavisor and RDS Proxy in the test bed, statement name
+collisions at the protocol level, COPY, and TLS.
 
 ## License
 

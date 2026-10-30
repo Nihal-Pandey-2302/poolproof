@@ -1,15 +1,18 @@
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
-use tokio_postgres::{Client, NoTls, SimpleQueryMessage, Statement};
+use tokio_postgres::{AsyncMessage, Client, NoTls, SimpleQueryMessage, Statement};
 
 use crate::scenario::{Action, Compare, Scenario};
 
 const STEP_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long a `notifications` step waits for the first NOTIFY to arrive.
+const NOTIFY_WAIT: Duration = Duration::from_secs(1);
 /// How long to wait for the pooler to answer again after a reset.
 const READY_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -75,21 +78,47 @@ impl std::fmt::Display for Outcome {
     }
 }
 
+/// NOTIFY messages received on a connection, as (channel, payload) rows.
+type Notices = Arc<Mutex<Vec<Vec<Option<String>>>>>;
+
 struct Conn {
-    client: Client,
+    client: Arc<Client>,
     driver: JoinHandle<()>,
     direct: bool,
     statements: HashMap<String, Statement>,
+    /// The query started by a `background` step, if not yet waited for.
+    pending: Option<JoinHandle<Outcome>>,
+    notices: Notices,
 }
 
-async fn connect(url: &str) -> Result<(Client, JoinHandle<()>)> {
-    let (client, connection) = timeout(STEP_TIMEOUT, tokio_postgres::connect(url, NoTls))
+impl Conn {
+    /// Close the connection and wait for Terminate to go out, so the pooler sees the
+    /// disconnect before the next step runs.
+    async fn close(self) {
+        if let Some(pending) = self.pending {
+            pending.abort();
+        }
+        drop(self.client);
+        let _ = timeout(STEP_TIMEOUT, self.driver).await;
+    }
+}
+
+async fn connect(url: &str) -> Result<(Client, JoinHandle<()>, Notices)> {
+    let (client, mut connection) = timeout(STEP_TIMEOUT, tokio_postgres::connect(url, NoTls))
         .await
         .context("connect timed out")??;
+    let notices = Notices::default();
+    let sink = notices.clone();
+    // Polling messages instead of just awaiting the connection keeps the NOTIFYs.
     let driver = tokio::spawn(async move {
-        let _ = connection.await;
+        while let Some(Ok(message)) = std::future::poll_fn(|cx| connection.poll_message(cx)).await {
+            if let AsyncMessage::Notification(n) = message {
+                let row = vec![Some(n.channel().to_string()), Some(n.payload().to_string())];
+                sink.lock().unwrap().push(row);
+            }
+        }
     });
-    Ok((client, driver))
+    Ok((client, driver, notices))
 }
 
 fn db_error(e: &tokio_postgres::Error) -> Outcome {
@@ -138,10 +167,17 @@ pub async fn run_steps(scenario: &Scenario, pooled: &str, direct: &str) -> Resul
         if !conns.contains_key(step.client.as_str()) {
             let url = if step.direct { direct } else { pooled };
             match connect(url).await {
-                Ok((client, driver)) => {
+                Ok((client, driver, notices)) => {
                     conns.insert(
                         &step.client,
-                        Conn { client, driver, direct: step.direct, statements: HashMap::new() },
+                        Conn {
+                            client: Arc::new(client),
+                            driver,
+                            direct: step.direct,
+                            statements: HashMap::new(),
+                            pending: None,
+                            notices,
+                        },
                     );
                 }
                 Err(e) => {
@@ -156,6 +192,9 @@ pub async fn run_steps(scenario: &Scenario, pooled: &str, direct: &str) -> Resul
         if conn.direct != step.direct {
             bail!("client '{}' mixes direct and pooled steps", step.client);
         }
+        if let Some(ms) = step.delay_ms {
+            tokio::time::sleep(Duration::from_millis(ms)).await;
+        }
 
         let outcome = match step.action()? {
             Action::Simple(sql) => match timeout(STEP_TIMEOUT, conn.client.simple_query(sql)).await {
@@ -169,6 +208,9 @@ pub async fn run_steps(scenario: &Scenario, pooled: &str, direct: &str) -> Resul
                 };
                 // Aborting the driver drops the socket without sending Terminate.
                 if let Some(conn) = conns.remove(step.client.as_str()) {
+                    if let Some(pending) = conn.pending {
+                        pending.abort();
+                    }
                     conn.driver.abort();
                     let _ = conn.driver.await;
                 }
@@ -203,20 +245,59 @@ pub async fn run_steps(scenario: &Scenario, pooled: &str, direct: &str) -> Resul
             }
             Action::Disconnect => {
                 if let Some(conn) = conns.remove(step.client.as_str()) {
-                    drop(conn.client);
-                    // Wait for Terminate to go out so the pooler sees the disconnect
-                    // before the next step runs.
-                    let _ = timeout(STEP_TIMEOUT, conn.driver).await;
+                    conn.close().await;
                 }
                 Outcome::empty()
+            }
+            Action::Background(sql) => {
+                if conn.pending.is_some() {
+                    bail!("client '{}' already has a background query", step.client);
+                }
+                let client = conn.client.clone();
+                let sql = sql.to_string();
+                conn.pending = Some(tokio::spawn(async move {
+                    match timeout(STEP_TIMEOUT, client.simple_query(&sql)).await {
+                        Err(_) => Outcome::error("TIMEOUT", format!("no reply within {STEP_TIMEOUT:?}")),
+                        Ok(res) => simple_outcome(res),
+                    }
+                }));
+                Outcome::empty()
+            }
+            Action::Wait => {
+                let Some(pending) = conn.pending.take() else {
+                    bail!("client '{}' has no background query to wait for", step.client);
+                };
+                // The query has its own timeout; this one only guards against a stuck task.
+                match timeout(STEP_TIMEOUT * 2, pending).await {
+                    Ok(Ok(outcome)) => outcome,
+                    Ok(Err(e)) => Outcome::error("CLIENT", e.to_string()),
+                    Err(_) => Outcome::error("TIMEOUT", "background query never finished"),
+                }
+            }
+            Action::Cancel => {
+                let token = conn.client.cancel_token();
+                match timeout(STEP_TIMEOUT, token.cancel_query(NoTls)).await {
+                    Err(_) => Outcome::error("TIMEOUT", format!("no reply within {STEP_TIMEOUT:?}")),
+                    Ok(Err(e)) => db_error(&e),
+                    Ok(Ok(())) => Outcome::empty(),
+                }
+            }
+            Action::Notifications => {
+                let deadline = tokio::time::Instant::now() + NOTIFY_WAIT;
+                while conn.notices.lock().unwrap().is_empty() && tokio::time::Instant::now() < deadline {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+                // Give any NOTIFYs sent together with the first one time to arrive.
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                let rows = std::mem::take(&mut *conn.notices.lock().unwrap());
+                Outcome::Ok { rows, tags: vec![] }
             }
         };
         outcomes.push(outcome);
     }
 
     for (_, conn) in conns.drain() {
-        drop(conn.client);
-        let _ = timeout(STEP_TIMEOUT, conn.driver).await;
+        conn.close().await;
     }
     Ok(outcomes)
 }
@@ -225,7 +306,7 @@ async fn run_direct(url: &str, statements: &[String]) -> Result<()> {
     if statements.is_empty() {
         return Ok(());
     }
-    let (client, driver) = connect(url).await?;
+    let (client, driver, _) = connect(url).await?;
     for sql in statements {
         client.batch_execute(sql).await.with_context(|| format!("running `{sql}`"))?;
     }
@@ -240,7 +321,7 @@ async fn wait_ready(url: &str) -> Result<()> {
     let deadline = tokio::time::Instant::now() + READY_TIMEOUT;
     loop {
         let err = match connect(url).await {
-            Ok((client, driver)) => {
+            Ok((client, driver, _)) => {
                 let res = timeout(STEP_TIMEOUT, client.simple_query("SELECT 1")).await;
                 drop(client);
                 let _ = timeout(STEP_TIMEOUT, driver).await;
@@ -277,10 +358,17 @@ pub enum Verdict {
     Error { reason: String },
 }
 
+/// The verdict plus each step's (postgres, pooler) outcomes. `steps` is empty when the
+/// pooler run never happened.
+pub struct Checked {
+    pub verdict: Verdict,
+    pub steps: Vec<(Outcome, Outcome)>,
+}
+
 /// Run a scenario against plain Postgres, then through the pooler, and compare.
 /// `reset` runs on `direct` before each run so state leaked on the pooler's server
 /// connections by an earlier scenario can't change this one's result.
-pub async fn check(scenario: &Scenario, pooled: &str, direct: &str, reset: &[String]) -> Result<Verdict> {
+pub async fn check(scenario: &Scenario, pooled: &str, direct: &str, reset: &[String]) -> Result<Checked> {
     run_direct(direct, reset).await.context("reset (baseline)")?;
     run_direct(direct, &scenario.setup).await.context("setup (baseline)")?;
     let expected = run_steps(scenario, direct, direct).await;
@@ -291,26 +379,26 @@ pub async fn check(scenario: &Scenario, pooled: &str, direct: &str, reset: &[Str
     if !reset.is_empty()
         && let Err(e) = wait_ready(pooled).await
     {
-        return Ok(Verdict::Error { reason: format!("{e:#}") });
+        return Ok(Checked { verdict: Verdict::Error { reason: format!("{e:#}") }, steps: vec![] });
     }
     run_direct(direct, &scenario.setup).await.context("setup (target)")?;
     let actual = run_steps(scenario, pooled, direct).await;
     run_direct(direct, &scenario.teardown).await.context("teardown (target)")?;
     let actual = actual?;
 
-    for (i, step) in scenario.steps.iter().enumerate() {
-        if !expected[i].matches(&actual[i], step.compare) {
-            return Ok(Verdict::Fail {
-                mismatch: Mismatch {
-                    step: i + 1,
-                    action: step.describe(),
-                    expected: expected[i].clone(),
-                    actual: actual[i].clone(),
-                },
-            });
-        }
-    }
-    Ok(Verdict::Pass)
+    let mismatch = scenario.steps.iter().enumerate().find_map(|(i, step)| {
+        (!expected[i].matches(&actual[i], step.compare)).then(|| Mismatch {
+            step: i + 1,
+            action: step.describe(),
+            expected: expected[i].clone(),
+            actual: actual[i].clone(),
+        })
+    });
+    let verdict = match mismatch {
+        Some(mismatch) => Verdict::Fail { mismatch },
+        None => Verdict::Pass,
+    };
+    Ok(Checked { verdict, steps: expected.into_iter().zip(actual).collect() })
 }
 
 #[cfg(test)]

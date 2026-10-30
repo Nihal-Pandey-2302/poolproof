@@ -72,6 +72,20 @@ pub struct Step {
     /// Close the client connection.
     #[serde(default)]
     pub disconnect: bool,
+    /// With `simple`: start the query and move on. A later `wait` step collects the result.
+    #[serde(default)]
+    pub background: bool,
+    /// Wait for this client's background query and record its result.
+    #[serde(default)]
+    pub wait: bool,
+    /// Send a CancelRequest with this client's key, the way a driver would.
+    #[serde(default)]
+    pub cancel: bool,
+    /// Record the NOTIFY messages this client has received since the last such step.
+    #[serde(default)]
+    pub notifications: bool,
+    /// Sleep this long before the step, e.g. so a cancel lands while a query runs.
+    pub delay_ms: Option<u64>,
     #[serde(default)]
     pub compare: Compare,
 }
@@ -94,6 +108,10 @@ pub enum Action<'a> {
     Prepare { sql: &'a str, name: &'a str },
     Execute(&'a str),
     Disconnect,
+    Background(&'a str),
+    Wait,
+    Cancel,
+    Notifications,
 }
 
 impl Step {
@@ -103,24 +121,29 @@ impl Step {
             self.prepare.is_some(),
             self.execute.is_some(),
             self.disconnect,
+            self.wait,
+            self.cancel,
+            self.notifications,
         ]
         .iter()
         .filter(|s| **s)
         .count();
         if set != 1 {
             bail!(
-                "step for client '{}' must have exactly one of simple, prepare, execute, disconnect",
+                "step for client '{}' must have exactly one of simple, prepare, execute, disconnect, wait, cancel, notifications",
                 self.client
             );
         }
         if let Some(sql) = &self.simple {
-            return Ok(match self.abandon_after_ms {
-                Some(ms) => Action::Abandon { sql, after: Duration::from_millis(ms) },
-                None => Action::Simple(sql),
+            return Ok(match (self.abandon_after_ms, self.background) {
+                (Some(_), true) => bail!("step for client '{}' can't be both abandoned and background", self.client),
+                (Some(ms), false) => Action::Abandon { sql, after: Duration::from_millis(ms) },
+                (None, true) => Action::Background(sql),
+                (None, false) => Action::Simple(sql),
             });
         }
-        if self.abandon_after_ms.is_some() {
-            bail!("abandon_after_ms for client '{}' only works with simple", self.client);
+        if self.abandon_after_ms.is_some() || self.background {
+            bail!("abandon_after_ms and background for client '{}' only work with simple", self.client);
         }
         if let Some(sql) = &self.prepare {
             let Some(name) = &self.name else {
@@ -131,7 +154,15 @@ impl Step {
         if let Some(name) = &self.execute {
             return Ok(Action::Execute(name));
         }
-        Ok(Action::Disconnect)
+        Ok(if self.wait {
+            Action::Wait
+        } else if self.cancel {
+            Action::Cancel
+        } else if self.notifications {
+            Action::Notifications
+        } else {
+            Action::Disconnect
+        })
     }
 
     pub fn describe(&self) -> String {
@@ -142,6 +173,10 @@ impl Step {
             Ok(Action::Prepare { sql, name }) => format!("prepare {name}: {sql}"),
             Ok(Action::Execute(name)) => format!("execute {name}"),
             Ok(Action::Disconnect) => "disconnect".to_string(),
+            Ok(Action::Background(sql)) => format!("background: {sql}"),
+            Ok(Action::Wait) => "wait".to_string(),
+            Ok(Action::Cancel) => "cancel".to_string(),
+            Ok(Action::Notifications) => "notifications".to_string(),
             Err(e) => e.to_string(),
         };
         format!("[{}{via}] {what}", self.client)
@@ -193,5 +228,15 @@ mod tests {
         assert!(step.action().is_err());
         let step: Step = toml::from_str("client = \"a\"\nsimple = \"SELECT 1\"\nabandon_after_ms = 100").unwrap();
         assert!(matches!(step.action(), Ok(Action::Abandon { .. })));
+    }
+
+    #[test]
+    fn background_needs_simple() {
+        let step: Step = toml::from_str("client = \"a\"\nsimple = \"SELECT 1\"\nbackground = true").unwrap();
+        assert!(matches!(step.action(), Ok(Action::Background(_))));
+        let step: Step = toml::from_str("client = \"a\"\nwait = true\nbackground = true").unwrap();
+        assert!(step.action().is_err());
+        let step: Step = toml::from_str("client = \"a\"\nwait = true\ncancel = true").unwrap();
+        assert!(step.action().is_err());
     }
 }

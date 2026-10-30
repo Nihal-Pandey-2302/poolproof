@@ -36,6 +36,10 @@ enum Command {
         /// state is leaking between scenarios.
         #[arg(long)]
         reverse: bool,
+        /// Print every step's outcome on Postgres and through the pooler, not just
+        /// the first difference. Use it to check a new scenario does what you meant.
+        #[arg(short, long)]
+        verbose: bool,
         #[arg(long, value_enum, default_value_t = RunFormat::Text)]
         format: RunFormat,
     },
@@ -114,7 +118,7 @@ async fn main() -> ExitCode {
 
 async fn run(cli: Cli) -> Result<ExitCode> {
     match cli.command {
-        Command::Run { targets, scenarios, filter, reverse, format } => {
+        Command::Run { targets, scenarios, filter, reverse, verbose, format } => {
             let text = std::fs::read_to_string(&targets)
                 .with_context(|| format!("reading {}", targets.display()))?;
             let targets: Targets = toml::from_str(&text).context("parsing targets")?;
@@ -135,15 +139,23 @@ async fn run(cli: Cli) -> Result<ExitCode> {
                     if filter.as_ref().is_some_and(|f| !s.name.contains(f.as_str())) {
                         continue;
                     }
-                    let verdict = if s.modes.contains(&target.mode) {
-                        runner::check(s, &target.pooler, &target.direct, &target.reset)
+                    let (verdict, steps) = if s.modes.contains(&target.mode) {
+                        let checked = runner::check(s, &target.pooler, &target.direct, &target.reset)
                             .await
-                            .with_context(|| format!("{} / {}", target.name, s.name))?
+                            .with_context(|| format!("{} / {}", target.name, s.name))?;
+                        (checked.verdict, checked.steps)
                     } else {
-                        Verdict::Skip { reason: format!("not applicable to {} mode", target.mode) }
+                        (Verdict::Skip { reason: format!("not applicable to {} mode", target.mode) }, vec![])
                     };
                     if matches!(format, RunFormat::Text) {
                         print_verdict(&target.name, s, &verdict);
+                        if verbose {
+                            for (i, (step, (expected, actual))) in s.steps.iter().zip(&steps).enumerate() {
+                                println!("      {}. {}", i + 1, step.describe());
+                                println!("         postgres: {expected}");
+                                println!("         pooler:   {actual}");
+                            }
+                        }
                     }
                     results.push(ResultRow { target: &target.name, scenario: &s.name, verdict });
                 }

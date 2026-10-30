@@ -1,0 +1,12 @@
+name = "set-role-isolated-between-clients"
+description = "SET ROLE from one client must not change the role another client runs as."
+setup = ["DROP ROLE IF EXISTS pp_role", "CREATE ROLE pp_role"]
+teardown = ["DROP ROLE IF EXISTS pp_role"]
+
+[[step]]
+client = "a"
+simple = "SET ROLE pp_role"
+
+[[step]]
+client = "b"
+simple = "SELECT current_user::text"

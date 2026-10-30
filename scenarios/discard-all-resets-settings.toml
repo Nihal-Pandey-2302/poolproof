@@ -1,0 +1,14 @@
+name = "discard-all-resets-settings"
+description = "DISCARD ALL must reset the client's settings to their defaults."
+
+[[step]]
+client = "a"
+simple = "SET work_mem = '7MB'"
+
+[[step]]
+client = "a"
+simple = "DISCARD ALL"
+
+[[step]]
+client = "a"
+simple = "SHOW work_mem"

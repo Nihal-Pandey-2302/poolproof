@@ -1,0 +1,14 @@
+name = "discard-all-in-transaction-fails"
+description = "DISCARD ALL inside a transaction block must fail with 25001, not be answered by the pooler."
+
+[[step]]
+client = "a"
+simple = "BEGIN"
+
+[[step]]
+client = "a"
+simple = "DISCARD ALL"
+
+[[step]]
+client = "a"
+simple = "ROLLBACK"

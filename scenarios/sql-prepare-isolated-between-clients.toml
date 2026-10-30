@@ -1,0 +1,14 @@
+name = "sql-prepare-isolated-between-clients"
+description = "A statement made with SQL PREPARE must be usable by the client that made it, and only by it."
+
+[[step]]
+client = "a"
+simple = "PREPARE pp_q AS SELECT 'from a'::text"
+
+[[step]]
+client = "b"
+simple = "EXECUTE pp_q"
+
+[[step]]
+client = "a"
+simple = "EXECUTE pp_q"
