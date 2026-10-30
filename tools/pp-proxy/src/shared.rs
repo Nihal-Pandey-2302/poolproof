@@ -2,7 +2,7 @@
 //! and no reset between clients. Every client gets that connection's BackendKeyData,
 //! so a cancel from one client can stop another client's query.
 
-use crate::wire::{CANCEL_REQUEST, GSSENC_REQUEST, Message, Reader, SSL_REQUEST};
+use crate::wire::{self, CANCEL_REQUEST, GSSENC_REQUEST, Message, Reader, SSL_REQUEST};
 use bytes::{Bytes, BytesMut};
 use postgres_protocol::authentication::md5_hash;
 use postgres_protocol::authentication::sasl::{ChannelBinding, ScramSha256};
@@ -39,6 +39,10 @@ fn other(msg: impl Into<String>) -> io::Error {
     io::Error::other(msg.into())
 }
 
+/// Messages a healthy idle server connection can send: NotificationResponse,
+/// NoticeResponse, ParameterStatus.
+const IDLE_LEFTOVERS: &[u8] = b"ANS";
+
 /// Number of ReadyForQuery messages a client message asks for.
 fn cycles(m: &Message) -> usize {
     usize::from(matches!(m.tag, b'S' | b'Q'))
@@ -61,7 +65,7 @@ impl Pool {
                 None => return Ok(()),
                 Some((SSL_REQUEST | GSSENC_REQUEST, _)) => cw.write_all(b"N").await?,
                 Some((CANCEL_REQUEST, raw)) => {
-                    let mut s = TcpStream::connect(&self.login.upstream).await?;
+                    let mut s = wire::connect(&self.login.upstream).await?;
                     return s.write_all(&raw).await;
                 }
                 Some(_) => break,
@@ -132,24 +136,28 @@ impl Pool {
         }
     }
 
+    /// The startup messages for a new client. If the server connection is free, check
+    /// it first, so the client gets the BackendKeyData of the connection it will use.
+    /// If another client holds it, it's in use and the cached hello is current.
     async fn hello(&self) -> io::Result<Bytes> {
-        {
-            let hello = self.hello.lock().map_err(|_| other("poisoned"))?;
-            if !hello.is_empty() {
-                return Ok(hello.clone());
-            }
-        }
-        let mut guard = self.server.lock().await;
+        let cached = self.hello.lock().map_err(|_| other("poisoned"))?.clone();
+        let mut guard = match self.server.try_lock() {
+            Ok(guard) => guard,
+            Err(_) if !cached.is_empty() => return Ok(cached),
+            Err(_) => self.server.lock().await,
+        };
         self.ensure(&mut guard).await?;
         Ok(self.hello.lock().map_err(|_| other("poisoned"))?.clone())
     }
 
-    /// Connect if there's no server connection or it has closed (e.g. reset
-    /// terminated the backend). Leftover messages on a live one stay buffered and go
-    /// to the next client, as in a pooler that doesn't clean up.
+    /// Connect if there's no server connection, it has closed, or it sent something
+    /// while idle that only a dying session sends (e.g. FATAL 57P01 after reset
+    /// terminated the backend). Notifications, notices and parameter changes stay
+    /// buffered and go to the next client, as in a pooler that doesn't clean up.
     async fn ensure(&self, slot: &mut Option<Server>) -> io::Result<()> {
         if let Some(s) = slot.as_mut()
             && s.reader.poll_alive()
+            && s.reader.buffered_tags().iter().all(|t| IDLE_LEFTOVERS.contains(t))
         {
             return Ok(());
         }
@@ -173,8 +181,7 @@ async fn drain(server: &mut Server, mut outstanding: usize) -> io::Result<()> {
 }
 
 async fn connect(login: &Login) -> io::Result<(Server, Bytes)> {
-    let stream = TcpStream::connect(&login.upstream).await?;
-    stream.set_nodelay(true)?;
+    let stream = wire::connect(&login.upstream).await?;
     let (r, mut writer) = stream.into_split();
     let mut reader = Reader::new(r);
     let database = login.database.as_deref().unwrap_or(&login.user);
