@@ -15,7 +15,7 @@ use postgres_protocol::message::backend::Message;
 use postgres_protocol::message::frontend;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
-use tokio::time::{Instant, timeout};
+use tokio::time::{Instant, timeout_at};
 use tokio_postgres::config::Host;
 
 /// One frontend message, written in a scenario as e.g. `parse s1 SELECT 1`.
@@ -131,8 +131,9 @@ impl RawMessage {
     }
 }
 
-/// The largest backend message accepted. A server can claim any length up to 4 GB,
-/// and parsing reserves that much before reading it.
+/// The largest backend message accepted on a `send` connection. A server can claim
+/// any length up to 4 GB, and parsing reserves that much before reading it.
+/// tokio-postgres clients use their own codec and are not covered by this cap.
 const MAX_MESSAGE: usize = 64 << 20;
 
 /// Rejects a message header whose length is impossible or above `MAX_MESSAGE`.
@@ -187,7 +188,9 @@ impl RawConn {
         let password = config.get_password().unwrap_or_default().to_vec();
         let dbname = config.get_dbname().unwrap_or(&user).to_string();
 
-        let stream = timeout(connect_timeout, TcpStream::connect((host.as_str(), port)))
+        // One deadline for TCP connect and startup, as for tokio-postgres clients.
+        let deadline = Instant::now() + connect_timeout;
+        let stream = timeout_at(deadline, TcpStream::connect((host.as_str(), port)))
             .await
             .context("connect timed out")??;
         let mut conn = RawConn {
@@ -199,7 +202,6 @@ impl RawConn {
         frontend::startup_message([("user", user.as_str()), ("database", dbname.as_str())], &mut out)?;
         conn.send(&out).await?;
 
-        let deadline = Instant::now() + connect_timeout;
         let mut scram: Option<ScramSha256> = None;
         loop {
             let message = match conn.next(deadline).await? {
@@ -343,8 +345,15 @@ fn summary(message: &Message, parameter_status: bool) -> Result<Option<String>> 
         Message::EmptyQueryResponse => "EmptyQueryResponse".to_string(),
         Message::CopyInResponse(_) => "CopyInResponse".to_string(),
         Message::CopyOutResponse(_) => "CopyOutResponse".to_string(),
-        // Escaped so a row's trailing newline doesn't split the line.
-        Message::CopyData(body) => format!("CopyData {}", String::from_utf8_lossy(body.data()).escape_debug()),
+        Message::CopyData(body) => match std::str::from_utf8(body.data()) {
+            // Escaped so a row's trailing newline doesn't split the line.
+            Ok(text) => format!("CopyData {}", text.escape_debug()),
+            // Binary COPY: lossy text would hide differences.
+            Err(_) => {
+                let hex: String = body.data().iter().map(|b| format!("{b:02x}")).collect();
+                format!("CopyData hex:{hex}")
+            }
+        },
         Message::CopyDone => "CopyDone".to_string(),
         Message::CommandComplete(body) => format!("CommandComplete {}", body.tag()?),
         Message::ParameterDescription(body) => format!("ParameterDescription {}", body.parameters().count()?),
@@ -406,6 +415,10 @@ mod tests {
         let line = |m: Message| summary(&m, false).unwrap().unwrap();
         assert_eq!(line(backend(b'H', b"\0\0\x02\0\0\0\0")), "CopyOutResponse");
         assert_eq!(line(backend(b'd', b"1\ta\n")), "CopyData 1\\ta\\n");
+        assert_eq!(
+            line(backend(b'd', b"PGCOPY\n\xff\r\n\0")),
+            "CopyData hex:5047434f50590aff0d0a00"
+        );
         assert_eq!(line(backend(b'c', b"")), "CopyDone");
     }
 

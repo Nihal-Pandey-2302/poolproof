@@ -1,5 +1,7 @@
+use std::time::Duration;
+
 use anyhow::{Context, Result};
-use tokio::time::timeout;
+use tokio::time::{Instant, timeout};
 
 use super::compare::{FailKind, Mismatch, Verdict, baseline_failure};
 use super::pg::{connect, wait_ready};
@@ -40,13 +42,26 @@ async fn probe(endpoint: &Endpoint, t: &Timeouts) -> Result<()> {
     Ok(())
 }
 
+/// Probe until it works or `within` has passed.
+async fn probe_until(endpoint: &Endpoint, within: Duration, t: &Timeouts) -> Result<()> {
+    let deadline = Instant::now() + within;
+    loop {
+        match probe(endpoint, t).await {
+            Ok(()) => return Ok(()),
+            Err(e) if Instant::now() >= deadline => return Err(e.context(format!("no answer within {within:?}"))),
+            Err(_) => tokio::time::sleep(Duration::from_millis(200)).await,
+        }
+    }
+}
+
 /// Check that a target's direct and pooler URLs both answer, before running any
-/// scenario on it. The error is the ERROR reason for each of its scenarios.
+/// scenario on it. The error is the ERROR reason for each of its scenarios. A pooler
+/// gets a few tries: it may still be starting, or reconnecting after an earlier reset.
 pub async fn preflight(pooled: &Endpoint, direct: &Endpoint, t: &Timeouts) -> Result<(), String> {
     probe(direct, t)
         .await
         .map_err(|e| format!("{DIRECT_UNREACHABLE} {e:#}"))?;
-    probe(pooled, t)
+    probe_until(pooled, t.ready, t)
         .await
         .map_err(|e| format!("{POOLER_UNREACHABLE} {e:#}"))
 }
@@ -61,25 +76,41 @@ pub struct Checked {
 }
 
 impl Checked {
-    fn error(reason: String) -> Self {
+    /// An ERROR before anything was compared, so `runs` is 0.
+    pub(super) fn error(reason: String) -> Self {
         Checked {
             verdict: Verdict::Error { reason },
             steps: vec![],
-            runs: 1,
+            runs: 0,
             failures: 0,
         }
     }
 }
 
-/// One run of a scenario's steps with reset, setup and teardown around it. `side` is
-/// "baseline" or "target" and names the run in errors. Teardown runs even when setup
-/// or a step fails; the first error is the one returned.
+/// Which run of a scenario: plain Postgres, or through the pooler.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Side {
+    Baseline,
+    Target,
+}
+
+impl std::fmt::Display for Side {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Side::Baseline => "baseline",
+            Side::Target => "target",
+        })
+    }
+}
+
+/// One run of a scenario's steps with reset, setup and teardown around it. Teardown
+/// runs even when setup or a step fails; the first error is the one returned.
 async fn run_once(
     scenario: &Scenario,
     pooled: &Endpoint,
     direct: &Endpoint,
     reset: &[String],
-    side: &str,
+    side: Side,
     t: &Timeouts,
 ) -> Result<Vec<Outcome>, String> {
     run_direct(direct, reset, t)
@@ -87,7 +118,7 @@ async fn run_once(
         .map_err(|e| format!("reset ({side}): {e:#}"))?;
     // A reset kills the pooler's server connections, and it needs a moment to open new
     // ones. Without a reset there's nothing to wait for.
-    if side == "target"
+    if side == Side::Target
         && !reset.is_empty()
         && let Err(e) = wait_ready(pooled, t).await
     {
@@ -118,7 +149,7 @@ pub async fn check(
     reset: &[String],
     t: &Timeouts,
 ) -> Checked {
-    let expected = match run_once(scenario, direct, direct, reset, "baseline", t).await {
+    let expected = match run_once(scenario, direct, direct, reset, Side::Baseline, t).await {
         Ok(expected) => expected,
         Err(reason) => return Checked::error(reason),
     };
@@ -129,7 +160,7 @@ pub async fn check(
     let mut kept: Option<Checked> = None;
     let mut failures = 0;
     for _ in 0..scenario.repeat {
-        let checked = match run_once(scenario, pooled, direct, reset, "target", t).await {
+        let checked = match run_once(scenario, pooled, direct, reset, Side::Target, t).await {
             Ok(actual) => compare(scenario, &expected, actual),
             Err(reason) => Checked::error(reason),
         };
@@ -149,6 +180,21 @@ pub async fn check(
 
 /// Compare one pooler-side run with the baseline outcomes.
 fn compare(scenario: &Scenario, expected: &[Outcome], actual: Vec<Outcome>) -> Checked {
+    // A direct step that couldn't reach Postgres says nothing about the pooler. A
+    // TIMEOUT stays a failure: a lock the pooler leaked can block a direct observer.
+    let direct_failed = scenario.steps.iter().zip(&actual).position(|(step, outcome)| {
+        step.direct && matches!(outcome, Outcome::Error { code, .. } if code == "CONNECT" || code == "CLIENT")
+    });
+    if let Some(i) = direct_failed {
+        return Checked {
+            verdict: Verdict::Error {
+                reason: format!("postgres side failed at step {} (target run): {}", i + 1, actual[i]),
+            },
+            steps: expected.iter().cloned().zip(actual).collect(),
+            runs: 1,
+            failures: 0,
+        };
+    }
     let mismatch = scenario.steps.iter().enumerate().find_map(|(i, step)| {
         (!expected[i].matches(&actual[i], step.compare)).then(|| Mismatch {
             step: i + 1,
@@ -225,6 +271,69 @@ mod tests {
             "took {:?}",
             started.elapsed()
         );
+    }
+
+    #[test]
+    fn direct_step_that_fails_to_connect_on_the_target_run_is_an_error() {
+        let s =
+            scenario("name = 't'\ndescription = 't'\n[[step]]\nclient = 'pg'\ndirect = true\nsimple = 'SELECT 1'\n");
+        let expected = [Outcome::empty()];
+        for code in ["CONNECT", "CLIENT"] {
+            let checked = compare(&s, &expected, vec![Outcome::error(code, "refused")]);
+            let reason = reason(&checked);
+            assert!(
+                reason.starts_with("postgres side failed at step 1 (target run)"),
+                "{reason}"
+            );
+        }
+        // A direct observer blocked by a lock the pooler leaked is the pooler's fault.
+        let checked = compare(&s, &expected, vec![Outcome::error("TIMEOUT", "no reply")]);
+        assert!(matches!(checked.verdict, Verdict::Fail { .. }));
+    }
+
+    /// Accepts on a local port, but only forwards to `to` after `delay`, like a pooler
+    /// that is still starting. Connections before that are refused by closing them.
+    async fn late_forwarder(to: String, delay: Duration) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let ready = Instant::now() + delay;
+        let pg = to.parse::<tokio_postgres::Config>().unwrap();
+        let tokio_postgres::config::Host::Tcp(host) = &pg.get_hosts()[0] else {
+            panic!("tcp host")
+        };
+        let upstream = format!("{host}:{}", pg.get_ports()[0]);
+        tokio::spawn(async move {
+            while let Ok((mut client, _)) = listener.accept().await {
+                if Instant::now() < ready {
+                    continue;
+                }
+                let upstream = upstream.clone();
+                tokio::spawn(async move {
+                    let mut server = tokio::net::TcpStream::connect(upstream).await.unwrap();
+                    let _ = tokio::io::copy_bidirectional(&mut client, &mut server).await;
+                });
+            }
+        });
+        to.replace(&format!(":{}/", pg.get_ports()[0]), &format!(":{port}/"))
+    }
+
+    /// A Postgres URL for tests that need a real server, e.g. a throwaway container.
+    fn test_pg() -> String {
+        std::env::var("POOLPROOF_TEST_PG").expect("set POOLPROOF_TEST_PG to a Postgres URL")
+    }
+
+    #[tokio::test]
+    #[ignore = "needs POOLPROOF_TEST_PG"]
+    async fn preflight_waits_for_a_pooler_that_is_still_starting() {
+        let url = test_pg();
+        let pooled = late_forwarder(url.clone(), Duration::from_secs(2)).await;
+        preflight(
+            &Endpoint::parse(&pooled).unwrap(),
+            &Endpoint::parse(&url).unwrap(),
+            &Timeouts::default(),
+        )
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
