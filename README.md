@@ -219,7 +219,8 @@ pooler. Use it on a new scenario: a PASS only means something if Postgres did wh
 expected.
 
 The best scenarios come from real bug reports. If your pooler bit you, a scenario with a
-link to the issue is the most useful contribution.
+link to the issue is the most useful contribution. [CONTRIBUTING.md](CONTRIBUTING.md) has
+the workflow.
 
 ## Status
 
