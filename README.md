@@ -39,8 +39,10 @@ A failure is one of three kinds:
 - **silent**: the pooler returned a result, but not the one Postgres returned. The
   application gets wrong data and no error. These are the dangerous ones.
 - **error**: the pooler refused with an error where Postgres didn't. Loud, so you notice.
-- **hang**: no reply within the step timeout (10 seconds, or `--step-timeout SECS`), or
-  replies that stop short of what Postgres sent.
+- **hang**: no reply within the step timeout (10 seconds, or `--step-timeout 30s`), or
+  replies that stop short of what Postgres sent. Keep the step timeout above the
+  pooler's own checkout and query timeouts, so you see its error instead of a hang; 10
+  seconds is above PgDog's 5 second checkout timeout.
 
 ERROR means there was nothing to compare: a target URL didn't answer before the run, a
 step on the Postgres side got no reply (timeout, connection failure), or setup, teardown

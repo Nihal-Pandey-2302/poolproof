@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::time::Duration;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
@@ -62,10 +63,10 @@ enum Command {
         /// differ between the two runs is an ERROR: it tests timing, not the pooler.
         #[arg(long)]
         check_scenarios: bool,
-        /// Seconds each step may take before it counts as a hang. A scenario's
-        /// `timeout_ms` overrides it.
-        #[arg(long, value_name = "SECS", default_value_t = 10, value_parser = clap::value_parser!(u64).range(1..))]
-        step_timeout: u64,
+        /// How long each step may take before it counts as a hang, e.g. `10s` or
+        /// `500ms` (a bare number is seconds). A scenario's `timeout_ms` overrides it.
+        #[arg(long, value_name = "DURATION", default_value = "10s", value_parser = parse_duration)]
+        step_timeout: Duration,
         /// Which failures make the exit code 1. An ERROR (nothing to compare) counts
         /// unless this is `none`.
         #[arg(long, value_enum, default_value_t = FailOn::Any)]
@@ -171,7 +172,7 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
                 },
                 check_scenarios,
                 timeouts: runner::Timeouts {
-                    step: std::time::Duration::from_secs(step_timeout),
+                    step: step_timeout,
                     ..Default::default()
                 },
             };
@@ -280,5 +281,36 @@ fn load_scenarios(dir: Option<&std::path::Path>) -> Result<Vec<scenario::Scenari
     match dir {
         Some(dir) => scenario::load_dir(dir),
         None => scenario::bundled(),
+    }
+}
+
+/// `500ms`, `10s` or `10` (seconds). Zero is rejected: every step would time out.
+fn parse_duration(s: &str) -> Result<Duration, String> {
+    let (number, unit) = match s.strip_suffix("ms") {
+        Some(n) => (n, Duration::from_millis(1)),
+        None => (s.strip_suffix('s').unwrap_or(s), Duration::from_secs(1)),
+    };
+    let n: u32 = number
+        .trim()
+        .parse()
+        .map_err(|_| format!("`{s}` is not a duration like 10s or 500ms"))?;
+    if n == 0 {
+        return Err("must be more than 0".into());
+    }
+    Ok(unit * n)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn durations_take_ms_s_or_bare_seconds() {
+        assert_eq!(parse_duration("500ms"), Ok(Duration::from_millis(500)));
+        assert_eq!(parse_duration("10s"), Ok(Duration::from_secs(10)));
+        assert_eq!(parse_duration("3"), Ok(Duration::from_secs(3)));
+        for bad in ["0", "0ms", "", "s", "1.5s", "10m", "-1s"] {
+            assert!(parse_duration(bad).is_err(), "{bad}");
+        }
     }
 }
