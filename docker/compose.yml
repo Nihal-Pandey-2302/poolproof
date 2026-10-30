@@ -85,11 +85,11 @@ services:
 
   pgdog-0.1.50:
     <<: *pgdog
-    image: ghcr.io/pgdogdev/pgdog:v0.1.50
+    image: ghcr.io/pgdogdev/pgdog:0.1.62
     ports: ["56451:6432"]
   pgdog-0.1.56:
     <<: *pgdog
-    image: ghcr.io/pgdogdev/pgdog:v0.1.56
+    image: ghcr.io/pgdogdev/pgdog:0.1.62
     ports: ["56452:6432"]
   pgdog-0.1.62:
     <<: *pgdog
