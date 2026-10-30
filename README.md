@@ -84,7 +84,8 @@ poolproof run --pooler postgres://user@pooler-host:6432/db \
 ```
 
 A URL without a password gets one the way psql does: from `PGPASSWORD`, else from the
-password file (`PGPASSFILE`, default `~/.pgpass`; ignored unless only you can read it).
+password file (`PGPASSFILE`, default `~/.pgpass`; ignored unless only you can read it;
+a Unix socket matches as `localhost`, and only the first of several hosts is looked up).
 In a URL, percent-encode special characters in the password (`@` is `%40`). Output
 never shows passwords.
 
@@ -94,7 +95,9 @@ For several poolers, or to reset state between scenarios, use a targets file
 ```toml
 [[target]]
 name = "prod-like-pgbouncer"
-# ${NAME} is replaced with the environment variable NAME ($${ for a literal ${).
+# ${NAME} is replaced with the environment variable NAME ($${ for a literal ${). In a
+# URL the value is percent-encoded (escaped in key=value strings), so any password works;
+# in reset statements it goes in as is.
 pooler = "postgres://user:${POOLER_PASSWORD}@pooler-host:6432/db"
 direct = "postgres://user@postgres-host:5432/db"   # password from PGPASSWORD or ~/.pgpass
 mode = "transaction"

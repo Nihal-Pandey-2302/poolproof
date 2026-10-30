@@ -94,7 +94,14 @@ impl Targets {
 impl Target {
     fn from_file(t: TargetFile, env: &dyn Fn(&str) -> Option<String>) -> Result<Self> {
         let endpoint = |field: &str, url: &str| -> Result<Endpoint> {
-            let url = expand_vars(url, env).with_context(|| field.to_string())?;
+            // A value is data: encoded so it can't end the field it's in, e.g. a
+            // password with `@` turning the rest into the host.
+            let quote = if url.starts_with("postgres://") || url.starts_with("postgresql://") {
+                percent_encode
+            } else {
+                backslash_escape
+            };
+            let url = expand_vars(url, env, quote).with_context(|| field.to_string())?;
             Endpoint::resolve(&url, env).with_context(|| field.to_string())
         };
         Ok(Target {
@@ -103,7 +110,7 @@ impl Target {
             reset: t
                 .reset
                 .iter()
-                .map(|sql| expand_vars(sql, env).context("reset"))
+                .map(|sql| expand_vars(sql, env, |v| v.to_string()).context("reset"))
                 .collect::<Result<_>>()?,
             name: t.name,
             mode: t.mode,
@@ -114,9 +121,10 @@ impl Target {
     }
 }
 
-/// Replaces `${NAME}` with the environment variable NAME, so passwords can stay out of
-/// the file. `$${` stands for a literal `${`; any other `$` is left alone.
-fn expand_vars(text: &str, env: &dyn Fn(&str) -> Option<String>) -> Result<String> {
+/// Replaces `${NAME}` with the environment variable NAME, passed through `quote`, so
+/// passwords can stay out of the file. `$${` stands for a literal `${`; any other `$` is
+/// left alone.
+fn expand_vars(text: &str, env: &dyn Fn(&str) -> Option<String>, quote: fn(&str) -> String) -> Result<String> {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(i) = rest.find('$') {
@@ -132,13 +140,14 @@ fn expand_vars(text: &str, env: &dyn Fn(&str) -> Option<String>) -> Result<Strin
             let name = &after[..end];
             let valid = name.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
                 && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+            // Not echoed: the text between the braces may be part of a literal password.
             if !valid {
-                bail!("invalid variable name `{name}`");
+                bail!("invalid variable name in `${{...}}`");
             }
             let Some(value) = env(name) else {
                 bail!("environment variable {name} is not set");
             };
-            out.push_str(&value);
+            out.push_str(&quote(&value));
             rest = &after[end + 1..];
         } else {
             out.push('$');
@@ -147,6 +156,30 @@ fn expand_vars(text: &str, env: &dyn Fn(&str) -> Option<String>) -> Result<Strin
     }
     out.push_str(rest);
     Ok(out)
+}
+
+/// For URLs: every byte but the unreserved ones (RFC 3986) as `%XX`.
+fn percent_encode(value: &str) -> String {
+    value
+        .bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => (b as char).to_string(),
+            b => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
+/// For `key=value` strings: a backslash before `\`, `'` and whitespace, which works
+/// both inside and outside quotes.
+fn backslash_escape(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for c in value.chars() {
+        if c == '\\' || c == '\'' || c.is_whitespace() {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
 }
 
 /// A server to connect to: the parsed URL, with a password from PGPASSWORD or the
@@ -166,8 +199,9 @@ impl Endpoint {
     fn resolve(url: &str, env: &dyn Fn(&str) -> Option<String>) -> Result<Self> {
         // The parse error never includes the URL, so it can't leak a password.
         let mut config = Config::from_str(url).context("invalid connection URL")?;
-        if config.get_password().is_none() {
-            if let Some(password) = env("PGPASSWORD") {
+        // An empty password counts as none, as in libpq.
+        if config.get_password().is_none_or(<[u8]>::is_empty) {
+            if let Some(password) = env("PGPASSWORD").filter(|p| !p.is_empty()) {
                 config.password(password);
             } else if let Some(password) = password_from_file(&config, env) {
                 config.password(password);
@@ -220,6 +254,9 @@ pub fn redact(config: &Config) -> String {
     format!("postgres://{user}@{}/{db}", hosts.join(","))
 }
 
+/// Files already warned about, so a bad password file is reported once per run.
+static WARNED: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
+
 /// The password file libpq would read: PGPASSFILE, else ~/.pgpass
 /// (%APPDATA%\postgresql\pgpass.conf on Windows).
 fn password_file(env: &dyn Fn(&str) -> Option<String>) -> Option<PathBuf> {
@@ -243,16 +280,22 @@ fn password_from_file(config: &Config, env: &dyn Fn(&str) -> Option<String>) -> 
     {
         use std::os::unix::fs::PermissionsExt;
         if meta.permissions().mode() & 0o077 != 0 {
-            eprintln!(
-                "warning: password file {} has group or world access; permissions should be u=rw (0600) or less",
-                path.display()
-            );
+            let mut warned = WARNED.lock().unwrap_or_else(|e| e.into_inner());
+            if !warned.contains(&path) {
+                eprintln!(
+                    "warning: password file {} has group or world access; permissions should be u=rw (0600) or less",
+                    path.display()
+                );
+                warned.push(path);
+            }
             return None;
         }
     }
     let text = std::fs::read_to_string(&path).ok()?;
     let user = config.get_user()?;
-    // libpq matches a Unix socket as "localhost".
+    // Simpler than libpq in two ways: a Unix socket always matches as "localhost"
+    // (libpq uses the socket path unless it's the default), and only the first host
+    // is looked up, even when the URL lists several.
     let host = match config.get_hosts().first() {
         Some(Host::Tcp(h)) => h.as_str(),
         _ => "localhost",
@@ -262,8 +305,9 @@ fn password_from_file(config: &Config, env: &dyn Fn(&str) -> Option<String>) -> 
     pgpass_lookup(&text, [host, &port, db, user])
 }
 
-/// The password from the first `host:port:db:user:password` line that matches, with
-/// `*` matching anything and `\` escaping `:` and `\`, as libpq reads it.
+/// The password from the first `host:port:db:user:password` line that matches, as
+/// libpq reads it: a bare `*` matches anything, `\` escapes `:` and `\`, and the
+/// password ends at the next unescaped `:`.
 fn pgpass_lookup(text: &str, wanted: [&str; 4]) -> Option<String> {
     'lines: for line in text.lines() {
         let line = line.trim_end_matches('\r');
@@ -272,23 +316,33 @@ fn pgpass_lookup(text: &str, wanted: [&str; 4]) -> Option<String> {
         }
         let mut chars = line.chars();
         for want in wanted {
-            let mut field = String::new();
+            // `raw` keeps the escapes, so an escaped `\*` is no wildcard.
+            let (mut field, mut raw) = (String::new(), String::new());
             loop {
                 match chars.next() {
                     None => continue 'lines,
                     Some(':') => break,
-                    Some('\\') => field.extend(chars.next()),
-                    Some(c) => field.push(c),
+                    Some('\\') => {
+                        raw.push('\\');
+                        if let Some(c) = chars.next() {
+                            field.push(c);
+                            raw.push(c);
+                        }
+                    }
+                    Some(c) => {
+                        field.push(c);
+                        raw.push(c);
+                    }
                 }
             }
-            if field != "*" && field != want {
+            if raw != "*" && field != want {
                 continue 'lines;
             }
         }
-        // The rest of the line is the password, colons included.
         let mut password = String::new();
         while let Some(c) = chars.next() {
             match c {
+                ':' => break,
                 '\\' => password.extend(chars.next()),
                 c => password.push(c),
             }
@@ -325,15 +379,38 @@ mod tests {
     #[test]
     fn expands_variables() {
         let env = env_of(&[("PW", "s3cret"), ("_X1", "x")]);
-        assert_eq!(
-            expand_vars("postgres://u:${PW}@h/${_X1}", &env).unwrap(),
-            "postgres://u:s3cret@h/x"
-        );
-        assert_eq!(expand_vars("$${PW} $1 $$ a$", &env).unwrap(), "${PW} $1 $$ a$");
-        let err = |s: &str| expand_vars(s, &env).unwrap_err().to_string();
+        let raw = |s: &str| expand_vars(s, &env, |v| v.to_string());
+        assert_eq!(raw("postgres://u:${PW}@h/${_X1}").unwrap(), "postgres://u:s3cret@h/x");
+        assert_eq!(raw("$${PW} $1 $$ a$").unwrap(), "${PW} $1 $$ a$");
+        let err = |s: &str| raw(s).unwrap_err().to_string();
         assert_eq!(err("${MISSING}"), "environment variable MISSING is not set");
         assert_eq!(err("${PW"), "unclosed `${`");
-        assert_eq!(err("${1X}"), "invalid variable name `1X`");
+        assert_eq!(err("${1X}"), "invalid variable name in `${...}`");
+        assert!(!err("${pa ss}").contains("pa ss"));
+    }
+
+    #[test]
+    fn substituted_values_stay_inside_their_field() {
+        // Through the targets file, as a user would write it.
+        let resolve = |template: &str, value: &str| {
+            let env = env_of(&[("PW", value), ("PGPASSFILE", "/nonexistent")]);
+            let file: TargetFile = toml::from_str(&format!(
+                "name = 't'\nmode = 'transaction'\npooler = \"\"\"{template}\"\"\"\ndirect = \"\"\"{template}\"\"\"\n"
+            ))
+            .unwrap();
+            Target::from_file(file, &env).unwrap().pooler
+        };
+        for value in ["x@127.0.0.1:2/", "ab%41", "a b'c\\d:e/f?g#h&i=j"] {
+            for template in [
+                "postgres://u:${PW}@127.0.0.1:1/app",
+                "host=127.0.0.1 port=1 user=u password=${PW} dbname=app",
+                "host=127.0.0.1 port=1 user=u password='${PW}' dbname=app",
+            ] {
+                let e = resolve(template, value);
+                assert_eq!(password(&e).as_deref(), Some(value), "{template}");
+                assert_eq!(e.to_string(), "postgres://u@127.0.0.1:1/app", "{template}");
+            }
+        }
     }
 
     #[test]
@@ -342,6 +419,9 @@ mod tests {
         let env = [("PGPASSWORD", "from-env"), ("PGPASSFILE", "/nonexistent")];
         assert_eq!(pw("postgres://u:inline@h/db", &env).as_deref(), Some("inline"));
         assert_eq!(pw("postgres://u@h/db", &env).as_deref(), Some("from-env"));
+        assert_eq!(pw("postgres://u:@h/db", &env).as_deref(), Some("from-env"));
+        let empty = [("PGPASSWORD", ""), ("PGPASSFILE", "/nonexistent")];
+        assert_eq!(pw("postgres://u@h/db", &empty).as_deref(), None);
         assert_eq!(pw("postgres://u@h/db", &[("PGPASSFILE", "/nonexistent")]), None);
     }
 
@@ -376,13 +456,18 @@ mod tests {
     #[test]
     fn pgpass_lines() {
         let text = "*:*:*:u\\:x:a\\\\b:c\n\nh:*:*:*:p\\:q\n";
-        assert_eq!(
-            pgpass_lookup(text, ["h", "5432", "db", "u:x"]).as_deref(),
-            Some("a\\b:c")
-        );
+        // The password ends at the first unescaped `:`, as in libpq.
+        assert_eq!(pgpass_lookup(text, ["h", "5432", "db", "u:x"]).as_deref(), Some("a\\b"));
         assert_eq!(pgpass_lookup(text, ["h", "5432", "db", "v"]).as_deref(), Some("p:q"));
         assert_eq!(pgpass_lookup(text, ["g", "5432", "db", "v"]), None);
         assert_eq!(pgpass_lookup("h:5432:db", ["h", "5432", "db", "u"]), None);
+        // An escaped `*` is a literal star, not a wildcard.
+        let star = "\\*:*:*:*:literal\n*:*:*:*:any\n";
+        assert_eq!(pgpass_lookup(star, ["h", "5432", "db", "u"]).as_deref(), Some("any"));
+        assert_eq!(
+            pgpass_lookup(star, ["*", "5432", "db", "u"]).as_deref(),
+            Some("literal")
+        );
     }
 
     #[test]
