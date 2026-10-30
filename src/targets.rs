@@ -659,9 +659,16 @@ mod tests {
     fn bundled_targets_reset_everything() {
         // Several poolers share the test bed's Postgres, so one pooler's leak can only
         // be cleared by ending every session, not just that pooler's.
+        // Read as written: the TLS target's CA file only exists once the test bed is up.
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("targets.toml");
-        let targets = Targets::load(&path).unwrap();
-        assert!(targets.targets.iter().all(|t| matches!(t.reset, Reset::All)));
+        let file: TargetsFile = toml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        for t in file.targets {
+            assert!(
+                matches!(t.reset, Some(ResetFile::Kind(ref k)) if k == "all"),
+                "{}",
+                t.name
+            );
+        }
     }
 
     #[test]

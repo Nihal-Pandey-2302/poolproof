@@ -66,13 +66,14 @@ WARN    session-set                 calls=1022     SET search_path TO app
 ## Try it locally
 
 ```sh
-docker compose -f docker/compose.yml up -d --wait   # Postgres + 10 pooler configurations
+docker compose -f docker/compose.yml up -d --wait   # Postgres + 11 pooler configurations
 cargo run -- run
 ```
 
 Each pooler in the test bed has a pool of one server connection, so leaks between clients
 happen every time instead of by luck. `POSTGRES_IMAGE=postgres:18.4` picks the server
-version. `scripts/update-results.sh` rebuilds `results/` and `RESULTS.md` for Postgres 17
+version. One PgBouncer accepts clients over TLS only; its certificate comes from a CA
+the test bed makes when it starts (`docker/tls/out/ca.pem`). `scripts/update-results.sh` rebuilds `results/` and `RESULTS.md` for Postgres 17
 and 18 from a fresh test bed.
 
 To test your own pooler, point poolproof at it and at the Postgres server behind it:
@@ -269,8 +270,8 @@ link to the issue is the most useful contribution.
 
 ## Status
 
-Not covered yet: RDS Proxy and PgCat in the test bed, session-mode targets, a TLS pooler
-in the test bed, and COPY TO STDOUT.
+Not covered yet: RDS Proxy and PgCat in the test bed, session-mode targets, and COPY TO
+STDOUT.
 
 ## License
 

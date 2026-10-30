@@ -1,6 +1,8 @@
 # Test bed: one Postgres with several pooler versions in front of it. Every pooler
 # has a pool of ONE server connection, so state leaks between clients show up every
 # time instead of by chance. POSTGRES_IMAGE picks the server (CI runs 17 and 18).
+# Ports are published on 127.0.0.1 only. PP_PORT_<port> moves a host port, so several
+# test beds can run side by side; scripts/testbed.sh sets them all from one offset.
 name: poolproof
 
 x-pgbouncer: &pgbouncer
@@ -46,7 +48,7 @@ x-supavisor-env: &supavisor-env
 # One-shot: creates tenants (pool size 1, transaction mode) through the API.
 # Clients connect as `postgres.<tenant>`.
 x-supavisor-tenants: &supavisor-tenants
-  image: curlimages/curl:8.11.1
+  image: curlimages/curl:8.22.0
   entrypoint: ["/add-tenant.sh"]
   volumes:
     - ./supavisor/add-tenant.sh:/add-tenant.sh:ro
@@ -57,14 +59,31 @@ x-supavisor-tenants: &supavisor-tenants
     retries: 180
 
 services:
+  # One-shot: the test CA and server certificate for the TLS targets.
+  tls-certs:
+    image: ${POSTGRES_IMAGE:-postgres:17.11}
+    entrypoint: ["/make-certs.sh"]
+    user: root
+    volumes:
+      - ./tls/make-certs.sh:/make-certs.sh:ro
+      - tls:/certs
+      - ./tls/out:/out
+
   postgres:
     image: ${POSTGRES_IMAGE:-postgres:17.11}
+    # TLS for clients that ask (sslmode=disable targets don't).
+    command: ["postgres", "-c", "ssl=on", "-c", "ssl_cert_file=/tls/server.crt", "-c", "ssl_key_file=/tls/postgres.key"]
+    volumes:
+      - tls:/tls:ro
+    depends_on:
+      tls-certs:
+        condition: service_completed_successfully
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: app
     ports:
-      - "55432:5432"
+      - "127.0.0.1:${PP_PORT_55432:-55432}:5432"
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "postgres", "-d", "app"]
       interval: 1s
@@ -73,35 +92,46 @@ services:
   pgbouncer-1.24.1:
     <<: *pgbouncer
     image: edoburu/pgbouncer:v1.24.1-p1
-    ports: ["56441:6432"]
+    ports: ["127.0.0.1:${PP_PORT_56441:-56441}:6432"]
   pgbouncer-1.25.2:
     <<: *pgbouncer
     image: edoburu/pgbouncer:v1.25.2-p0
-    ports: ["56442:6432"]
+    ports: ["127.0.0.1:${PP_PORT_56442:-56442}:6432"]
   pgbouncer-1.26.1:
     <<: *pgbouncer
     image: edoburu/pgbouncer:v1.26.1-p0
-    ports: ["56443:6432"]
+    ports: ["127.0.0.1:${PP_PORT_56443:-56443}:6432"]
+  # Clients must connect with TLS.
+  pgbouncer-1.26.1-tls:
+    image: edoburu/pgbouncer:v1.26.1-p0
+    ports: ["127.0.0.1:${PP_PORT_56444:-56444}:6432"]
+    volumes:
+      - ./pgbouncer/pgbouncer-tls.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+      - tls:/tls:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   pgdog-0.1.50:
     <<: *pgdog
     image: ghcr.io/pgdogdev/pgdog:v0.1.50
-    ports: ["56451:6432"]
+    ports: ["127.0.0.1:${PP_PORT_56451:-56451}:6432"]
   pgdog-0.1.56:
     <<: *pgdog
     image: ghcr.io/pgdogdev/pgdog:v0.1.56
-    ports: ["56452:6432"]
+    ports: ["127.0.0.1:${PP_PORT_56452:-56452}:6432"]
   pgdog-0.1.62:
     <<: *pgdog
     image: ghcr.io/pgdogdev/pgdog:v0.1.62
-    ports: ["56453:6432"]
+    ports: ["127.0.0.1:${PP_PORT_56453:-56453}:6432"]
   pgdog-0.1.62-pubsub:
     <<: *pgdog
     image: ghcr.io/pgdogdev/pgdog:v0.1.62
     volumes:
       - ./pgdog/pgdog-pubsub.toml:/pgdog/pgdog.toml:ro
       - ./pgdog/users.toml:/pgdog/users.toml:ro
-    ports: ["56454:6432"]
+    ports: ["127.0.0.1:${PP_PORT_56454:-56454}:6432"]
 
   supavisor-meta:
     image: postgres:17.11
@@ -121,7 +151,7 @@ services:
     environment:
       <<: *supavisor-env
       DATABASE_URL: ecto://postgres:postgres@supavisor-meta:5432/supavisor_2_9
-    ports: ["56461:6543"]
+    ports: ["127.0.0.1:${PP_PORT_56461:-56461}:6543"]
   supavisor-2.9.13-tenants:
     <<: *supavisor-tenants
     environment:
@@ -135,10 +165,14 @@ services:
     environment:
       <<: *supavisor-env
       DATABASE_URL: ecto://postgres:postgres@supavisor-meta:5432/supavisor_2_10
-    ports: ["56462:6543"]
+    ports: ["127.0.0.1:${PP_PORT_56462:-56462}:6543"]
   supavisor-2.10.0-rc.1-tenants:
     <<: *supavisor-tenants
     environment:
       SUPAVISOR: supavisor-2.10.0-rc.1:4000
       TENANTS: pp:default.json ppstrict:strict.json
     depends_on: [supavisor-2.10.0-rc.1]
+
+volumes:
+  # The test CA and server keys (see tls/make-certs.sh).
+  tls:
