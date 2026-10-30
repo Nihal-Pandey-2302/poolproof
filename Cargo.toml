@@ -27,7 +27,7 @@ anyhow = "1.0.104"
 bytes = "1.12.1"
 clap = { version = "4.6.7", features = ["derive"] }
 csv = "1.4.0"
-fallible-iterator = "0.2.0"
+fallible-iterator = "0.3.0"
 pg_query = "18.1.0"
 postgres-protocol = "0.6.12"
 serde = { version = "1.0.229", features = ["derive"] }
