@@ -6,6 +6,7 @@ use tokio::time::{Instant, timeout};
 use super::compare::{FailKind, Mismatch, Verdict, baseline_failure};
 use super::pg::{connect, connect_with, wait_ready};
 use super::steps::run_steps;
+use super::tls::TlsSetup;
 use super::{Outcome, Timeouts};
 use crate::scenario::Scenario;
 use crate::targets::{Endpoint, Statement};
@@ -59,6 +60,8 @@ async fn probe_until(endpoint: &Endpoint, within: Duration, t: &Timeouts) -> Res
     loop {
         match probe(endpoint, t).await {
             Ok(()) => return Ok(()),
+            // A missing or unreadable CA file won't appear by waiting.
+            Err(e) if e.downcast_ref::<TlsSetup>().is_some() => return Err(e),
             Err(e) if Instant::now() >= deadline => return Err(e.context(format!("no answer within {within:?}"))),
             Err(_) => tokio::time::sleep(Duration::from_millis(200)).await,
         }

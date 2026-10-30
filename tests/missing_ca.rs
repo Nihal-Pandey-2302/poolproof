@@ -20,12 +20,19 @@ fn missing_ca_file_is_an_error_for_its_target_only() {
         ),
     )
     .unwrap();
+    let started = std::time::Instant::now();
     let out = Command::new(env!("CARGO_BIN_EXE_poolproof"))
         .args(["run", "--targets", path.to_str().unwrap(), "--format", "json"])
         .args(["--filter", "set-isolated-between-clients"])
         .output()
         .unwrap();
     assert_eq!(out.status.code(), Some(1), "{}", String::from_utf8_lossy(&out.stderr));
+    // Not retried for the 10 s a pooler gets to come up: the file won't appear.
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "{:?}",
+        started.elapsed()
+    );
     let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     for r in report["results"].as_array().unwrap() {
         let reason = r["reason"].as_str().unwrap_or_default();

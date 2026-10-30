@@ -153,6 +153,7 @@ impl Tls {
     /// The rustls config, or `None` without TLS. The root certificates are read here,
     /// on first use, so a missing or unreadable file is an error for this endpoint's
     /// connections only, not for loading every target.
+    /// Errors carry the `TlsSetup` context: retrying won't help.
     pub fn client_config(&self) -> Result<Option<Arc<ClientConfig>>> {
         if self.mode == SslMode::Disable {
             return Ok(None);
@@ -160,6 +161,12 @@ impl Tls {
         if let Some(config) = self.config.get() {
             return Ok(Some(config.clone()));
         }
+        let config = self.build().context(TlsSetup)?;
+        // Another connection may have built it meanwhile; either is the same.
+        Ok(Some(self.config.get_or_init(|| Arc::new(config)).clone()))
+    }
+
+    fn build(&self) -> Result<ClientConfig> {
         let provider = Arc::new(rustls::crypto::ring::default_provider());
         let verifier: Arc<dyn ServerCertVerifier> = match (self.check, &self.roots) {
             (Check::None, _) | (_, None) => Arc::new(NoCheck(provider.clone())),
@@ -180,8 +187,18 @@ impl Tls {
             .dangerous()
             .with_custom_certificate_verifier(verifier)
             .with_no_client_auth();
-        // Another connection may have built it meanwhile; either is the same.
-        Ok(Some(self.config.get_or_init(|| Arc::new(config)).clone()))
+        Ok(config)
+    }
+}
+
+/// Marks an error building the TLS config, e.g. a missing CA file: the same on every
+/// try, so callers that retry connecting can stop at once.
+#[derive(Debug)]
+pub struct TlsSetup;
+
+impl fmt::Display for TlsSetup {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("TLS setup failed")
     }
 }
 
