@@ -1,0 +1,63 @@
+# Self-test targets: tools/pp-proxy in the docker test bed, started with
+#   docker compose -f docker/compose.yml --profile selftest up -d --wait postgres pp-proxy
+# Expected verdicts: selftest/expected.toml. Same reset as targets.toml.
+
+[[target]]
+name = "selftest-passthrough"
+product = "pp-proxy"
+version = "dev"
+config = "none"
+pooler = "postgres://postgres:postgres@127.0.0.1:56471/app"
+direct = "postgres://postgres:postgres@127.0.0.1:55432/app"
+mode = "transaction"
+reset = ["SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'"]
+
+[[target]]
+name = "selftest-drop-pipelined"
+product = "pp-proxy"
+version = "dev"
+config = "drop-pipelined"
+pooler = "postgres://postgres:postgres@127.0.0.1:56472/app"
+direct = "postgres://postgres:postgres@127.0.0.1:55432/app"
+mode = "transaction"
+reset = ["SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'"]
+
+[[target]]
+name = "selftest-swallow-error"
+product = "pp-proxy"
+version = "dev"
+config = "swallow-error"
+pooler = "postgres://postgres:postgres@127.0.0.1:56473/app"
+direct = "postgres://postgres:postgres@127.0.0.1:55432/app"
+mode = "transaction"
+reset = ["SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'"]
+
+[[target]]
+name = "selftest-no-copydone"
+product = "pp-proxy"
+version = "dev"
+config = "no-copydone"
+pooler = "postgres://postgres:postgres@127.0.0.1:56474/app"
+direct = "postgres://postgres:postgres@127.0.0.1:55432/app"
+mode = "transaction"
+reset = ["SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'"]
+
+[[target]]
+name = "selftest-wrong-tag"
+product = "pp-proxy"
+version = "dev"
+config = "wrong-tag"
+pooler = "postgres://postgres:postgres@127.0.0.1:56475/app"
+direct = "postgres://postgres:postgres@127.0.0.1:55432/app"
+mode = "transaction"
+reset = ["SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'"]
+
+[[target]]
+name = "selftest-shared-server"
+product = "pp-proxy"
+version = "dev"
+config = "shared-server"
+pooler = "postgres://postgres:postgres@127.0.0.1:56476/app"
+direct = "postgres://postgres:postgres@127.0.0.1:55432/app"
+mode = "transaction"
+reset = ["SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'"]

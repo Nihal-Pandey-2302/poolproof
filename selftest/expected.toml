@@ -1,5 +1,5 @@
 # Expected verdicts for the self-test targets (tools/pp-proxy). Checked with
-#   pp-selftest-check selftest/expected.toml report.json
+#   pp-selftest-check selftest/expected.toml report.json scenarios
 # Any other verdict is a harness bug, a scenario bug or a proxy bug, and fails CI.
 #
 # Values: pass | silent | error | hang | harness-error | skip, or a table with
