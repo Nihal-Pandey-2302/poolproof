@@ -62,7 +62,7 @@ WARN    session-set                 calls=1022     SET search_path TO app
 ## Try it locally
 
 ```sh
-docker compose -f docker/compose.yml up -d --wait   # Postgres + 10 pooler configurations
+docker compose -f docker/compose.yml up -d --wait   # Postgres + 12 pooler configurations
 cargo run -- run
 ```
 
@@ -234,7 +234,7 @@ the workflow.
 
 ## Status
 
-Not covered yet: RDS Proxy and PgCat in the test bed, session-mode targets, TLS, and
+Not covered yet: RDS Proxy in the test bed, session-mode targets, TLS, and
 COPY TO STDOUT.
 
 ## License

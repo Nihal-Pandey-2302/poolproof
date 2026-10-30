@@ -105,6 +105,25 @@ services:
       - ./pgdog/users.toml:/pgdog/users.toml:ro
     ports: ["127.0.0.1:${PP_PORT_56454:-56454}:6432"]
 
+  pgcat-1.2.0:
+    image: ghcr.io/postgresml/pgcat:v1.2.0
+    command: ["pgcat", "/etc/pgcat/pgcat.toml"]
+    volumes:
+      - ./pgcat/pgcat.toml:/etc/pgcat/pgcat.toml:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports: ["127.0.0.1:${PP_PORT_56481:-56481}:6432"]
+
+  odyssey-1.5.2:
+    image: ghcr.io/yandex/odyssey:1.5.2
+    volumes:
+      - ./odyssey/odyssey.conf:/etc/odyssey/odyssey.conf:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports: ["127.0.0.1:${PP_PORT_56491:-56491}:6432"]
+
   supavisor-meta:
     image: postgres:17.11
     environment:
