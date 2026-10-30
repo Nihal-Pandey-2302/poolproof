@@ -273,14 +273,16 @@ impl Endpoint {
         // The parse error never includes the URL, so it can't leak a password.
         let mut config = Config::from_str(&url).context("invalid connection URL")?;
         // libpq's default is prefer: TLS when the server offers it, without checks.
-        let mode = match sslmode.or_else(|| env("PGSSLMODE")) {
-            Some(mode) => SslMode::parse(&mode)?,
-            None => SslMode::Prefer,
-        };
         let roots = sslrootcert.or_else(|| env("PGSSLROOTCERT")).map(|r| match r.as_str() {
             "system" => RootCerts::System,
             _ => RootCerts::File(r.into()),
         });
+        let mode = match sslmode.or_else(|| env("PGSSLMODE")) {
+            Some(mode) => SslMode::parse(&mode)?,
+            // libpq 16+: the system store implies verify-full.
+            None if roots == Some(RootCerts::System) => SslMode::VerifyFull,
+            None => SslMode::Prefer,
+        };
         config.ssl_mode(mode.driver_mode());
         let tls = Tls::new(mode, roots, default_root(env))?;
         // An empty password counts as none, as in libpq.
@@ -320,9 +322,12 @@ fn take_tls_params(url: &str) -> Result<(String, Option<String>, Option<String>)
         _ => false,
     };
     let rest = if url.starts_with("postgres://") || url.starts_with("postgresql://") {
-        let Some((base, query)) = url.split_once('?') else {
+        // A `?` before the `@` is part of the password, not the start of the query.
+        let after_userinfo = url.find('@').map_or(0, |i| i + 1);
+        let Some(at) = url[after_userinfo..].find('?').map(|i| after_userinfo + i) else {
             return Ok((url.to_string(), None, None));
         };
+        let (base, query) = (&url[..at], &url[at + 1..]);
         let kept: Vec<&str> = query
             .split('&')
             .filter(|pair| {
@@ -711,6 +716,10 @@ mod tests {
         assert_eq!(root.as_deref(), Some("/tmp/ca x.pem"));
         let (rest, ..) = take_tls_params("postgresql://u@h/db?sslmode=require").unwrap();
         assert_eq!(rest, "postgresql://u@h/db");
+        // A `?` in the password is not the query.
+        let (rest, mode, _) = take_tls_params("postgres://u:p?w@h/db?sslmode=require").unwrap();
+        assert_eq!(rest, "postgres://u:p?w@h/db");
+        assert_eq!(mode.as_deref(), Some("require"));
 
         let (rest, mode, root) =
             take_tls_params("host=h sslmode = 'verify-ca' password='a b\\'c\\\\' sslrootcert=/x dbname=d").unwrap();

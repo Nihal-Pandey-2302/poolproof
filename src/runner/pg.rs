@@ -9,6 +9,7 @@ use tokio::time::timeout;
 use tokio_postgres::{AsyncMessage, CancelToken, Client, Connection, NoTls, SimpleQueryMessage, Statement};
 use tokio_postgres_rustls::MakeRustlsConnect;
 
+use super::tls::wants_client_certificate;
 use super::{Outcome, Timeouts};
 use crate::scenario::Requirement;
 use crate::targets::Endpoint;
@@ -85,9 +86,17 @@ pub(super) async fn connect(endpoint: &Endpoint, t: &Timeouts) -> Result<(Client
         }
         Some(tls) => {
             let tls = MakeRustlsConnect::new((**tls).clone());
-            let (client, connection) = timeout(t.connect, config.connect(tls))
+            let (client, connection) = match timeout(t.connect, config.connect(tls))
                 .await
-                .context("connect timed out")??;
+                .context("connect timed out")?
+            {
+                Ok(connected) => connected,
+                Err(e) if wants_client_certificate(&e) => {
+                    return Err(anyhow::Error::from(e)
+                        .context("the server wants a client certificate, which poolproof doesn't support yet"));
+                }
+                Err(e) => return Err(e.into()),
+            };
             (client, spawn_driver(connection, notices.clone()))
         }
     };

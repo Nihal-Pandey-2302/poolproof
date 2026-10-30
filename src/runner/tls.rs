@@ -60,6 +60,24 @@ impl fmt::Display for SslMode {
     }
 }
 
+/// Whether a TLS error means the server asked for a client certificate, which poolproof
+/// doesn't send yet.
+pub fn wants_client_certificate(err: &(dyn std::error::Error + 'static)) -> bool {
+    let mut cause = Some(err);
+    while let Some(e) = cause {
+        let rustls_error = e.downcast_ref::<rustls::Error>().or_else(|| {
+            e.downcast_ref::<std::io::Error>()
+                .and_then(|io| io.get_ref())
+                .and_then(|inner| inner.downcast_ref::<rustls::Error>())
+        });
+        if let Some(rustls::Error::AlertReceived(rustls::AlertDescription::CertificateRequired)) = rustls_error {
+            return true;
+        }
+        cause = e.source();
+    }
+    false
+}
+
 /// Where trusted root certificates come from (libpq's `sslrootcert`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RootCerts {
@@ -105,6 +123,11 @@ impl Tls {
     ///
     /// `default_root` is libpq's `~/.postgresql/root.crt`.
     pub fn new(mode: SslMode, roots: Option<RootCerts>, default_root: Option<PathBuf>) -> Result<Self> {
+        // As in libpq 16+: the system store trusts every public CA, so anything short of
+        // a host name check would accept any public certificate.
+        if roots == Some(RootCerts::System) && mode != SslMode::VerifyFull {
+            bail!("weak sslmode \"{mode}\" may not be used with sslrootcert=system (use \"verify-full\")");
+        }
         if mode == SslMode::Disable {
             return Ok(Tls {
                 mode,
@@ -305,6 +328,8 @@ mod tests {
     struct Pki {
         ca_file: PathBuf,
         server: Arc<ServerConfig>,
+        /// The same certificate, but the server insists on a client certificate.
+        server_wanting_client_cert: Arc<ServerConfig>,
     }
 
     fn pki(tag: &str) -> Pki {
@@ -318,18 +343,32 @@ mod tests {
             .unwrap();
         let ca_file = std::env::temp_dir().join(format!("poolproof-tls-{}-{tag}.pem", std::process::id()));
         std::fs::write(&ca_file, ca.pem()).unwrap();
-        let server = ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
-            .with_safe_default_protocol_versions()
-            .unwrap()
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        let builder = || {
+            ServerConfig::builder_with_provider(provider.clone())
+                .with_safe_default_protocol_versions()
+                .unwrap()
+        };
+        let chain = vec![cert.der().clone()];
+        let key = || PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der()));
+        let server = builder()
             .with_no_client_auth()
-            .with_single_cert(
-                vec![cert.der().clone()],
-                PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der())),
-            )
+            .with_single_cert(chain.clone(), key())
+            .unwrap();
+        let mut roots = RootCertStore::empty();
+        roots.add(ca.der().clone()).unwrap();
+        let client_verifier =
+            rustls::server::WebPkiClientVerifier::builder_with_provider(Arc::new(roots), provider.clone())
+                .build()
+                .unwrap();
+        let server_wanting_client_cert = builder()
+            .with_client_cert_verifier(client_verifier)
+            .with_single_cert(chain, key())
             .unwrap();
         Pki {
             ca_file,
             server: Arc::new(server),
+            server_wanting_client_cert: Arc::new(server_wanting_client_cert),
         }
     }
 
@@ -367,10 +406,14 @@ mod tests {
     /// A Postgres stand-in on a local port. With `offer_tls` it answers SSLRequest with
     /// `S` and the certificate from `pki`, else with `N`.
     async fn server(pki: &Pki, offer_tls: bool) -> (u16, Events) {
+        server_with(pki.server.clone(), offer_tls).await
+    }
+
+    async fn server_with(config: Arc<ServerConfig>, offer_tls: bool) -> (u16, Events) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let events = Events::default();
-        let acceptor = TlsAcceptor::from(pki.server.clone());
+        let acceptor = TlsAcceptor::from(config);
         let log = events.clone();
         tokio::spawn(async move {
             while let Ok((mut tcp, _)) = listener.accept().await {
@@ -430,6 +473,9 @@ mod tests {
             fails("127.0.0.1", format!("sslmode=verify-full&sslrootcert={ca}")),
             ok("127.0.0.1", format!("sslmode=verify-ca&sslrootcert={ca}")),
             fails("localhost", format!("sslmode=verify-ca&sslrootcert={wrong_ca}")),
+            // Wrong CA and wrong name: verify-ca turns a name error into success, which is
+            // only right as long as rustls checks the chain first.
+            fails("127.0.0.1", format!("sslmode=verify-ca&sslrootcert={wrong_ca}")),
             ok("127.0.0.1", "sslmode=require".to_string()),
             // With a root certificate, require checks the chain like verify-ca.
             fails("127.0.0.1", format!("sslmode=require&sslrootcert={wrong_ca}")),
@@ -482,6 +528,34 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
         assert_eq!(*events.lock().unwrap(), ["tls startup", "tls cancel"]);
+    }
+
+    #[test]
+    fn system_roots_need_verify_full() {
+        for mode in [SslMode::Disable, SslMode::Prefer, SslMode::Require, SslMode::VerifyCa] {
+            let err = Tls::new(mode, Some(RootCerts::System), None).err().unwrap();
+            assert_eq!(
+                err.to_string(),
+                format!("weak sslmode \"{mode}\" may not be used with sslrootcert=system (use \"verify-full\")")
+            );
+        }
+        let e = Endpoint::parse("postgres://u@localhost/db?sslrootcert=system").unwrap();
+        assert_eq!(e.tls().mode, SslMode::VerifyFull);
+    }
+
+    #[tokio::test]
+    async fn says_when_the_server_wants_a_client_certificate() {
+        let pki = pki("client-cert");
+        let (port, _) = server_with(pki.server_wanting_client_cert.clone(), true).await;
+        let e = endpoint(
+            "localhost",
+            port,
+            &format!("sslmode=verify-full&sslrootcert={}", pki.ca_file.display()),
+        );
+        let (raw, pg) = connect_both(&e).await;
+        for err in [raw.unwrap_err(), pg.unwrap_err()] {
+            assert!(format!("{err:#}").contains("wants a client certificate"), "{err:#}");
+        }
     }
 
     #[test]

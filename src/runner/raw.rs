@@ -24,7 +24,7 @@ use tokio_postgres::config::Host;
 use tokio_rustls::TlsConnector;
 use tokio_rustls::client::TlsStream;
 
-use super::tls::{SslMode, Tls};
+use super::tls::{SslMode, Tls, wants_client_certificate};
 use crate::targets::Endpoint;
 
 /// One frontend message, written in a scenario as e.g. `parse s1 SELECT 1`.
@@ -176,7 +176,8 @@ pub struct ExchangeOpts {
 enum Next {
     Message(Message),
     Timeout,
-    Closed,
+    /// The connection ended, with the read error if there was one.
+    Closed(Option<io::Error>),
 }
 
 /// The connection under a `send` client: plain TCP, or TLS after an SSLRequest.
@@ -235,10 +236,15 @@ async fn negotiate_tls(mut tcp: TcpStream, tls: &Tls, host: &str) -> Result<RawS
     match answer[0] {
         b'S' => {
             let name = ServerName::try_from(host.to_string()).context("server name for TLS")?;
-            let stream = TlsConnector::from(config.clone())
-                .connect(name, tcp)
-                .await
-                .context("TLS handshake")?;
+            let stream = match TlsConnector::from(config.clone()).connect(name, tcp).await {
+                Ok(stream) => stream,
+                Err(e) if wants_client_certificate(&e) => {
+                    return Err(anyhow::Error::from(e).context(
+                        "TLS handshake: the server wants a client certificate, which poolproof doesn't support yet",
+                    ));
+                }
+                Err(e) => return Err(anyhow::Error::from(e).context("TLS handshake")),
+            };
             Ok(RawStream::Tls(Box::new(stream)))
         }
         b'N' if tls.mode == SslMode::Prefer => Ok(RawStream::Plain(tcp)),
@@ -288,7 +294,14 @@ impl RawConn {
             let message = match conn.next(deadline).await? {
                 Next::Message(m) => m,
                 Next::Timeout => bail!("startup timed out"),
-                Next::Closed => bail!("connection closed during startup"),
+                // With TLS 1.3 the server refuses a missing client certificate only after
+                // the handshake, so it shows up here.
+                Next::Closed(Some(e)) if wants_client_certificate(&e) => {
+                    return Err(anyhow::Error::from(e)
+                        .context("the server wants a client certificate, which poolproof doesn't support yet"));
+                }
+                Next::Closed(Some(e)) => return Err(anyhow::Error::from(e).context("connection closed during startup")),
+                Next::Closed(None) => bail!("connection closed during startup"),
             };
             let mut out = BytesMut::new();
             match message {
@@ -305,6 +318,8 @@ impl RawConn {
                     frontend::password_message(hash.as_bytes(), &mut out)?;
                 }
                 Message::AuthenticationSasl(_) => {
+                    // gs2 flag "n" (RFC 5802): no channel binding, also over TLS. Raw clients
+                    // test protocol handling, not authentication.
                     let s = ScramSha256::new(&password, ChannelBinding::unsupported());
                     frontend::sasl_initial_response("SCRAM-SHA-256", s.message(), &mut out)?;
                     scram = Some(s);
@@ -341,7 +356,8 @@ impl RawConn {
             }
             match tokio::time::timeout_at(deadline, self.stream.read_buf(&mut self.buf)).await {
                 Err(_) => return Ok(Next::Timeout),
-                Ok(Ok(0)) | Ok(Err(_)) => return Ok(Next::Closed),
+                Ok(Ok(0)) => return Ok(Next::Closed(None)),
+                Ok(Err(e)) => return Ok(Next::Closed(Some(e))),
                 Ok(Ok(_)) => {}
             }
         }
@@ -376,7 +392,7 @@ impl RawConn {
                     lines.push("TIMEOUT".to_string());
                     break;
                 }
-                Next::Closed => {
+                Next::Closed(_) => {
                     lines.push("CLOSED".to_string());
                     break;
                 }
