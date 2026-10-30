@@ -1,0 +1,15 @@
+name = "set-does-not-leak-after-disconnect"
+description = "Settings from a client that disconnected must not show up for the next client."
+refs = ["https://github.com/pgdogdev/pgdog/issues/1850"]
+
+[[step]]
+client = "a"
+simple = "SET work_mem = '7MB'"
+
+[[step]]
+client = "a"
+disconnect = true
+
+[[step]]
+client = "b"
+simple = "SHOW work_mem"

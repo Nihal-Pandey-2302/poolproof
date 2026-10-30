@@ -1,0 +1,20 @@
+name = "prepare-in-aborted-transaction"
+description = "Parse inside a failed transaction must return 25P02, not succeed from a cache."
+refs = ["https://github.com/pgdogdev/pgdog/issues/1670"]
+
+[[step]]
+client = "a"
+simple = "BEGIN"
+
+[[step]]
+client = "a"
+simple = "SELECT 1/0"
+
+[[step]]
+client = "a"
+prepare = "SELECT 'after error'::text"
+name = "q"
+
+[[step]]
+client = "a"
+simple = "ROLLBACK"

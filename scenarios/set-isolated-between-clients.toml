@@ -1,0 +1,15 @@
+name = "set-isolated-between-clients"
+description = "A plain SET from one client must not change the setting another client sees."
+refs = ["https://github.com/pgdogdev/pgdog/issues/1850"]
+
+[[step]]
+client = "a"
+simple = "SET work_mem = '7MB'"
+
+[[step]]
+client = "b"
+simple = "SET work_mem = '9MB'"
+
+[[step]]
+client = "a"
+simple = "SHOW work_mem"

@@ -1,0 +1,40 @@
+# Local test bed: one Postgres, each pooler in front of it with a pool of ONE
+# server connection. A single shared server connection makes state leaks
+# between clients show up every time instead of by chance.
+name: poolproof
+
+services:
+  postgres:
+    image: postgres:17.11
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: app
+    ports:
+      - "55432:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "app"]
+      interval: 1s
+      retries: 30
+
+  pgbouncer:
+    image: edoburu/pgbouncer:v1.26.1-p0
+    volumes:
+      - ./pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+    ports:
+      - "56432:6432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  pgdog:
+    image: ghcr.io/pgdogdev/pgdog:v0.1.62
+    volumes:
+      - ./pgdog/pgdog.toml:/pgdog/pgdog.toml:ro
+      - ./pgdog/users.toml:/pgdog/users.toml:ro
+    ports:
+      - "56433:6432"
+    depends_on:
+      postgres:
+        condition: service_healthy

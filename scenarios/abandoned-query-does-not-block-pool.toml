@@ -1,0 +1,12 @@
+name = "abandoned-query-does-not-block-pool"
+description = "A client that drops its connection mid-query must not block the next client until the query ends."
+# The sleep must outlast the 10s step timeout, or a pooler that blocks and then serves would pass.
+
+[[step]]
+client = "a"
+simple = "SELECT pg_sleep(15)::text"
+abandon_after_ms = 300
+
+[[step]]
+client = "b"
+simple = "SELECT 'b served'::text"

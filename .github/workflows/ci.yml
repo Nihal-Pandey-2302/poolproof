@@ -1,0 +1,46 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+
+      - name: Start test bed
+        run: docker compose -f docker/compose.yml up -d --wait
+
+      - name: Run scenarios
+        run: |
+          cargo build
+          # Exit 1 means some scenario failed, which is expected; 2 means poolproof itself broke.
+          set +e
+          ./target/debug/poolproof run --format markdown > results.new.md
+          code=$?
+          set -e
+          cat results.new.md >> "$GITHUB_STEP_SUMMARY"
+          if [ "$code" -gt 1 ]; then exit "$code"; fi
+
+      # Only the verdict table is compared. Error text in the details can depend on
+      # timing; verdicts must not.
+      - name: Compare with RESULTS.md
+        run: |
+          if ! diff <(grep '^|' RESULTS.md) <(grep '^|' results.new.md); then
+            echo "::error::Verdicts changed. Run 'poolproof run --format markdown > RESULTS.md' and commit it."
+            exit 1
+          fi
+
+      - name: Pooler logs
+        if: failure()
+        run: docker compose -f docker/compose.yml logs

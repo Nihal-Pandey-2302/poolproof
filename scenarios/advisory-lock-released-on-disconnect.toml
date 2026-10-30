@@ -1,0 +1,16 @@
+name = "advisory-lock-released-on-disconnect"
+description = "A session advisory lock must be released when the client that took it disconnects."
+refs = ["https://github.com/pgdogdev/pgdog/issues/1407"]
+
+[[step]]
+client = "a"
+simple = "SELECT pg_advisory_lock(424242)::text"
+
+[[step]]
+client = "a"
+disconnect = true
+
+[[step]]
+client = "check"
+direct = true
+simple = "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 424242"

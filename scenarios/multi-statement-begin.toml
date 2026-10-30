@@ -1,0 +1,18 @@
+name = "multi-statement-begin"
+description = "A simple query that starts with BEGIN must run every statement in the string."
+refs = ["https://github.com/pgdogdev/pgdog/issues/1849"]
+setup = ["DROP TABLE IF EXISTS pp_multi", "CREATE TABLE pp_multi (x int)"]
+teardown = ["DROP TABLE IF EXISTS pp_multi"]
+
+[[step]]
+client = "app"
+simple = "BEGIN; INSERT INTO pp_multi VALUES (1); COMMIT"
+
+[[step]]
+client = "app"
+disconnect = true
+
+[[step]]
+client = "check"
+direct = true
+simple = "SELECT count(*) FROM pp_multi"

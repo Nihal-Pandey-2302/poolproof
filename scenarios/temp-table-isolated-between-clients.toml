@@ -1,0 +1,11 @@
+name = "temp-table-isolated-between-clients"
+description = "A temp table created by one client must not be visible to another client."
+refs = ["https://github.com/pgdogdev/pgdog/issues/1733"]
+
+[[step]]
+client = "a"
+simple = "CREATE TEMP TABLE pp_tmp (x int)"
+
+[[step]]
+client = "b"
+simple = "SELECT count(*) FROM pp_tmp"

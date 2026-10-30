@@ -1,0 +1,197 @@
+use std::path::Path;
+use std::time::Duration;
+
+use anyhow::{Context, Result, bail};
+use serde::{Deserialize, Serialize};
+
+/// Pooling mode of a target. Scenarios list the modes they apply to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PoolMode {
+    Session,
+    Transaction,
+    Statement,
+}
+
+impl std::fmt::Display for PoolMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = match self {
+            PoolMode::Session => "session",
+            PoolMode::Transaction => "transaction",
+            PoolMode::Statement => "statement",
+        };
+        f.write_str(name)
+    }
+}
+
+fn all_modes() -> Vec<PoolMode> {
+    vec![PoolMode::Session, PoolMode::Transaction, PoolMode::Statement]
+}
+
+/// A scenario is a script of client actions. It runs once against plain Postgres
+/// (every client gets its own connection) and once through the pooler. Any step
+/// whose outcome differs is a failure.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Scenario {
+    pub name: String,
+    pub description: String,
+    /// Links to the bug reports this scenario came from.
+    #[serde(default)]
+    pub refs: Vec<String>,
+    #[serde(default = "all_modes")]
+    pub modes: Vec<PoolMode>,
+    /// Statements run directly on Postgres before each run.
+    #[serde(default)]
+    pub setup: Vec<String>,
+    /// Statements run directly on Postgres after each run.
+    #[serde(default)]
+    pub teardown: Vec<String>,
+    #[serde(rename = "step")]
+    pub steps: Vec<Step>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Step {
+    /// Client name. A client connects on its first step.
+    pub client: String,
+    /// Connect straight to Postgres, bypassing the pooler. Used to check server state.
+    #[serde(default)]
+    pub direct: bool,
+    /// Run SQL with the simple query protocol. May contain several statements.
+    pub simple: Option<String>,
+    /// With `simple`: drop the connection without Terminate if the query hasn't
+    /// finished after this many ms, like a client that crashed or timed out.
+    pub abandon_after_ms: Option<u64>,
+    /// Prepare SQL with the extended protocol and store it under `name`.
+    pub prepare: Option<String>,
+    pub name: Option<String>,
+    /// Execute a statement this client prepared earlier.
+    pub execute: Option<String>,
+    /// Close the client connection.
+    #[serde(default)]
+    pub disconnect: bool,
+    #[serde(default)]
+    pub compare: Compare,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Compare {
+    /// Rows, row counts and SQLSTATE must match.
+    #[default]
+    Full,
+    /// Only success vs. error (and the SQLSTATE) must match.
+    Status,
+    /// Run the step but don't compare it.
+    Ignore,
+}
+
+pub enum Action<'a> {
+    Simple(&'a str),
+    Abandon { sql: &'a str, after: Duration },
+    Prepare { sql: &'a str, name: &'a str },
+    Execute(&'a str),
+    Disconnect,
+}
+
+impl Step {
+    pub fn action(&self) -> Result<Action<'_>> {
+        let set = [
+            self.simple.is_some(),
+            self.prepare.is_some(),
+            self.execute.is_some(),
+            self.disconnect,
+        ]
+        .iter()
+        .filter(|s| **s)
+        .count();
+        if set != 1 {
+            bail!(
+                "step for client '{}' must have exactly one of simple, prepare, execute, disconnect",
+                self.client
+            );
+        }
+        if let Some(sql) = &self.simple {
+            return Ok(match self.abandon_after_ms {
+                Some(ms) => Action::Abandon { sql, after: Duration::from_millis(ms) },
+                None => Action::Simple(sql),
+            });
+        }
+        if self.abandon_after_ms.is_some() {
+            bail!("abandon_after_ms for client '{}' only works with simple", self.client);
+        }
+        if let Some(sql) = &self.prepare {
+            let Some(name) = &self.name else {
+                bail!("prepare step for client '{}' needs a name", self.client);
+            };
+            return Ok(Action::Prepare { sql, name });
+        }
+        if let Some(name) = &self.execute {
+            return Ok(Action::Execute(name));
+        }
+        Ok(Action::Disconnect)
+    }
+
+    pub fn describe(&self) -> String {
+        let via = if self.direct { " (direct)" } else { "" };
+        let what = match self.action() {
+            Ok(Action::Simple(sql)) => format!("simple: {sql}"),
+            Ok(Action::Abandon { sql, after }) => format!("abandon after {after:?}: {sql}"),
+            Ok(Action::Prepare { sql, name }) => format!("prepare {name}: {sql}"),
+            Ok(Action::Execute(name)) => format!("execute {name}"),
+            Ok(Action::Disconnect) => "disconnect".to_string(),
+            Err(e) => e.to_string(),
+        };
+        format!("[{}{via}] {what}", self.client)
+    }
+}
+
+pub fn load_dir(dir: &Path) -> Result<Vec<Scenario>> {
+    let mut paths: Vec<_> = std::fs::read_dir(dir)
+        .with_context(|| format!("reading scenario dir {}", dir.display()))?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|e| e == "toml"))
+        .collect();
+    paths.sort();
+
+    let mut scenarios = Vec::with_capacity(paths.len());
+    for path in paths {
+        let text = std::fs::read_to_string(&path)?;
+        let scenario: Scenario =
+            toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+        for step in &scenario.steps {
+            step.action()
+                .with_context(|| format!("in {}", path.display()))?;
+        }
+        scenarios.push(scenario);
+    }
+    Ok(scenarios)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bundled_scenarios_parse() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("scenarios");
+        let scenarios = load_dir(&dir).unwrap();
+        assert!(!scenarios.is_empty());
+    }
+
+    #[test]
+    fn step_needs_exactly_one_action() {
+        let step: Step = toml::from_str("client = \"a\"\nsimple = \"SELECT 1\"\ndisconnect = true").unwrap();
+        assert!(step.action().is_err());
+    }
+
+    #[test]
+    fn abandon_needs_simple() {
+        let step: Step = toml::from_str("client = \"a\"\nexecute = \"q\"\nabandon_after_ms = 100").unwrap();
+        assert!(step.action().is_err());
+        let step: Step = toml::from_str("client = \"a\"\nsimple = \"SELECT 1\"\nabandon_after_ms = 100").unwrap();
+        assert!(matches!(step.action(), Ok(Action::Abandon { .. })));
+    }
+}

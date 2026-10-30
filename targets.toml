@@ -1,0 +1,20 @@
+# Targets for the local docker test bed (docker compose -f docker/compose.yml up -d).
+# Point these at your own pooler to test your setup.
+#
+# `reset` runs on `direct` before every run. Here it terminates every other session
+# on the database, so each scenario starts on fresh server connections. Only use it
+# on a database nothing else is connected to.
+
+[[target]]
+name = "pgbouncer-1.26-txn"
+pooler = "postgres://postgres:postgres@127.0.0.1:56432/app"
+direct = "postgres://postgres:postgres@127.0.0.1:55432/app"
+mode = "transaction"
+reset = ["SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'"]
+
+[[target]]
+name = "pgdog-0.1.62-txn"
+pooler = "postgres://postgres:postgres@127.0.0.1:56433/app"
+direct = "postgres://postgres:postgres@127.0.0.1:55432/app"
+mode = "transaction"
+reset = ["SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'"]
