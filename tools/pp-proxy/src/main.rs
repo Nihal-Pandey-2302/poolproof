@@ -62,7 +62,9 @@ async fn main() {
         let pool = (fault == Fault::SharedServer).then(|| Arc::new(shared::Pool::new(login.clone())));
         tasks.push(tokio::spawn(async move {
             loop {
+                // Out of file descriptors and the like: don't spin.
                 let Ok((client, _)) = listener.accept().await else {
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                     continue;
                 };
                 let _ = client.set_nodelay(true);
@@ -95,8 +97,7 @@ async fn per_client(client: TcpStream, upstream: &str, fault: Fault) -> io::Resu
     if fault == Fault::Refuse {
         return Ok(());
     }
-    let mut server = TcpStream::connect(upstream).await?;
-    server.set_nodelay(true)?;
+    let mut server = wire::connect(upstream).await?;
     if fault == Fault::None {
         let mut client = client;
         tokio::io::copy_bidirectional(&mut client, &mut server).await?;
