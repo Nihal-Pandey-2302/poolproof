@@ -90,19 +90,20 @@ impl<R: AsyncRead + Unpin> Reader<R> {
         Ok(Some((code, raw)))
     }
 
-    /// Tags of the complete messages already buffered, without consuming them.
-    pub fn buffered_tags(&self) -> Vec<u8> {
-        let mut tags = Vec::new();
+    /// The complete messages already buffered, as (tag, body), without consuming them.
+    pub fn buffered(&self) -> Vec<(u8, &[u8])> {
+        let mut out = Vec::new();
         let mut rest = &self.buf[..];
         while rest.len() >= 5 {
-            let len = (&rest[1..5]).get_i32() as usize;
-            if len < 4 || rest.len() < len + 1 {
+            let len = (&rest[1..5]).get_i32();
+            let Ok(len) = usize::try_from(len) else { break };
+            if !(4..=MAX_LEN).contains(&len) || rest.len() < len + 1 {
                 break;
             }
-            tags.push(rest[0]);
+            out.push((rest[0], &rest[5..len + 1]));
             rest = &rest[len + 1..];
         }
-        tags
+        out
     }
 
     /// The next typed message, or None on EOF between messages.
@@ -135,6 +136,26 @@ impl Reader<tokio::net::tcp::OwnedReadHalf> {
     }
 }
 
+/// Whether an ErrorResponse body has severity FATAL or PANIC: the session is over.
+pub fn is_fatal(body: &[u8]) -> bool {
+    let mut rest = body;
+    while let Some((&field, tail)) = rest.split_first() {
+        if field == 0 {
+            break;
+        }
+        let end = tail.iter().position(|&b| b == 0).unwrap_or(tail.len());
+        // 'V' is the severity that is never translated; 'S' may be.
+        if field == b'V' || field == b'S' {
+            let severity = &tail[..end];
+            if severity == b"FATAL" || severity == b"PANIC" {
+                return true;
+            }
+        }
+        rest = tail.get(end + 1..).unwrap_or(&[]);
+    }
+    false
+}
+
 /// The command tag of a CommandComplete body (NUL-terminated string).
 pub fn tag_text(body: &[u8]) -> &str {
     let end = body.iter().position(|&b| b == 0).unwrap_or(body.len());
@@ -163,15 +184,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn buffered_tags_skips_partial_messages() {
+    async fn buffered_skips_partial_and_bad_messages() {
         let (mut a, b) = tokio::io::duplex(64);
         a.write_all(&Message::new(b'A', b"x").raw).await.unwrap();
         a.write_all(&Message::new(b'E', b"y").raw).await.unwrap();
         a.write_all(&[b'Z', 0, 0, 0, 5]).await.unwrap();
         let mut r = Reader::new(b);
         r.fill(13).await.unwrap();
-        assert_eq!(r.buffered_tags(), vec![b'A', b'E']);
+        assert_eq!(r.buffered(), vec![(b'A', &b"x"[..]), (b'E', &b"y"[..])]);
         assert_eq!(r.next().await.unwrap().unwrap().tag, b'A');
+
+        // A negative length must not overflow.
+        let (mut a, b) = tokio::io::duplex(64);
+        a.write_all(&[b'E', 0xff, 0xff, 0xff, 0xff, 0]).await.unwrap();
+        let mut r = Reader::new(b);
+        r.fill(6).await.unwrap();
+        assert!(r.buffered().is_empty());
+    }
+
+    #[test]
+    fn fatal_severity() {
+        assert!(is_fatal(b"SFATAL\0VFATAL\0C57P01\0Mterminating connection\0\0"));
+        assert!(is_fatal(b"SPANIC\0\0"));
+        assert!(!is_fatal(b"SERROR\0VERROR\0C42601\0\0"));
+        assert!(!is_fatal(b""));
     }
 
     #[tokio::test]

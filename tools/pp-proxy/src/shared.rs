@@ -39,10 +39,6 @@ fn other(msg: impl Into<String>) -> io::Error {
     io::Error::other(msg.into())
 }
 
-/// Messages a healthy idle server connection can send: NotificationResponse,
-/// NoticeResponse, ParameterStatus.
-const IDLE_LEFTOVERS: &[u8] = b"ANS";
-
 /// Number of ReadyForQuery messages a client message asks for.
 fn cycles(m: &Message) -> usize {
     usize::from(matches!(m.tag, b'S' | b'Q'))
@@ -150,14 +146,18 @@ impl Pool {
         Ok(self.hello.lock().map_err(|_| other("poisoned"))?.clone())
     }
 
-    /// Connect if there's no server connection, it has closed, or it sent something
-    /// while idle that only a dying session sends (e.g. FATAL 57P01 after reset
-    /// terminated the backend). Notifications, notices and parameter changes stay
+    /// Connect if there's no server connection, it has closed, or it sent a FATAL
+    /// error while idle (e.g. 57P01 after reset terminated the backend). Any other
+    /// leftovers (notifications, or replies to a client that left mid-request) stay
     /// buffered and go to the next client, as in a pooler that doesn't clean up.
     async fn ensure(&self, slot: &mut Option<Server>) -> io::Result<()> {
         if let Some(s) = slot.as_mut()
             && s.reader.poll_alive()
-            && s.reader.buffered_tags().iter().all(|t| IDLE_LEFTOVERS.contains(t))
+            && !s
+                .reader
+                .buffered()
+                .iter()
+                .any(|&(tag, body)| tag == b'E' && wire::is_fatal(body))
         {
             return Ok(());
         }
