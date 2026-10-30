@@ -29,7 +29,7 @@ async fn run_direct(url: &str, statements: &[String]) -> Result<()> {
     }
     let (client, driver, _) = connect(url).await?;
     let limits = format!(
-        "SET lock_timeout = {}; SET statement_timeout = {}",
+        "SET lock_timeout = '{}ms'; SET statement_timeout = '{}ms'",
         DIRECT_LOCK_TIMEOUT.as_millis(),
         DIRECT_STATEMENT_TIMEOUT.as_millis()
     );
