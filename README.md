@@ -31,8 +31,9 @@ releases page. The scenarios and the latest results are built into the binary.
 **[Results site](https://nihal-pandey-2302.github.io/poolproof/)**: every scenario against
 PgBouncer 1.24 to 1.26, PgDog 0.1.50 to 0.1.62 and Supavisor 2.9 and 2.10, on Postgres 17
 and 18, with the full step-by-step trace for each cell. It also marks the version where a
-behavior broke or got fixed. [RESULTS.md](RESULTS.md) has the same data as a table. CI
-regenerates both.
+behavior broke or got fixed. The site goes live with the first public release.
+[RESULTS.md](RESULTS.md) has the same data as a table. Both are built from `results/`,
+which `scripts/update-results.sh` regenerates and CI checks.
 
 A failure is one of three kinds:
 
@@ -53,10 +54,10 @@ FAIL  pgdog-0.1.62             multi-statement-begin (silent)
 
 ```text
 $ poolproof scan queries.csv
-BREAKS  session-advisory-lock       calls=48211    SELECT pg_advisory_lock($1)
-        pg_advisory_lock() holds the lock for the whole session. ...
-WARN    session-set                 calls=1022     SET search_path TO app
-        SET/RESET of `search_path` outside SET LOCAL lasts for the session. ...
+BREAKS   session-advisory-lock       calls=48211    SELECT pg_advisory_lock($1)
+         pg_advisory_lock() holds the lock for the whole session. ...
+WARN     session-set                 calls=1022     SET search_path TO app
+         SET/RESET of `search_path` outside SET LOCAL lasts for the session. ...
 ```
 
 ## Try it locally
@@ -145,9 +146,11 @@ OK       session-set                 calls=1        SET search_path TO public;
 
 BREAKS means a related scenario fails silently on that pooler; REJECTED means the pooler
 returns an error, so the query would fail loudly in production; OK means it passes. With
-`--pooler`, only BREAKS and REJECTED fail the exit code. `--postgres 17.11` picks the
-Postgres version (default: newest), and `--results my-run.json` uses a run against your
-own setup instead. An unknown name lists the available ones.
+`--pooler`, BREAKS and REJECTED fail the exit code; a finding poolproof's results don't
+cover (no related scenario, or only SKIP or ERROR verdicts) counts as it would without
+`--pooler`. `--postgres 17.11` picks the Postgres version (default: newest), and
+`--results my-run.json` uses a run against your own setup instead. An unknown name lists
+the available ones.
 
 Without `--pooler`, the exit code is 1 if anything would break under transaction pooling
 (`--strict` also fails on warnings), so it can run in CI. `--format json` gives machine-readable output and
