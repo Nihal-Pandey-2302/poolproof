@@ -34,8 +34,13 @@ pub async fn run(
                 target.name
             );
         }
+        let applies = |s: &Scenario| filter.is_none_or(|f| s.name.contains(f)) && s.modes.contains(&target.mode);
         // Without both URLs answering, every scenario would compare two failures.
-        let unreachable = preflight(&target.pooler, &target.direct).await.err();
+        let unreachable = if scenarios.iter().any(applies) {
+            preflight(&target.pooler, &target.direct).await.err()
+        } else {
+            None
+        };
         if let Some(reason) = &unreachable {
             eprintln!("error: target '{}': {reason}", target.name);
         }
