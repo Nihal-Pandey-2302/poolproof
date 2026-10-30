@@ -256,8 +256,6 @@ async fn negotiate_tls(mut tcp: TcpStream, tls: &Tls, host: &str) -> Result<RawS
 pub struct RawConn {
     stream: RawStream,
     buf: BytesMut,
-    /// From BackendKeyData: the backend pid, or the pooler's stand-in for it.
-    pub(crate) pid: Option<i32>,
 }
 
 impl RawConn {
@@ -283,7 +281,6 @@ impl RawConn {
         let mut conn = RawConn {
             stream,
             buf: BytesMut::new(),
-            pid: None,
         };
         let mut out = BytesMut::new();
         frontend::startup_message([("user", user.as_str()), ("database", dbname.as_str())], &mut out)?;
@@ -305,10 +302,7 @@ impl RawConn {
             };
             let mut out = BytesMut::new();
             match message {
-                Message::BackendKeyData(body) => {
-                    conn.pid = Some(body.process_id());
-                    continue;
-                }
+                Message::BackendKeyData(_) => continue,
                 Message::AuthenticationOk | Message::ParameterStatus(_) => continue,
                 Message::NoticeResponse(_) => continue,
                 Message::ReadyForQuery(_) => return Ok(conn),
@@ -409,11 +403,28 @@ impl RawConn {
         Ok(lines)
     }
 
-    pub async fn terminate(mut self) {
+    /// Sends Terminate and closes the connection. With `wait_for_exit` (on Postgres),
+    /// then reads until the server closes its end, which happens only after the
+    /// backend's session state is gone (see `DrainOnShutdown` in pg.rs), and fails if
+    /// that takes longer.
+    pub async fn terminate(mut self, wait_for_exit: Option<Duration>) -> Result<()> {
         let mut out = BytesMut::new();
         frontend::terminate(&mut out);
         let _ = self.send(&out).await;
         let _ = self.stream.shutdown().await;
+        let Some(limit) = wait_for_exit else {
+            return Ok(());
+        };
+        let deadline = Instant::now() + limit;
+        loop {
+            match self.next(deadline).await {
+                Ok(Next::Timeout) => bail!("the backend did not exit within {limit:?} of the disconnect"),
+                // Close_notify or EOF (over TLS whichever comes first), or a broken
+                // connection: either way the server is done with it.
+                Ok(Next::Closed(_)) | Err(_) => return Ok(()),
+                Ok(Next::Message(_)) => {}
+            }
+        }
     }
 }
 

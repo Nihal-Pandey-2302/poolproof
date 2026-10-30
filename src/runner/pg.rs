@@ -1,11 +1,17 @@
 use std::collections::HashMap;
+use std::io;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+use std::task::{Context as TaskContext, Poll, ready};
 use std::time::Duration;
 
-use anyhow::{Context, Result};
-use tokio::io::{AsyncRead, AsyncWrite};
+use anyhow::{Context, Result, bail};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::net::TcpStream;
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
+use tokio_postgres::config::{Host, SslMode};
+use tokio_postgres::tls::MakeTlsConnect;
 use tokio_postgres::{AsyncMessage, CancelToken, Client, Connection, NoTls, SimpleQueryMessage, Statement};
 use tokio_postgres_rustls::MakeRustlsConnect;
 
@@ -24,92 +30,162 @@ pub(super) struct Conn {
     /// The query started by a `background` step, if not yet waited for.
     pub(super) pending: Option<JoinHandle<Outcome>>,
     pub(super) notices: Notices,
-    /// Backend pid when connected straight to Postgres, so a disconnect can wait for
-    /// the backend to exit.
-    pub(super) pid: Option<i32>,
-}
-
-/// The backend pid of a direct connection.
-pub(super) async fn backend_pid(client: &Client, t: &Timeouts) -> Option<i32> {
-    let messages = timeout(t.step, client.simple_query("SELECT pg_backend_pid()"))
-        .await
-        .ok()?
-        .ok()?;
-    messages.into_iter().find_map(|m| match m {
-        SimpleQueryMessage::Row(row) => row.get(0)?.parse().ok(),
-        _ => None,
-    })
-}
-
-/// Waits until a Postgres backend has exited. Closing the socket returns before the
-/// backend is gone, and until then its session state (locks, temp tables) is still
-/// visible, which would make the baseline racy.
-pub(super) async fn wait_backend_gone(direct: &Endpoint, pid: i32, t: &Timeouts) {
-    let Ok((client, driver, _)) = connect(direct, t).await else {
-        return;
-    };
-    let deadline = tokio::time::Instant::now() + t.step;
-    let sql = format!("SELECT 1 FROM pg_stat_activity WHERE pid = {pid}");
-    while tokio::time::Instant::now() < deadline {
-        match client.simple_query(&sql).await {
-            Ok(rows) if rows.iter().any(|m| matches!(m, SimpleQueryMessage::Row(_))) => {
-                tokio::time::sleep(Duration::from_millis(20)).await;
-            }
-            _ => break,
-        }
-    }
-    drop(client);
-    let _ = timeout(t.step, driver).await;
+    /// Connected straight to Postgres, so closing waits for the backend to exit.
+    pub(super) on_postgres: bool,
 }
 
 impl Conn {
     /// Close the connection and wait for Terminate to go out, so the pooler sees the
-    /// disconnect before the next step runs.
-    pub(super) async fn close(self, t: &Timeouts) {
+    /// disconnect before the next step runs. On Postgres it also waits for the backend
+    /// to exit (see `DrainOnShutdown`), and fails if it doesn't in time.
+    pub(super) async fn close(self, t: &Timeouts) -> Result<()> {
         if let Some(pending) = self.pending {
             pending.abort();
         }
         drop(self.client);
-        let _ = timeout(t.step, self.driver).await;
+        if timeout(t.step, self.driver).await.is_err() && self.on_postgres {
+            bail!("the backend did not exit within {:?} of the disconnect", t.step);
+        }
+        Ok(())
+    }
+}
+
+/// Any byte stream a connection can run over.
+trait Io: AsyncRead + AsyncWrite + Unpin + Send {}
+
+impl<T: AsyncRead + AsyncWrite + Unpin + Send> Io for T {}
+
+/// The stream under a tokio-postgres connection. With `drain`, shutting it down after
+/// Terminate also reads until the server closes its end, which on Postgres means the
+/// backend's session state is gone: proc_exit_prepare runs shmem_exit (the
+/// before_shmem_exit and on_shmem_exit callbacks: lock release, temp schema drop,
+/// leaving pg_stat_activity) before the on_proc_exit callbacks, among them the
+/// socket_close that pq_init registers. socket_close sends TLS close_notify
+/// (secure_close) and leaves the socket to the kernel, which closes it when the
+/// process exits. Both come after shmem_exit; checked in the PostgreSQL 13 to 18
+/// sources. Over TLS this sits under the TLS layer, so close_notify or EOF, whichever
+/// comes first, ends the wait.
+struct DrainOnShutdown<S> {
+    inner: S,
+    drain: bool,
+    write_closed: bool,
+}
+
+impl<S: AsyncRead + Unpin> AsyncRead for DrainOnShutdown<S> {
+    fn poll_read(mut self: Pin<&mut Self>, cx: &mut TaskContext<'_>, buf: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.inner).poll_read(cx, buf)
+    }
+}
+
+impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for DrainOnShutdown<S> {
+    fn poll_write(mut self: Pin<&mut Self>, cx: &mut TaskContext<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.inner).poll_write(cx, buf)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<io::Result<()>> {
+        let this = &mut *self;
+        if !this.write_closed {
+            ready!(Pin::new(&mut this.inner).poll_shutdown(cx))?;
+            this.write_closed = true;
+        }
+        while this.drain {
+            let mut scratch = [0u8; 512];
+            let mut buf = ReadBuf::new(&mut scratch);
+            match ready!(Pin::new(&mut this.inner).poll_read(cx, &mut buf)) {
+                Ok(()) if !buf.filled().is_empty() => {}
+                // EOF, or an error that also means the connection is gone.
+                _ => this.drain = false,
+            }
+        }
+        Poll::Ready(Ok(()))
+    }
+}
+
+/// Opens the socket to an endpoint's first host. Returns it with the host name, for TLS.
+async fn open(endpoint: &Endpoint) -> Result<(Box<dyn Io>, String)> {
+    let config = endpoint.config();
+    let port = config.get_ports().first().copied().unwrap_or(5432);
+    match config.get_hosts().first() {
+        Some(Host::Tcp(host)) => {
+            let stream = TcpStream::connect((host.as_str(), port)).await?;
+            stream.set_nodelay(true)?;
+            Ok((Box::new(stream), host.clone()))
+        }
+        #[cfg(unix)]
+        Some(Host::Unix(dir)) => {
+            let stream = tokio::net::UnixStream::connect(dir.join(format!(".s.PGSQL.{port}"))).await?;
+            Ok((Box::new(stream), String::new()))
+        }
+        None => bail!("no host in the connection URL"),
     }
 }
 
 pub(super) async fn connect(endpoint: &Endpoint, t: &Timeouts) -> Result<(Client, JoinHandle<()>, Notices)> {
-    let config = endpoint.config();
+    connect_with(endpoint, t, false).await
+}
+
+/// Connects; with `wait_for_exit` (connections straight to Postgres), closing the
+/// connection later waits for the backend to exit.
+pub(super) async fn connect_with(
+    endpoint: &Endpoint,
+    t: &Timeouts,
+    wait_for_exit: bool,
+) -> Result<(Client, JoinHandle<()>, Notices)> {
     let notices = Notices::default();
-    let (client, driver) = match &endpoint.tls().config {
-        None => {
-            let (client, connection) = timeout(t.connect, config.connect(NoTls))
-                .await
-                .context("connect timed out")??;
-            (client, spawn_driver(connection, notices.clone()))
-        }
-        Some(tls) => {
-            let tls = MakeRustlsConnect::new((**tls).clone());
-            let (client, connection) = match timeout(t.connect, config.connect(tls))
-                .await
-                .context("connect timed out")?
-            {
-                Ok(connected) => connected,
-                Err(e) if wants_client_certificate(&e) => {
-                    return Err(anyhow::Error::from(e)
-                        .context("the server wants a client certificate, which poolproof doesn't support yet"));
+    let connecting = async {
+        let (stream, host) = open(endpoint).await?;
+        let stream = DrainOnShutdown {
+            inner: stream,
+            drain: wait_for_exit,
+            write_closed: false,
+        };
+        let connected = match (&endpoint.tls().config, host.is_empty()) {
+            // A Unix socket never uses TLS, as in libpq.
+            (None, _) | (Some(_), true) => {
+                let mut config = endpoint.config().clone();
+                if host.is_empty() {
+                    config.ssl_mode(SslMode::Disable);
                 }
-                Err(e) => return Err(e.into()),
-            };
-            (client, spawn_driver(connection, notices.clone()))
-        }
+                let (client, connection) = config.connect_raw(stream, NoTls).await?;
+                (client, spawn_driver(connection, notices.clone()))
+            }
+            (Some(tls), false) => {
+                let mut make = MakeRustlsConnect::new((**tls).clone());
+                let tls = MakeTlsConnect::<DrainOnShutdown<Box<dyn Io>>>::make_tls_connect(&mut make, &host)?;
+                let (client, connection) = match endpoint.config().connect_raw(stream, tls).await {
+                    Ok(connected) => connected,
+                    Err(e) if wants_client_certificate(&e) => {
+                        return Err(anyhow::Error::from(e)
+                            .context("the server wants a client certificate, which poolproof doesn't support yet"));
+                    }
+                    Err(e) => return Err(e.into()),
+                };
+                (client, spawn_driver(connection, notices.clone()))
+            }
+        };
+        Ok::<_, anyhow::Error>(connected)
     };
+    let (client, driver) = timeout(t.connect, connecting).await.context("connect timed out")??;
     Ok((client, driver, notices))
 }
 
 /// Sends a CancelRequest for the query running on the client's connection, over TLS
 /// when the endpoint uses it.
-pub(super) async fn cancel(token: &CancelToken, endpoint: &Endpoint) -> Result<(), tokio_postgres::Error> {
-    match &endpoint.tls().config {
-        None => token.cancel_query(NoTls).await,
-        Some(tls) => token.cancel_query(MakeRustlsConnect::new((**tls).clone())).await,
+pub(super) async fn cancel(token: &CancelToken, endpoint: &Endpoint) -> Result<()> {
+    let (stream, host) = open(endpoint).await?;
+    match (&endpoint.tls().config, host.is_empty()) {
+        (None, _) | (Some(_), true) => token.cancel_query_raw(stream, NoTls).await?,
+        (Some(tls), false) => {
+            let mut make = MakeRustlsConnect::new((**tls).clone());
+            let tls = MakeTlsConnect::<Box<dyn Io>>::make_tls_connect(&mut make, &host)?;
+            token.cancel_query_raw(stream, tls).await?
+        }
     }
+    Ok(())
 }
 
 /// Drives a connection until it closes, keeping the NOTIFYs it receives in `sink`.
@@ -262,6 +338,30 @@ pub(super) async fn wait_ready(endpoint: &Endpoint, t: &Timeouts) -> Result<()> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn shutdown_waits_for_the_server_to_close_when_draining() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        for drain in [true, false] {
+            let (client, mut server) = tokio::io::duplex(64);
+            // The server sees the client's end close, then takes its time to close its own.
+            tokio::spawn(async move {
+                let mut buf = Vec::new();
+                server.read_to_end(&mut buf).await.unwrap();
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                let _ = server.write_all(b"bye").await;
+            });
+            let mut stream = DrainOnShutdown {
+                inner: client,
+                drain,
+                write_closed: false,
+            };
+            let started = tokio::time::Instant::now();
+            stream.shutdown().await.unwrap();
+            let waited = started.elapsed() >= Duration::from_millis(300);
+            assert_eq!(waited, drain, "drain = {drain}");
+        }
+    }
 
     #[test]
     fn missing_privileges() {

@@ -2,10 +2,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use tokio::time::timeout;
 
-use super::pg::{Conn, backend_pid, cancel, connect, db_error, row_value, simple_outcome, wait_backend_gone};
+use super::pg::{Conn, cancel, connect_with, db_error, row_value, simple_outcome};
 use super::raw::{ExchangeOpts, RawConn, ServerError};
 use super::{Outcome, Timeouts};
 use crate::scenario::{Action, Scenario};
@@ -93,11 +93,9 @@ pub async fn run_steps(
                 }
                 Action::Disconnect => {
                     if let Some(conn) = raw.remove(step.client.as_str()) {
-                        let pid = conn.pid;
-                        conn.terminate().await;
-                        if let (true, Some(pid)) = (on_postgres(step.direct), pid) {
-                            wait_backend_gone(direct, pid, t).await;
-                        }
+                        conn.terminate(on_postgres(step.direct).then_some(t.step))
+                            .await
+                            .with_context(|| format!("client '{}' disconnecting", step.client))?;
                     }
                     Outcome::empty()
                 }
@@ -111,13 +109,8 @@ pub async fn run_steps(
         }
         if !conns.contains_key(step.client.as_str()) {
             let url = if step.direct { direct } else { pooled };
-            match connect(url, t).await {
+            match connect_with(url, t, on_postgres(step.direct)).await {
                 Ok((client, driver, notices)) => {
-                    let pid = if on_postgres(step.direct) {
-                        backend_pid(&client, t).await
-                    } else {
-                        None
-                    };
                     conns.insert(
                         &step.client,
                         Conn {
@@ -126,7 +119,7 @@ pub async fn run_steps(
                             statements: HashMap::new(),
                             pending: None,
                             notices,
-                            pid,
+                            on_postgres: on_postgres(step.direct),
                         },
                     );
                 }
@@ -193,11 +186,9 @@ pub async fn run_steps(
             }
             Action::Disconnect => {
                 if let Some(conn) = conns.remove(step.client.as_str()) {
-                    let pid = conn.pid;
-                    conn.close(t).await;
-                    if let Some(pid) = pid {
-                        wait_backend_gone(direct, pid, t).await;
-                    }
+                    conn.close(t)
+                        .await
+                        .with_context(|| format!("client '{}' disconnecting", step.client))?;
                 }
                 Outcome::empty()
             }
@@ -232,7 +223,10 @@ pub async fn run_steps(
                 let endpoint = if step.direct { direct } else { pooled };
                 match timeout(t.step, cancel(&token, endpoint)).await {
                     Err(_) => Outcome::error("TIMEOUT", format!("no reply within {:?}", t.step)),
-                    Ok(Err(e)) => db_error(&e),
+                    Ok(Err(e)) => match e.downcast_ref::<tokio_postgres::Error>() {
+                        Some(e) => db_error(e),
+                        None => Outcome::error("CLIENT", format!("{e:#}")),
+                    },
                     Ok(Ok(())) => Outcome::empty(),
                 }
             }
@@ -250,11 +244,21 @@ pub async fn run_steps(
         outcomes.push(outcome);
     }
 
-    for (_, conn) in conns.drain() {
-        conn.close(t).await;
+    // Every client closes here or at its disconnect step, and on Postgres each waits
+    // for its backend to exit, so the next run doesn't see this one's session state.
+    // A client that abandoned its query dropped the socket on purpose and isn't waited
+    // for: its backend keeps running the query.
+    let direct_clients: HashMap<&str, bool> = scenario.steps.iter().map(|s| (s.client.as_str(), s.direct)).collect();
+    for (client, conn) in conns.drain() {
+        conn.close(t)
+            .await
+            .with_context(|| format!("client '{client}' closing at the end"))?;
     }
-    for (_, conn) in raw.drain() {
-        conn.terminate().await;
+    for (client, conn) in raw.drain() {
+        let wait = on_postgres(direct_clients.get(client).copied().unwrap_or(false)).then_some(t.step);
+        conn.terminate(wait)
+            .await
+            .with_context(|| format!("client '{client}' closing at the end"))?;
     }
     Ok(outcomes)
 }
@@ -352,6 +356,75 @@ mod tests {
         assert!(!plain.contains("connect"), "{plain}");
         let back: Outcome = serde_json::from_str(&plain).unwrap();
         assert_eq!(back, Outcome::error("42P01", "x"));
+    }
+
+    /// A Postgres URL for tests that need a real server, e.g. a throwaway container.
+    fn test_pg() -> Endpoint {
+        Endpoint::parse(&std::env::var("POOLPROOF_TEST_PG").expect("set POOLPROOF_TEST_PG to a Postgres URL")).unwrap()
+    }
+
+    fn canary(text: &str) -> Scenario {
+        toml::from_str(&format!("name = 'c4'\ndescription = ''\n{text}")).unwrap()
+    }
+
+    /// Steps for client `b` that check `a`'s session is gone: its advisory lock free
+    /// and its temp tables dropped.
+    const CHECK_GONE: &str = "
+        [[step]]
+        client = 'b'
+        simple = \"SELECT pg_try_advisory_lock(4204)::text, (SELECT count(*) FROM pg_class WHERE relname LIKE 'pp_c4_tmp%')::text\"
+        [[step]]
+        client = 'b'
+        simple = 'SELECT pg_advisory_unlock_all()'
+        [[step]]
+        client = 'b'
+        disconnect = true
+    ";
+
+    fn assert_gone(outcomes: &[Outcome], step: usize, run: usize) {
+        let expected = Outcome::Ok {
+            rows: vec![vec![Some("true".into()), Some("0".into())]],
+            tags: vec![1],
+        };
+        assert_eq!(
+            outcomes[step], expected,
+            "run {run}: the closed session was still there"
+        );
+    }
+
+    /// C4: once a client on Postgres is closed, its backend has exited, on every close
+    /// path. 200 runs each, as a regression test for the race fixed in 36578eb.
+    #[tokio::test]
+    #[ignore = "needs POOLPROOF_TEST_PG"]
+    async fn closed_sessions_are_gone_before_the_next_step() {
+        let pg = test_pg();
+        let t = Timeouts::default();
+        let lock = "SELECT pg_advisory_lock(4204)::text";
+        // Many temp tables make the backend's exit slow enough that a check that
+        // doesn't wait for it sees the session still there.
+        let temp = "DO $$ BEGIN FOR i IN 1..400 LOOP \
+                    EXECUTE format('CREATE TEMP TABLE pp_c4_tmp%s (x int)', i); END LOOP; END $$";
+        // b connects first, as an observer in a scenario usually has, so its check
+        // runs the moment a's close returns.
+        let b_first = "[[step]]\nclient = 'b'\nsimple = 'SELECT 1'\n";
+        let disconnect = canary(&format!(
+            "{b_first}[[step]]\nclient = 'a'\nsimple = \"{lock}; {temp}\"\n[[step]]\nclient = 'a'\ndisconnect = true\n{CHECK_GONE}"
+        ));
+        let raw = canary(&format!(
+            "{b_first}[[step]]\nclient = 'a'\nsend = [\"query {lock}; {temp}\"]\n[[step]]\nclient = 'a'\ndisconnect = true\n{CHECK_GONE}"
+        ));
+        let left_open = canary(&format!("[[step]]\nclient = 'a'\nsimple = \"{lock}; {temp}\"\n"));
+        let raw_left_open = canary(&format!("[[step]]\nclient = 'a'\nsend = [\"query {lock}; {temp}\"]\n"));
+        let check = canary(CHECK_GONE);
+        for run in 0..200 {
+            assert_gone(&run_steps(&disconnect, &pg, &pg, &t).await.unwrap(), 3, run);
+            assert_gone(&run_steps(&raw, &pg, &pg, &t).await.unwrap(), 3, run);
+            // Closed at the end of the run, not by a step.
+            run_steps(&left_open, &pg, &pg, &t).await.unwrap();
+            assert_gone(&run_steps(&check, &pg, &pg, &t).await.unwrap(), 0, run);
+            run_steps(&raw_left_open, &pg, &pg, &t).await.unwrap();
+            assert_gone(&run_steps(&check, &pg, &pg, &t).await.unwrap(), 0, run);
+        }
     }
 
     #[tokio::test]
