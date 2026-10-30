@@ -101,7 +101,7 @@ impl Target {
             // An empty value would shift what follows into this field (`password= dbname=x`
             // makes "dbname=x" the password) or drop it. Only a URL's password may be
             // empty: that just means no password.
-            let may_be_empty = |before: &str| is_url && in_url_password(before);
+            let may_be_empty = |before: &str, after: &str| is_url && in_url_password(before, after);
             let url = expand_vars(url, env, quote, &may_be_empty).with_context(|| field.to_string())?;
             Endpoint::resolve(&url, env).with_context(|| field.to_string())
         };
@@ -111,7 +111,7 @@ impl Target {
             reset: t
                 .reset
                 .iter()
-                .map(|sql| expand_vars(sql, env, |v| v.to_string(), &|_| true).context("reset"))
+                .map(|sql| expand_vars(sql, env, |v| v.to_string(), &|_, _| true).context("reset"))
                 .collect::<Result<_>>()?,
             name: t.name,
             mode: t.mode,
@@ -122,22 +122,25 @@ impl Target {
     }
 }
 
-/// Whether text ending here is inside a URL's password: after `scheme://user:` and
-/// before the `@`.
-fn in_url_password(before: &str) -> bool {
-    before
-        .split_once("://")
-        .is_some_and(|(_, authority)| authority.contains(':') && !authority.contains(['@', '/', '?']))
+/// Whether a value between `before` and `after` is a URL's password: after
+/// `scheme://user:` and before the `@`.
+fn in_url_password(before: &str, after: &str) -> bool {
+    // An `@` must follow in the same authority; without one, `host:` precedes a port.
+    let rest_of_authority = after.split(['/', '?', '#']).next().unwrap_or_default();
+    rest_of_authority.contains('@')
+        && before
+            .split_once("://")
+            .is_some_and(|(_, authority)| authority.contains(':') && !authority.contains(['@', '/', '?']))
 }
 
 /// Replaces `${NAME}` with the environment variable NAME, passed through `quote`, so
 /// passwords can stay out of the file. `$${` stands for a literal `${`; any other `$` is
-/// left alone. An empty value is an error unless `may_be_empty` accepts the text before it.
+/// left alone. An empty value is an error unless `may_be_empty` accepts the text around it.
 fn expand_vars(
     text: &str,
     env: &dyn Fn(&str) -> Option<String>,
     quote: fn(&str) -> String,
-    may_be_empty: &dyn Fn(&str) -> bool,
+    may_be_empty: &dyn Fn(&str, &str) -> bool,
 ) -> Result<String> {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
@@ -161,7 +164,7 @@ fn expand_vars(
             let Some(value) = env(name) else {
                 bail!("environment variable {name} is not set");
             };
-            if value.is_empty() && !may_be_empty(&text[..text.len() - rest.len()]) {
+            if value.is_empty() && !may_be_empty(&text[..text.len() - rest.len()], &after[end + 1..]) {
                 bail!("environment variable {name} is empty");
             }
             out.push_str(&quote(&value));
@@ -398,7 +401,7 @@ mod tests {
     #[test]
     fn expands_variables() {
         let env = env_of(&[("PW", "s3cret"), ("_X1", "x")]);
-        let raw = |s: &str| expand_vars(s, &env, |v| v.to_string(), &|_| false);
+        let raw = |s: &str| expand_vars(s, &env, |v| v.to_string(), &|_, _| false);
         assert_eq!(raw("postgres://u:${PW}@h/${_X1}").unwrap(), "postgres://u:s3cret@h/x");
         assert_eq!(raw("$${PW} $1 $$ a$").unwrap(), "${PW} $1 $$ a$");
         let err = |s: &str| raw(s).unwrap_err().to_string();
@@ -447,6 +450,9 @@ mod tests {
             "postgres://${PW}:x@127.0.0.1:1/app",
             "postgres://u@${PW}/app",
             "postgres://u@127.0.0.1:1/${PW}",
+            "postgres://127.0.0.1:${PW}/app?user=u",
+            "postgres://[::1]:${PW}/app?user=u",
+            "postgres://u:x@127.0.0.1:${PW}?dbname=app",
         ] {
             assert!(resolve(template, "").is_err(), "{template}");
         }
