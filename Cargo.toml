@@ -11,7 +11,16 @@ keywords = ["postgres", "pgbouncer", "connection-pool", "testing", "pooler"]
 categories = ["command-line-utilities", "database", "development-tools::testing"]
 # The test bed and CI files are for this repo, not for `cargo install`. results/ stays:
 # `scan --pooler` reads it.
-exclude = [".github/", "docker/", "scripts/", "RESULTS.md", "targets.toml"]
+exclude = [".github/", "docker/", "scripts/", "selftest/", "tools/", "RESULTS.md", "targets.toml"]
+
+# cargo binstall poolproof: download the release archive instead of compiling.
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }{ archive-suffix }"
+bin-dir = "{ name }-{ target }/{ bin }{ binary-ext }"
+pkg-fmt = "tgz"
+
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-fmt = "zip"
 
 [dependencies]
 anyhow = "1.0.104"
