@@ -15,7 +15,10 @@ use runner::Verdict;
 use scenario::PoolMode;
 
 #[derive(Parser)]
-#[command(version, about = "Find out what breaks when you put a connection pooler in front of Postgres")]
+#[command(
+    version,
+    about = "Find out what breaks when you put a connection pooler in front of Postgres"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -167,10 +170,19 @@ async fn main() -> ExitCode {
 
 async fn run(cli: Cli) -> Result<ExitCode> {
     match cli.command {
-        Command::Run { targets, pooler, direct, mode, scenarios, filter, reverse, verbose, format } => {
+        Command::Run {
+            targets,
+            pooler,
+            direct,
+            mode,
+            scenarios,
+            filter,
+            reverse,
+            verbose,
+            format,
+        } => {
             let targets = match (pooler, direct) {
-                (Some(pooler), Some(direct)) => {
-                    Targets {
+                (Some(pooler), Some(direct)) => Targets {
                     targets: vec![Target {
                         name: "pooler".into(),
                         pooler,
@@ -181,11 +193,10 @@ async fn run(cli: Cli) -> Result<ExitCode> {
                         config: None,
                         reset: vec![],
                     }],
-                }
-                }
+                },
                 _ => {
-                    let text = std::fs::read_to_string(&targets)
-                        .with_context(|| format!("reading {}", targets.display()))?;
+                    let text =
+                        std::fs::read_to_string(&targets).with_context(|| format!("reading {}", targets.display()))?;
                     toml::from_str(&text).context("parsing targets")?
                 }
             };
@@ -237,8 +248,10 @@ async fn run(cli: Cli) -> Result<ExitCode> {
                             }
                         }
                     }
-                    let steps =
-                        steps.into_iter().map(|(postgres, pooler)| report::StepOutcomes { postgres, pooler }).collect();
+                    let steps = steps
+                        .into_iter()
+                        .map(|(postgres, pooler)| report::StepOutcomes { postgres, pooler })
+                        .collect();
                     results.push(report::ResultRow {
                         target: target.name.clone(),
                         scenario: s.name.clone(),
@@ -282,9 +295,20 @@ async fn run(cli: Cli) -> Result<ExitCode> {
                     RunFormat::Text => unreachable!(),
                 }
             }
-            Ok(if failed + errors > 0 { ExitCode::FAILURE } else { ExitCode::SUCCESS })
+            Ok(if failed + errors > 0 {
+                ExitCode::FAILURE
+            } else {
+                ExitCode::SUCCESS
+            })
         }
-        Command::Scan { input, format, strict, pooler, postgres, results } => {
+        Command::Scan {
+            input,
+            format,
+            strict,
+            pooler,
+            postgres,
+            results,
+        } => {
             let queries = scan::load_queries(&input)?;
             let mut report = scan::scan(&queries);
             if let Some(pooler) = &pooler {
@@ -318,7 +342,10 @@ async fn run(cli: Cli) -> Result<ExitCode> {
             Ok(if failing { ExitCode::FAILURE } else { ExitCode::SUCCESS })
         }
         Command::Report { files, format } => {
-            let reports = files.iter().map(|f| report::Report::load(f)).collect::<Result<Vec<_>>>()?;
+            let reports = files
+                .iter()
+                .map(|f| report::Report::load(f))
+                .collect::<Result<Vec<_>>>()?;
             match format {
                 ReportFormat::Markdown => print!("{}", report::markdown(&reports)),
                 ReportFormat::Html => print!("{}", report::html(&reports)?),
@@ -362,8 +389,10 @@ fn print_verdict(target: &str, s: &scenario::Scenario, verdict: &Verdict) {
 fn sarif(report: &scan::Report, input: &std::path::Path) -> serde_json::Value {
     use serde_json::json;
 
-    let rules: Vec<_> =
-        scan::RULES.iter().map(|(id, summary)| json!({"id": id, "shortDescription": {"text": summary}})).collect();
+    let rules: Vec<_> = scan::RULES
+        .iter()
+        .map(|(id, summary)| json!({"id": id, "shortDescription": {"text": summary}}))
+        .collect();
     let uri = input.to_string_lossy().replace('\\', "/");
     let results: Vec<_> = report
         .findings
@@ -374,7 +403,11 @@ fn sarif(report: &scan::Report, input: &std::path::Path) -> serde_json::Value {
                 (Some(_), _) | (None, scan::Severity::Breaks) => "error",
                 (None, scan::Severity::Warn) => "warning",
             };
-            let pooler = f.on_pooler.as_ref().map(|c| format!(" Checked {}.", pooler_summary(c))).unwrap_or_default();
+            let pooler = f
+                .on_pooler
+                .as_ref()
+                .map(|c| format!(" Checked {}.", pooler_summary(c)))
+                .unwrap_or_default();
             json!({
                 "ruleId": f.rule,
                 "level": level,
@@ -449,7 +482,13 @@ fn print_scan(report: &scan::Report) {
     }
     if let Some(check) = report.findings.iter().find_map(|f| f.on_pooler.as_ref()) {
         let pg = check.postgres.as_deref().unwrap_or("?");
-        let count = |status| report.findings.iter().filter(|f| f.on_pooler.as_ref().is_some_and(|c| c.status == status)).count();
+        let count = |status| {
+            report
+                .findings
+                .iter()
+                .filter(|f| f.on_pooler.as_ref().is_some_and(|c| c.status == status))
+                .count()
+        };
         println!(
             "\n{} queries scanned, {} findings. On {} (Postgres {pg}): {} break silently, {} rejected, {} handled.",
             report.queries,
@@ -462,7 +501,11 @@ fn print_scan(report: &scan::Report) {
         println!("See a scenario step by step: poolproof run -v --filter <scenario>");
         return;
     }
-    let breaks = report.findings.iter().filter(|f| f.severity == scan::Severity::Breaks).count();
+    let breaks = report
+        .findings
+        .iter()
+        .filter(|f| f.severity == scan::Severity::Breaks)
+        .count();
     println!(
         "\n{} queries scanned, {} findings ({breaks} break under transaction pooling), {} could not be parsed",
         report.queries,

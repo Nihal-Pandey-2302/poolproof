@@ -90,13 +90,19 @@ impl Report {
     }
 
     fn row(&self, target: &str, scenario: &str) -> Option<&ResultRow> {
-        self.results.iter().find(|r| r.target == target && r.scenario == scenario)
+        self.results
+            .iter()
+            .find(|r| r.target == target && r.scenario == scenario)
     }
 }
 
 /// Compares version strings like `17.11` or `2.10.0-rc.1` part by part.
 fn cmp_version(a: &str, b: &str) -> std::cmp::Ordering {
-    let parts = |v: &str| v.split(['.', '-']).map(|p| p.parse::<u64>().map_err(|_| p.to_string())).collect::<Vec<_>>();
+    let parts = |v: &str| {
+        v.split(['.', '-'])
+            .map(|p| p.parse::<u64>().map_err(|_| p.to_string()))
+            .collect::<Vec<_>>()
+    };
     parts(a).cmp(&parts(b))
 }
 
@@ -112,7 +118,12 @@ pub fn find_target<'a>(
         .flat_map(|r| r.targets.iter().map(move |t| (r, t)))
         .filter(|(_, t)| t.name == name && postgres.is_none_or(|pg| t.postgres.as_deref() == Some(pg)))
         .collect();
-    found.sort_by(|a, b| cmp_version(a.1.postgres.as_deref().unwrap_or(""), b.1.postgres.as_deref().unwrap_or("")));
+    found.sort_by(|a, b| {
+        cmp_version(
+            a.1.postgres.as_deref().unwrap_or(""),
+            b.1.postgres.as_deref().unwrap_or(""),
+        )
+    });
     if let Some(last) = found.pop() {
         return Ok(last);
     }
@@ -172,7 +183,11 @@ fn columns(reports: &[Report]) -> Vec<Column<'_>> {
         .flat_map(|report| {
             report.targets.iter().map(move |target| {
                 let pg = target.postgres.as_deref().unwrap_or("?");
-                let label = if several { format!("{} (pg {pg})", target.name) } else { target.name.clone() };
+                let label = if several {
+                    format!("{} (pg {pg})", target.name)
+                } else {
+                    target.name.clone()
+                };
                 Column { report, target, label }
             })
         })
@@ -232,7 +247,11 @@ pub fn markdown(reports: &[Report]) -> String {
         for c in &columns {
             match c.report.verdict(&c.target.name, &s.name) {
                 Some(Verdict::Fail { mismatch: m }) => {
-                    let _ = write!(details, "\n### {} / {} ({})\n\n{}\n\n", c.label, s.name, m.kind, s.description);
+                    let _ = write!(
+                        details,
+                        "\n### {} / {} ({})\n\n{}\n\n",
+                        c.label, s.name, m.kind, s.description
+                    );
                     let _ = writeln!(details, "- step {}: `{}`", m.step, m.action);
                     let _ = writeln!(details, "- postgres: `{}`", m.expected);
                     let _ = writeln!(details, "- pooler: `{}`", m.actual);

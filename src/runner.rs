@@ -36,16 +36,24 @@ pub enum Outcome {
     /// The client dropped the connection before the reply came.
     Abandoned,
     /// Every reply to a `send` step, one line each.
-    Messages { messages: Vec<String> },
+    Messages {
+        messages: Vec<String>,
+    },
 }
 
 impl Outcome {
     fn empty() -> Self {
-        Outcome::Ok { rows: vec![], tags: vec![] }
+        Outcome::Ok {
+            rows: vec![],
+            tags: vec![],
+        }
     }
 
     fn error(code: &str, message: impl Into<String>) -> Self {
-        Outcome::Error { code: code.to_string(), message: message.into() }
+        Outcome::Error {
+            code: code.to_string(),
+            message: message.into(),
+        }
     }
 
     fn matches(&self, other: &Outcome, compare: Compare) -> bool {
@@ -107,7 +115,10 @@ struct Conn {
 
 /// The backend pid of a direct connection.
 async fn backend_pid(client: &Client) -> Option<i32> {
-    let messages = timeout(STEP_TIMEOUT, client.simple_query("SELECT pg_backend_pid()")).await.ok()?.ok()?;
+    let messages = timeout(STEP_TIMEOUT, client.simple_query("SELECT pg_backend_pid()"))
+        .await
+        .ok()?
+        .ok()?;
     messages.into_iter().find_map(|m| match m {
         SimpleQueryMessage::Row(row) => row.get(0)?.parse().ok(),
         _ => None,
@@ -118,7 +129,9 @@ async fn backend_pid(client: &Client) -> Option<i32> {
 /// backend is gone, and until then its session state (locks, temp tables) is still
 /// visible, which would make the baseline racy.
 async fn wait_backend_gone(direct: &str, pid: i32) {
-    let Ok((client, driver, _)) = connect(direct).await else { return };
+    let Ok((client, driver, _)) = connect(direct).await else {
+        return;
+    };
     let deadline = tokio::time::Instant::now() + STEP_TIMEOUT;
     let sql = format!("SELECT 1 FROM pg_stat_activity WHERE pid = {pid}");
     while tokio::time::Instant::now() < deadline {
@@ -206,8 +219,12 @@ pub async fn run_steps(scenario: &Scenario, pooled: &str, direct: &str) -> Resul
     let mut outcomes = Vec::with_capacity(scenario.steps.len());
 
     // Clients that use `send` talk raw protocol on their own connection.
-    let raw_clients: std::collections::HashSet<&str> =
-        scenario.steps.iter().filter(|s| s.send.is_some()).map(|s| s.client.as_str()).collect();
+    let raw_clients: std::collections::HashSet<&str> = scenario
+        .steps
+        .iter()
+        .filter(|s| s.send.is_some())
+        .map(|s| s.client.as_str())
+        .collect();
     let mut raw: HashMap<&str, RawConn> = HashMap::new();
 
     for step in &scenario.steps {
@@ -246,7 +263,10 @@ pub async fn run_steps(scenario: &Scenario, pooled: &str, direct: &str) -> Resul
                     }
                     Outcome::empty()
                 }
-                _ => bail!("client '{}' uses send, so its only other step can be disconnect", step.client),
+                _ => bail!(
+                    "client '{}' uses send, so its only other step can be disconnect",
+                    step.client
+                ),
             };
             outcomes.push(outcome);
             continue;
@@ -255,7 +275,11 @@ pub async fn run_steps(scenario: &Scenario, pooled: &str, direct: &str) -> Resul
             let url = if step.direct { direct } else { pooled };
             match connect(url).await {
                 Ok((client, driver, notices)) => {
-                    let pid = if url == direct { backend_pid(&client).await } else { None };
+                    let pid = if url == direct {
+                        backend_pid(&client).await
+                    } else {
+                        None
+                    };
                     conns.insert(
                         &step.client,
                         Conn {
@@ -405,7 +429,10 @@ async fn run_direct(url: &str, statements: &[String]) -> Result<()> {
     }
     let (client, driver, _) = connect(url).await?;
     for sql in statements {
-        client.batch_execute(sql).await.with_context(|| format!("running `{sql}`"))?;
+        client
+            .batch_execute(sql)
+            .await
+            .with_context(|| format!("running `{sql}`"))?;
     }
     drop(client);
     let _ = driver.await;
@@ -418,10 +445,13 @@ pub async fn server_version(url: &str) -> Result<String> {
     let res = timeout(STEP_TIMEOUT, client.simple_query("SHOW server_version")).await;
     drop(client);
     let _ = timeout(STEP_TIMEOUT, driver).await;
-    let version = res.context("SHOW server_version timed out")??.into_iter().find_map(|m| match m {
-        SimpleQueryMessage::Row(row) => row.get(0).map(str::to_string),
-        _ => None,
-    });
+    let version = res
+        .context("SHOW server_version timed out")??
+        .into_iter()
+        .find_map(|m| match m {
+            SimpleQueryMessage::Row(row) => row.get(0).map(str::to_string),
+            _ => None,
+        });
     // "17.11 (Debian 17.11-1.pgdg13+2)" -> "17.11"
     let version = version.context("no server_version")?;
     Ok(version.split_whitespace().next().unwrap_or_default().to_string())
@@ -492,7 +522,10 @@ impl FailKind {
                 };
                 if messages.iter().any(|l| l == "TIMEOUT") {
                     FailKind::Hang
-                } else if messages.iter().any(|l| is_failure_line(l) && !expected_lines.contains(l)) {
+                } else if messages
+                    .iter()
+                    .any(|l| is_failure_line(l) && !expected_lines.contains(l))
+                {
                     FailKind::Error
                 } else {
                     FailKind::Silent
@@ -517,10 +550,16 @@ impl std::fmt::Display for FailKind {
 #[serde(tag = "result", rename_all = "lowercase")]
 pub enum Verdict {
     Pass,
-    Fail { mismatch: Mismatch },
-    Skip { reason: String },
+    Fail {
+        mismatch: Mismatch,
+    },
+    Skip {
+        reason: String,
+    },
     /// The run could not be set up, so there is nothing to compare.
-    Error { reason: String },
+    Error {
+        reason: String,
+    },
 }
 
 /// The verdict plus each step's (postgres, pooler) outcomes. `steps` is empty when the
@@ -539,14 +578,23 @@ pub async fn check(scenario: &Scenario, pooled: &str, direct: &str, reset: &[Str
     run_direct(direct, reset).await.context("reset (baseline)")?;
     run_direct(direct, &scenario.setup).await.context("setup (baseline)")?;
     let expected = run_steps(scenario, direct, direct).await;
-    run_direct(direct, &scenario.teardown).await.context("teardown (baseline)")?;
+    run_direct(direct, &scenario.teardown)
+        .await
+        .context("teardown (baseline)")?;
     let expected = expected?;
 
     run_direct(direct, reset).await.context("reset (target)")?;
     if !reset.is_empty()
         && let Err(e) = wait_ready(pooled).await
     {
-        return Ok(Checked { verdict: Verdict::Error { reason: format!("{e:#}") }, steps: vec![], runs: 0, failures: 0 });
+        return Ok(Checked {
+            verdict: Verdict::Error {
+                reason: format!("{e:#}"),
+            },
+            steps: vec![],
+            runs: 0,
+            failures: 0,
+        });
     }
 
     let mut kept: Option<Checked> = None;
@@ -557,9 +605,14 @@ pub async fn check(scenario: &Scenario, pooled: &str, direct: &str, reset: &[Str
         } else {
             run_direct(direct, reset).await.context("reset (target)")?;
             match (reset.is_empty(), wait_ready(pooled).await) {
-                (false, Err(e)) => {
-                    Checked { verdict: Verdict::Error { reason: format!("{e:#}") }, steps: vec![], runs: 1, failures: 0 }
-                }
+                (false, Err(e)) => Checked {
+                    verdict: Verdict::Error {
+                        reason: format!("{e:#}"),
+                    },
+                    steps: vec![],
+                    runs: 1,
+                    failures: 0,
+                },
                 _ => check_target(scenario, pooled, direct, &expected).await?,
             }
         };
@@ -580,7 +633,9 @@ pub async fn check(scenario: &Scenario, pooled: &str, direct: &str, reset: &[Str
 async fn check_target(scenario: &Scenario, pooled: &str, direct: &str, expected: &[Outcome]) -> Result<Checked> {
     run_direct(direct, &scenario.setup).await.context("setup (target)")?;
     let actual = run_steps(scenario, pooled, direct).await;
-    run_direct(direct, &scenario.teardown).await.context("teardown (target)")?;
+    run_direct(direct, &scenario.teardown)
+        .await
+        .context("teardown (target)")?;
     let actual = actual?;
 
     let mismatch = scenario.steps.iter().enumerate().find_map(|(i, step)| {
@@ -596,7 +651,12 @@ async fn check_target(scenario: &Scenario, pooled: &str, direct: &str, expected:
         Some(mismatch) => Verdict::Fail { mismatch },
         None => Verdict::Pass,
     };
-    Ok(Checked { verdict, steps: expected.iter().cloned().zip(actual).collect(), runs: 1, failures: 0 })
+    Ok(Checked {
+        verdict,
+        steps: expected.iter().cloned().zip(actual).collect(),
+        runs: 1,
+        failures: 0,
+    })
 }
 
 #[cfg(test)]
@@ -615,19 +675,39 @@ mod tests {
     fn fail_kind_follows_pooler_outcome() {
         let ok = Outcome::empty();
         assert_eq!(FailKind::of(&ok, &Outcome::empty()), FailKind::Silent);
-        assert_eq!(FailKind::of(&ok, &Outcome::error("XX000", "not allowed")), FailKind::Error);
-        assert_eq!(FailKind::of(&ok, &Outcome::error("TIMEOUT", "no reply")), FailKind::Hang);
-        let msgs = |m: &[&str]| Outcome::Messages { messages: m.iter().map(|s| s.to_string()).collect() };
+        assert_eq!(
+            FailKind::of(&ok, &Outcome::error("XX000", "not allowed")),
+            FailKind::Error
+        );
+        assert_eq!(
+            FailKind::of(&ok, &Outcome::error("TIMEOUT", "no reply")),
+            FailKind::Hang
+        );
+        let msgs = |m: &[&str]| Outcome::Messages {
+            messages: m.iter().map(|s| s.to_string()).collect(),
+        };
         let pg = msgs(&["ParseComplete", "Error 42601", "ReadyForQuery I"]);
-        assert_eq!(FailKind::of(&pg, &msgs(&["ParseComplete", "ReadyForQuery I"])), FailKind::Silent);
-        assert_eq!(FailKind::of(&pg, &msgs(&["Error 08P01", "ReadyForQuery I"])), FailKind::Error);
+        assert_eq!(
+            FailKind::of(&pg, &msgs(&["ParseComplete", "ReadyForQuery I"])),
+            FailKind::Silent
+        );
+        assert_eq!(
+            FailKind::of(&pg, &msgs(&["Error 08P01", "ReadyForQuery I"])),
+            FailKind::Error
+        );
         assert_eq!(FailKind::of(&pg, &msgs(&["ParseComplete", "TIMEOUT"])), FailKind::Hang);
     }
 
     #[test]
     fn full_compare_checks_rows() {
-        let a = Outcome::Ok { rows: vec![vec![Some("1".into())]], tags: vec![1] };
-        let b = Outcome::Ok { rows: vec![vec![Some("2".into())]], tags: vec![1] };
+        let a = Outcome::Ok {
+            rows: vec![vec![Some("1".into())]],
+            tags: vec![1],
+        };
+        let b = Outcome::Ok {
+            rows: vec![vec![Some("2".into())]],
+            tags: vec![1],
+        };
         assert!(!a.matches(&b, Compare::Full));
         assert!(a.matches(&b, Compare::Status));
     }

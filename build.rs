@@ -23,7 +23,10 @@ fn embed(dir: &Path, extension: &str, out: &Path) {
     let mut code = String::from("&[\n");
     for path in files {
         let name = path.file_name().unwrap().to_str().unwrap();
-        code.push_str(&format!("    ({name:?}, include_str!({:?})),\n", path.to_str().unwrap()));
+        code.push_str(&format!(
+            "    ({name:?}, include_str!({:?})),\n",
+            path.to_str().unwrap()
+        ));
     }
     code.push_str("]\n");
     std::fs::write(out, code).unwrap();
