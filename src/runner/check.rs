@@ -33,13 +33,18 @@ async fn run_direct(url: &str, statements: &[String]) -> Result<()> {
         DIRECT_LOCK_TIMEOUT.as_millis(),
         DIRECT_STATEMENT_TIMEOUT.as_millis()
     );
-    execute(&client, &limits).await?;
+    let mut res = execute(&client, &limits).await;
     for sql in statements {
-        execute(&client, sql).await?;
+        if res.is_err() {
+            break;
+        }
+        res = execute(&client, sql).await;
     }
+    // Close the session even after an error, so it's gone before the next phase
+    // (e.g. a failed setup's session while teardown runs).
     drop(client);
     let _ = timeout(STEP_TIMEOUT, driver).await;
-    Ok(())
+    res
 }
 
 async fn execute(client: &tokio_postgres::Client, sql: &str) -> Result<()> {
