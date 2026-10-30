@@ -8,7 +8,7 @@ use super::pg::{connect, wait_ready};
 use super::steps::run_steps;
 use super::{Outcome, Timeouts};
 use crate::scenario::Scenario;
-use crate::targets::Endpoint;
+use crate::targets::{Endpoint, Statement};
 
 /// Start of the ERROR reason when a target's pooler URL doesn't answer before the run.
 /// The self-test matches on it, so keep it stable.
@@ -16,16 +16,22 @@ pub const POOLER_UNREACHABLE: &str = "target unreachable: pooler:";
 /// Same for the target's direct (plain Postgres) URL.
 pub const DIRECT_UNREACHABLE: &str = "target unreachable: direct:";
 
-async fn run_direct(direct: &Endpoint, statements: &[String], t: &Timeouts) -> Result<()> {
+async fn run_direct(direct: &Endpoint, statements: &[Statement], t: &Timeouts) -> Result<()> {
     if statements.is_empty() {
         return Ok(());
     }
     let (client, driver, _) = connect(direct, t).await?;
-    for sql in statements {
-        client
-            .batch_execute(sql)
-            .await
-            .with_context(|| format!("running `{sql}`"))?;
+    for s in statements {
+        if let Err(e) = client.batch_execute(s.sql()).await {
+            // The statement is shown as written. The server's message can quote the
+            // executed text, so with substituted values only its SQLSTATE is kept.
+            return Err(if s.has_substitutions() {
+                let code = e.code().map_or("an error without SQLSTATE", |c| c.code());
+                anyhow::anyhow!("running `{s}`: {code} (details hidden: the statement has substituted values)")
+            } else {
+                anyhow::Error::from(e).context(format!("running `{s}`"))
+            });
+        }
     }
     drop(client);
     let _ = driver.await;
@@ -109,7 +115,7 @@ async fn run_once(
     scenario: &Scenario,
     pooled: &Endpoint,
     direct: &Endpoint,
-    reset: &[String],
+    reset: &[Statement],
     side: Side,
     t: &Timeouts,
 ) -> Result<Vec<Outcome>, String> {
@@ -124,13 +130,13 @@ async fn run_once(
     {
         return Err(format!("{e:#}"));
     }
-    let outcomes = match run_direct(direct, &scenario.setup, t).await {
+    let outcomes = match run_direct(direct, &Statement::plain_all(&scenario.setup), t).await {
         Ok(()) => run_steps(scenario, pooled, direct, t)
             .await
             .map_err(|e| format!("steps ({side}): {e:#}")),
         Err(e) => Err(format!("setup ({side}): {e:#}")),
     };
-    let teardown = run_direct(direct, &scenario.teardown, t)
+    let teardown = run_direct(direct, &Statement::plain_all(&scenario.teardown), t)
         .await
         .map_err(|e| format!("teardown ({side}): {e:#}"));
     let outcomes = outcomes?;
@@ -146,7 +152,7 @@ pub async fn check(
     scenario: &Scenario,
     pooled: &Endpoint,
     direct: &Endpoint,
-    reset: &[String],
+    reset: &[Statement],
     t: &Timeouts,
 ) -> Checked {
     let expected = match run_once(scenario, direct, direct, reset, Side::Baseline, t).await {
