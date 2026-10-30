@@ -1,23 +1,65 @@
 name: ci
 
+# Branches run through pull_request; push only for main, so a PR runs CI once.
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
+
+# A newer commit on the same branch (main too) cancels the older run: only the latest
+# result matters for merging and for the Pages deploy.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Jobs get read access only; a job that needs more says so itself.
+permissions:
+  contents: read
 
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
         with:
+          toolchain: stable
           components: clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
       # RESULTS.md must be what the committed results render to.
       - run: cargo run -q -- report results/postgres-*.json | diff RESULTS.md -
+
+  # The self-test proxies (tools/pp-proxy), a separate crate.
+  tools:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tools/pp-proxy
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: tools/pp-proxy
+      # Its own rustfmt.toml, so the root fmt check doesn't cover it.
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked
+
+  # Advisories, licenses, banned crates and sources (deny.toml).
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check all
 
   # Every scenario against every pooler, once per Postgres version.
   suite:
@@ -30,9 +72,11 @@ jobs:
     env:
       POSTGRES_IMAGE: postgres:${{ matrix.postgres }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
       - name: Start test bed
         run: docker compose -f docker/compose.yml up -d --wait --wait-timeout 300
@@ -49,19 +93,33 @@ jobs:
           ./target/release/poolproof report new.json >> "$GITHUB_STEP_SUMMARY"
 
       # Only verdicts are compared, and not for timing-sensitive scenarios (repeat > 1),
-      # whose worst case can differ between machines. Error text can depend on timing too.
+      # whose worst case can differ between machines, or for the target and scenario pairs
+      # in results/known-flaky.txt. Error text can depend on timing too.
       - name: Compare with committed results
         run: |
-          verdicts='[.scenarios[] | select(.repeat > 1) | .name] as $timing
-            | .results[] | select(.scenario as $s | $timing | index($s) | not)
+          # The timing list comes from this run, so a scenario that just got repeat > 1
+          # is skipped on both sides before results/ is regenerated.
+          timing=$(jq -c '[.scenarios[] | select(.repeat > 1) | .name]' new.json)
+          # A malformed line would silently skip nothing, so it fails the step instead.
+          # sub() drops a trailing \r, so a file saved with CRLF line ends still matches.
+          awk '{ sub(/\r$/, "") }
+               NF && $1 !~ /^#/ && NF != 2 { bad = 1
+                 printf "::error file=%s,line=%d::expected \"<target> <scenario>\", got: %s\n", FILENAME, FNR, $0 }
+               END { exit bad }' results/known-flaky.txt
+          flaky=$(awk '{ sub(/\r$/, "") } NF == 2 && $1 !~ /^#/ { print $1 " " $2 }' results/known-flaky.txt | jq -Rsc 'split("\n") | map(select(. != ""))')
+          if [ "$flaky" != "[]" ]; then
+            { echo "### Not compared (results/known-flaky.txt)"; jq -r '.[] | "- \(.)"' <<<"$flaky"; } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          verdicts='.results[] | select(.scenario as $s | $timing | index($s) | not)
+            | select("\(.target) \(.scenario)" as $k | $flaky | index($k) | not)
             | "\(.target) \(.scenario) \(.result) \(.mismatch.kind // "")"'
-          if ! diff <(jq -r "$verdicts" results/postgres-${{ matrix.postgres }}.json | sort) \
-                    <(jq -r "$verdicts" new.json | sort); then
+          compare() { jq -r --argjson timing "$timing" --argjson flaky "$flaky" "$verdicts" "$1" | sort; }
+          if ! diff <(compare results/postgres-${{ matrix.postgres }}.json) <(compare new.json); then
             echo "::error::Verdicts changed on Postgres ${{ matrix.postgres }}. Run scripts/update-results.sh and commit."
             exit 1
           fi
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: results-postgres-${{ matrix.postgres }}
@@ -77,25 +135,28 @@ jobs:
     if: github.ref == 'refs/heads/main' && !github.event.repository.private
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       pages: write
       id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - uses: actions/download-artifact@v8
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: results-postgres-*
       - name: Build site
         run: |
           mkdir site
           cargo run -q --release -- report results-postgres-*/new.json --format html > site/index.html
-      - uses: actions/configure-pages@v6
-      - uses: actions/upload-pages-artifact@v5
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: site
       - id: deploy
-        uses: actions/deploy-pages@v5
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
