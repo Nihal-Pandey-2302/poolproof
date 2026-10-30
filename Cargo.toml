@@ -29,3 +29,10 @@ toml = "1.1.8"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.191"
+
+# panic stays unwind: a panic in a spawned task must reach the runner as a JoinError and
+# become a recorded outcome, not abort the whole run.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
