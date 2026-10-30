@@ -3,7 +3,7 @@
 //! PROXY_LISTEN="6501=none,6502=drop-pipelined,..." opens one listener per fault, all
 //! forwarding to PROXY_UPSTREAM (host:port, default postgres:5432). `shared-server`
 //! logs in to Postgres itself as PROXY_USER / PROXY_PASSWORD / PROXY_DATABASE.
-//! PROXY_BIND picks the listen address (default 0.0.0.0, for a container).
+//! PROXY_BIND picks the listen address (default 127.0.0.1; a container sets 0.0.0.0).
 
 mod fault;
 mod shared;
@@ -50,7 +50,7 @@ async fn main() {
         database: std::env::var("PROXY_DATABASE").ok(),
     };
 
-    let bind = env("PROXY_BIND", "0.0.0.0");
+    let bind = env("PROXY_BIND", "127.0.0.1");
     let mut tasks = Vec::new();
     for (port, fault) in listen {
         let listener = match TcpListener::bind((bind.as_str(), port)).await {
