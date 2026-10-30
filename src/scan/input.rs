@@ -268,13 +268,17 @@ fn load_stderr_log(reader: impl BufRead, out: &mut Queries) -> Result<usize> {
     Ok(lines)
 }
 
-/// Postgres jsonlog: one JSON object per line with a `message` field.
+/// Postgres jsonlog: one JSON object per line with a `message` field. Like csvlog,
+/// only entries with severity LOG carry statements.
 /// Returns the number of lines read.
 fn load_json_log(reader: impl BufRead, out: &mut Queries) -> Result<usize> {
     for_each_line(reader, |n, line| {
         let Ok(entry) = serde_json::from_str::<serde_json::Value>(line) else {
             return;
         };
+        if entry.get("error_severity").and_then(|s| s.as_str()) != Some("LOG") {
+            return;
+        }
         if let Some(sql) = entry.get("message").and_then(|m| m.as_str()).and_then(logged_sql) {
             out.add(sql, 1, n);
         }
@@ -352,7 +356,8 @@ mod tests {
     fn json_log() {
         let log = r#"{"timestamp":"2026-10-30 12:00:00 UTC","error_severity":"LOG","message":"statement: LISTEN jobs"}
 {"timestamp":"2026-10-30 12:00:01 UTC","error_severity":"LOG","message":"connection received: host=x"}
-{"timestamp":"2026-10-30 12:00:02 UTC","error_severity":"LOG","message":"duration: 2.1 ms  execute <unnamed>: SELECT 1"}"#;
+{"timestamp":"2026-10-30 12:00:02 UTC","error_severity":"LOG","message":"duration: 2.1 ms  execute <unnamed>: SELECT 1"}
+{"timestamp":"2026-10-30 12:00:03 UTC","error_severity":"ERROR","message":"statement: LISTEN not_a_statement_log"}"#;
         assert_eq!(
             read(log, Some(InputFormat::Jsonlog)).unwrap(),
             vec![q("LISTEN jobs", 1, 1), q("SELECT 1", 1, 3)]
