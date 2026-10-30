@@ -16,7 +16,7 @@ One process, one listener per fault, all forwarding to one Postgres:
 | `shared-server` | One server connection for all clients, no reset, shared cancel key. Logs in as `PROXY_USER` / `PROXY_PASSWORD` / `PROXY_DATABASE`. |
 | `refuse` | Accepts and closes. |
 
-`PROXY_BIND` sets the listen address (default `0.0.0.0`).
+`PROXY_BIND` sets the listen address (default `127.0.0.1`; in a container set it to `0.0.0.0`).
 
 `selftest/expected.toml` lists the verdict each target must get. Check a run with:
 
