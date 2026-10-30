@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!--POOLPROOF_CSP-->
 <title>poolproof results</title>
 <style>
 :root {
@@ -35,6 +36,7 @@ h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: -0.01em; }
 .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; min-width: 120px; }
 .stat b { display: block; font-size: 20px; }
 .stat span { color: var(--muted); font-size: 12px; }
+.stat b.count-silent { color: var(--silent); }
 .controls { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin-bottom: 10px; }
 .controls label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
 .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
@@ -60,6 +62,7 @@ th.corner { z-index: 3; text-align: left; padding: 8px 12px; }
 td.name { padding: 8px 12px; min-width: 300px; max-width: 360px; }
 td.name .mono { font-weight: 600; }
 td.name .desc { color: var(--muted); font-size: 12px; }
+.step-hint { color: var(--muted); font-size: 12px; }
 .notes { margin-top: 3px; display: flex; flex-wrap: wrap; gap: 4px; }
 .note { font-size: 11px; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
 .note.broke { border-color: var(--silent); color: var(--silent); }
@@ -171,6 +174,10 @@ footer { color: var(--muted); font-size: 12px; max-width: 1400px; margin: 0 auto
     }
     return 0;
   }
+  // Results files can come from anyone: only http(s) refs become links.
+  const refLink = r => /^https?:\/\//i.test(r)
+    ? el("a", { href: r, target: "_blank", rel: "noopener noreferrer" }, r.replace("https://github.com/", ""))
+    : el("span", {}, r);
   const state = (x) => !x ? "none" : x.result === "fail" ? x.mismatch.kind : x.result;
   const symbol = { pass: "✓", silent: "✕", error: "!", hang: "⏱", skip: "–", none: "·", error_run: "?" };
   const word = { pass: "pass", silent: "silent failure", error: "pooler error", hang: "no reply", skip: "skipped", none: "not run" };
@@ -236,7 +243,7 @@ footer { color: var(--muted); font-size: 12px; max-width: 1400px; margin: 0 auto
     stats.replaceChildren(
       el("div", { class: "stat" }, el("b", {}, String(rows.length)), el("span", {}, "scenarios")),
       el("div", { class: "stat" }, el("b", {}, String(visible.length)), el("span", {}, "pooler configurations")),
-      el("div", { class: "stat" }, el("b", { style: "color:var(--silent)" }, String(count("silent"))), el("span", {}, "silent failures")),
+      el("div", { class: "stat" }, el("b", { class: "count-silent" }, String(count("silent"))), el("span", {}, "silent failures")),
       el("div", { class: "stat" }, el("b", {}, String(count("error") + count("hang"))), el("span", {}, "errors and hangs")),
       el("div", { class: "stat" }, el("b", {}, String(count("pass"))), el("span", {}, "passes")),
     );
@@ -302,7 +309,7 @@ footer { color: var(--muted); font-size: 12px; max-width: 1400px; margin: 0 auto
           el("span", { class: "badge " + (x.result === "error" ? "skip" : st) }, x.result === "error" ? "could not run" : word[st]))),
       el("button", { class: "close", "aria-label": "Close", onclick: () => dlg.close() }, "×"));
     const body = el("div", { class: "dlg-body" }, el("p", {}, s.description));
-    if (s.refs.length) body.append(el("p", {}, "From: ", s.refs.flatMap((r, i) => [i ? ", " : null, el("a", { href: r, target: "_blank", rel: "noopener" }, r.replace("https://github.com/", ""))])));
+    if (s.refs.length) body.append(el("p", {}, "From: ", s.refs.flatMap((r, i) => [i ? ", " : null, refLink(r)])));
     if (x.runs > 1) body.append(el("p", {}, `Timing-sensitive: the pooler side ran ${x.runs} times and failed ${x.failures} of them.` +
       (x.failures ? " The trace below is from the first failing run." : "") + " The worst case can vary between machines."));
     if (x.result === "error") body.append(el("p", { class: "mono" }, x.reason));
@@ -320,7 +327,7 @@ footer { color: var(--muted); font-size: 12px; max-width: 1400px; margin: 0 auto
       });
       t.append(tb);
       body.append(t);
-      if (failStep) body.append(el("p", { class: "desc", style: "color:var(--muted);font-size:12px" }, `The first difference is at step ${failStep}. Later steps are shown dimmed; they ran on state that already differed.`));
+      if (failStep) body.append(el("p", { class: "desc step-hint" }, `The first difference is at step ${failStep}. Later steps are shown dimmed; they ran on state that already differed.`));
     }
     dlg.replaceChildren(head, body);
     if (!dlg.open) dlg.showModal();

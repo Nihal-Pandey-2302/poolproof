@@ -3,9 +3,9 @@
 # once the scenario has repeat or the cause is fixed.
 
 # 2026-10-31: flips between pass and fail (silent) on CI runners, about every other run.
-# Rate being measured; drop once the settle fix (#35) is on main and CI is clean ~10 runs.
+# Role E is measuring the rate.
 supavisor-2.10.0-rc.1 set-local-reverts-after-commit
 
 # 2026-10-31: flips between pass and fail (error) on CI runners, about every other run.
-# Rate being measured; drop once the settle fix (#35) is on main and CI is clean ~10 runs.
+# Role E is measuring the rate.
 supavisor-2.10.0-rc.1 prepared-statement-survives-other-clients

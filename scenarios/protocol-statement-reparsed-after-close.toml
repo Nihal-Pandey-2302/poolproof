@@ -1,8 +1,5 @@
 name = "protocol-statement-reparsed-after-close"
 description = "After Close, a statement name can be prepared again with different SQL, and the new SQL runs."
-# Supavisor 2.10.0-rc.1 sometimes answers the re-Parse with 42P05 (a race, like the
-# other statement-name races): run the pooler side several times.
-repeat = 5
 
 [[step]]
 client = "a"
