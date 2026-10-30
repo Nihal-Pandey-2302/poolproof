@@ -310,34 +310,160 @@ pub async fn server_version(endpoint: &Endpoint, t: &Timeouts) -> Result<String>
     Ok(version.split_whitespace().next().unwrap_or_default().to_string())
 }
 
-/// Retry `SELECT 1` through the pooler until it answers. A reset kills the pooler's
-/// server connections, and it needs a moment to notice and open new ones.
-pub(super) async fn wait_ready(endpoint: &Endpoint, t: &Timeouts) -> Result<()> {
+/// Retry `SELECT 1` through the pooler until it answers, then let it settle (see
+/// `settle`). A reset kills the pooler's server connections, and it needs a moment to
+/// notice and open new ones. Errors only if the pooler never answers; returns whether
+/// it settled.
+pub(super) async fn wait_ready(endpoint: &Endpoint, t: &Timeouts) -> Result<bool> {
     let deadline = tokio::time::Instant::now() + t.ready;
+    let mut answered = false;
     loop {
         let err = match connect(endpoint, t).await {
             Ok((client, driver, _)) => {
-                let res = timeout(t.step, client.simple_query("SELECT 1")).await;
+                let res = match timeout(t.step, client.simple_query("SELECT 1")).await {
+                    Ok(Ok(_)) => {
+                        answered = true;
+                        Ok(settle(&client, t).await)
+                    }
+                    Ok(Err(e)) => Err(anyhow::Error::from(e)),
+                    Err(_) => Err(anyhow::anyhow!("SELECT 1 timed out")),
+                };
                 drop(client);
                 let _ = timeout(t.step, driver).await;
                 match res {
-                    Ok(Ok(_)) => return Ok(()),
-                    Ok(Err(e)) => anyhow::Error::from(e),
-                    Err(_) => anyhow::anyhow!("SELECT 1 timed out"),
+                    Ok(Settle::Stable) => return Ok(true),
+                    Ok(Settle::Unstable) => return Ok(false),
+                    // The server connection went away while settling: start over.
+                    Ok(Settle::Broken) => anyhow::anyhow!("server connection changed while settling"),
+                    Err(e) => e,
                 }
             }
             Err(e) => e,
         };
         if tokio::time::Instant::now() >= deadline {
+            // It answered at least once: go on, settling is best effort.
+            if answered {
+                return Ok(false);
+            }
             return Err(err.context(format!("pooler not ready {:?} after reset", t.ready)));
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
 }
 
+enum Settle {
+    /// The same backend answered SETTLE_PROBES times in a row.
+    Stable,
+    /// Different backends kept answering (a pool with several server connections).
+    Unstable,
+    /// A probe failed: the server connection went away under us.
+    Broken,
+}
+
+const SETTLE_PROBES: usize = 3;
+const SETTLE_GAP: Duration = Duration::from_millis(50);
+const SETTLE_MAX: Duration = Duration::from_secs(2);
+
+/// Some poolers learn only later that reset killed their server connection, and
+/// replace it after they've already answered (Supavisor 2.10 logs "Session terminated
+/// by server while idle in the pool"). A scenario that starts in that window loses its
+/// session state halfway. So ask for the backend pid until the same one answers
+/// SETTLE_PROBES times in a row. Best effort: with several server connections the pid
+/// may never settle, and after SETTLE_MAX the run goes on.
+async fn settle(client: &Client, t: &Timeouts) -> Settle {
+    let deadline = tokio::time::Instant::now() + SETTLE_MAX;
+    let mut last = None;
+    let mut same = 0;
+    while tokio::time::Instant::now() < deadline {
+        let pid = match timeout(t.step, client.simple_query("SELECT pg_backend_pid()")).await {
+            Ok(Ok(messages)) => messages.into_iter().find_map(|m| match m {
+                SimpleQueryMessage::Row(row) => row.get(0).map(str::to_string),
+                _ => None,
+            }),
+            _ => return Settle::Broken,
+        };
+        same = if pid.is_some() && pid == last { same + 1 } else { 1 };
+        if same >= SETTLE_PROBES {
+            return Settle::Stable;
+        }
+        last = pid;
+        tokio::time::sleep(SETTLE_GAP).await;
+    }
+    Settle::Unstable
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A pooler stand-in: accepts any login, answers SELECT 1, and answers
+    /// `SELECT pg_backend_pid()` with the next pid from `pid(n)`.
+    async fn pooler_with_pids(pid: fn(usize) -> usize) -> Endpoint {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        fn message(tag: u8, body: &[u8]) -> Vec<u8> {
+            [&[tag][..], &(body.len() as u32 + 4).to_be_bytes(), body].concat()
+        }
+        fn row(value: &str) -> Vec<u8> {
+            let mut desc = b"\0\x01x\0".to_vec();
+            desc.extend([0u8; 6]);
+            desc.extend(25u32.to_be_bytes());
+            desc.extend((-1i16).to_be_bytes());
+            desc.extend((-1i32).to_be_bytes());
+            desc.extend(0i16.to_be_bytes());
+            let mut data = 1u16.to_be_bytes().to_vec();
+            data.extend((value.len() as u32).to_be_bytes());
+            data.extend(value.as_bytes());
+            [message(b'T', &desc), message(b'D', &data), message(b'C', b"SELECT 1\0")].concat()
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let asked = Arc::new(Mutex::new(0));
+        tokio::spawn(async move {
+            while let Ok((mut s, _)) = listener.accept().await {
+                let asked = asked.clone();
+                tokio::spawn(async move {
+                    let len = s.read_u32().await.unwrap() as usize;
+                    let mut startup = vec![0; len - 4];
+                    s.read_exact(&mut startup).await.unwrap();
+                    let ready = message(b'Z', b"I");
+                    let hello = [message(b'R', &[0; 4]), message(b'K', &[0; 8]), ready.clone()].concat();
+                    s.write_all(&hello).await.unwrap();
+                    while let Ok(tag) = s.read_u8().await {
+                        let len = s.read_u32().await.unwrap() as usize;
+                        let mut body = vec![0; len - 4];
+                        s.read_exact(&mut body).await.unwrap();
+                        if tag != b'Q' {
+                            return;
+                        }
+                        let reply = if body.starts_with(b"SELECT pg_backend_pid()") {
+                            let n = {
+                                let mut asked = asked.lock().unwrap();
+                                *asked += 1;
+                                *asked
+                            };
+                            row(&pid(n).to_string())
+                        } else {
+                            row("1")
+                        };
+                        s.write_all(&[reply, ready.clone()].concat()).await.unwrap();
+                    }
+                });
+            }
+        });
+        Endpoint::parse(&format!("postgres://u@127.0.0.1:{port}/db?sslmode=disable")).unwrap()
+    }
+
+    #[tokio::test]
+    async fn ready_waits_until_the_same_backend_answers() {
+        let t = Timeouts::default();
+        // The pooler swaps its server connection twice, then keeps one.
+        let settling = pooler_with_pids(|n| if n < 3 { n } else { 3 });
+        assert!(wait_ready(&settling.await, &t).await.unwrap());
+        // A new backend every time, as with a larger pool: give up, but don't fail.
+        let started = tokio::time::Instant::now();
+        assert!(!wait_ready(&pooler_with_pids(|n| n).await, &t).await.unwrap());
+        assert!(started.elapsed() >= SETTLE_MAX);
+    }
 
     #[tokio::test]
     async fn shutdown_waits_for_the_server_to_close_when_draining() {
