@@ -162,13 +162,30 @@ async fn run_once(
 /// `reset` runs on `direct` before each run so state leaked on the pooler's server
 /// connections by an earlier scenario can't change this one's result. Anything that
 /// stops the comparison is a `Verdict::Error` for this scenario only.
-pub async fn check(scenario: &Scenario, pooled: &str, direct: &str, reset: &[String]) -> Checked {
+/// With `check_scenarios`, the baseline runs twice first: if Postgres gives different
+/// results on two runs, the scenario is broken, not the pooler.
+pub async fn check(
+    scenario: &Scenario,
+    pooled: &str,
+    direct: &str,
+    reset: &[String],
+    check_scenarios: bool,
+) -> Checked {
     let expected = match run_once(scenario, direct, direct, reset, Side::Baseline).await {
         Ok(expected) => expected,
         Err(reason) => return Checked::error(reason),
     };
     if let Some(reason) = baseline_failure(&expected) {
         return Checked::error(reason);
+    }
+    if check_scenarios {
+        let again = match run_once(scenario, direct, direct, reset, Side::Baseline).await {
+            Ok(again) => again,
+            Err(reason) => return Checked::error(reason),
+        };
+        if let Some(reason) = baseline_failure(&again).or_else(|| baseline_diff(scenario, &expected, &again)) {
+            return Checked::error(reason);
+        }
     }
 
     let mut kept: Option<Checked> = None;
@@ -190,6 +207,21 @@ pub async fn check(scenario: &Scenario, pooled: &str, direct: &str, reset: &[Str
     checked.runs = scenario.repeat;
     checked.failures = failures;
     checked
+}
+
+/// The first step whose two baseline runs differ, compared the way the step says.
+fn baseline_diff(scenario: &Scenario, first: &[Outcome], second: &[Outcome]) -> Option<String> {
+    let (i, _) = scenario
+        .steps
+        .iter()
+        .enumerate()
+        .find(|(i, step)| !first[*i].matches(&second[*i], step.compare))?;
+    Some(format!(
+        "nondeterministic scenario: step {} gave {} then {} on Postgres",
+        i + 1,
+        first[i],
+        second[i]
+    ))
 }
 
 /// Compare one pooler-side run with the baseline outcomes.
@@ -252,7 +284,7 @@ mod tests {
     #[tokio::test]
     async fn unreachable_postgres_is_an_error_not_a_pass() {
         let s = scenario("name = 't'\ndescription = 't'\n[[step]]\nclient = 'a'\nsimple = 'SELECT 1'\n");
-        let checked = check(&s, CLOSED_PORT, CLOSED_PORT, &[]).await;
+        let checked = check(&s, CLOSED_PORT, CLOSED_PORT, &[], false).await;
         let reason = reason(&checked);
         assert!(
             reason.starts_with("baseline failed at step 1: error CONNECT"),
@@ -265,7 +297,7 @@ mod tests {
         let s = scenario(
             "name = 't'\ndescription = 't'\nsetup = ['SELECT 1']\n[[step]]\nclient = 'a'\nsimple = 'SELECT 1'\n",
         );
-        let checked = check(&s, CLOSED_PORT, CLOSED_PORT, &[]).await;
+        let checked = check(&s, CLOSED_PORT, CLOSED_PORT, &[], false).await;
         let reason = reason(&checked);
         assert!(reason.starts_with("setup (baseline): "), "{reason}");
     }
@@ -276,7 +308,7 @@ mod tests {
         let mut s = scenario("name = 't'\ndescription = 't'\nrepeat = 3\nstep = []\n");
         s.steps.clear();
         let started = Instant::now();
-        let checked = check(&s, CLOSED_PORT, CLOSED_PORT, &[]).await;
+        let checked = check(&s, CLOSED_PORT, CLOSED_PORT, &[], false).await;
         assert!(matches!(checked.verdict, Verdict::Pass));
         assert!(
             started.elapsed() < Duration::from_secs(2),
@@ -357,7 +389,7 @@ mod tests {
 
         let s = scenario("name = 't'\ndescription = 't'\nteardown = ['DROP TABLE pp_c3_lock']\nstep = []\n");
         let started = Instant::now();
-        let checked = timeout(Duration::from_secs(30), check(&s, &url, &url, &[]))
+        let checked = timeout(Duration::from_secs(30), check(&s, &url, &url, &[], false))
             .await
             .expect("teardown hung");
         let reason = reason(&checked);
@@ -375,6 +407,45 @@ mod tests {
         holder.batch_execute("ROLLBACK; DROP TABLE pp_c3_lock").await.unwrap();
         drop(holder);
         let _ = driver.await;
+    }
+
+    #[test]
+    fn baseline_diff_follows_each_steps_compare() {
+        let s = scenario(
+            "name = 't'\ndescription = 't'\n\
+             [[step]]\nclient = 'a'\nsimple = 'SELECT 1'\n\
+             [[step]]\nclient = 'a'\nsimple = 'SELECT random()'\ncompare = 'status'\n",
+        );
+        let row = |v: &str| Outcome::Ok {
+            rows: vec![vec![Some(v.into())]],
+            tags: vec![1],
+        };
+        let first = [row("1"), row("0.1")];
+        assert_eq!(baseline_diff(&s, &first, &[row("1"), row("0.2")]), None);
+        let diff = baseline_diff(&s, &first, &[row("2"), row("0.1")]).unwrap();
+        assert!(
+            diff.starts_with("nondeterministic scenario: step 1 gave ok rows=[(1)]"),
+            "{diff}"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "needs POOLPROOF_TEST_PG"]
+    async fn check_scenarios_flags_a_random_baseline() {
+        let url = test_pg();
+        let toml = |compare: &str| {
+            scenario(&format!(
+                "name = 't'\ndescription = 't'\n[[step]]\nclient = 'a'\nsimple = 'SELECT random()'\ncompare = '{compare}'\n"
+            ))
+        };
+        let checked = check(&toml("full"), &url, &url, &[], true).await;
+        assert!(
+            reason(&checked).starts_with("nondeterministic scenario: step 1"),
+            "{}",
+            reason(&checked)
+        );
+        let checked = check(&toml("status"), &url, &url, &[], true).await;
+        assert!(matches!(checked.verdict, Verdict::Pass));
     }
 
     #[tokio::test]

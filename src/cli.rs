@@ -53,6 +53,10 @@ enum Command {
         verbose: bool,
         #[arg(long, value_enum, default_value_t = RunFormat::Text)]
         format: RunFormat,
+        /// Run each scenario's Postgres side twice first. A scenario whose results
+        /// differ between the two runs is an ERROR: it tests timing, not the pooler.
+        #[arg(long)]
+        check_scenarios: bool,
     },
     /// Scan queries (pg_stat_statements CSV or a .sql file) for patterns that
     /// break under transaction pooling.
@@ -129,6 +133,7 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
             reverse,
             verbose,
             format,
+            check_scenarios,
         } => {
             let targets = match (pooler, direct) {
                 (Some(pooler), Some(direct)) => Targets::single(pooler, direct, mode),
@@ -140,8 +145,13 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
             }
 
             let text = matches!(format, RunFormat::Text);
-            let (target_infos, results) =
-                runner::suite::run(&targets.targets, &scenarios, filter.as_deref(), text, verbose).await?;
+            let opts = runner::suite::RunOptions {
+                filter: filter.as_deref(),
+                text,
+                verbose,
+                check_scenarios,
+            };
+            let (target_infos, results) = runner::suite::run(&targets.targets, &scenarios, &opts).await?;
 
             let count = |f: fn(&Verdict) -> bool| results.iter().filter(|r| f(&r.verdict)).count();
             let failed = count(|v| matches!(v, Verdict::Fail { .. }));
