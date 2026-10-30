@@ -131,6 +131,25 @@ impl RawMessage {
     }
 }
 
+/// The largest backend message accepted. A server can claim any length up to 4 GB,
+/// and parsing reserves that much before reading it.
+const MAX_MESSAGE: usize = 64 << 20;
+
+/// Rejects a message header whose length is impossible or above `MAX_MESSAGE`.
+fn check_header(buf: &[u8]) -> Result<()> {
+    let Some(len) = buf.get(1..5) else {
+        return Ok(());
+    };
+    let len = u32::from_be_bytes([len[0], len[1], len[2], len[3]]) as usize;
+    if len < 4 {
+        bail!("server sent a message with invalid length {len}");
+    }
+    if len > MAX_MESSAGE {
+        bail!("server sent a {len}-byte message, the limit is {MAX_MESSAGE} bytes");
+    }
+    Ok(())
+}
+
 /// How `exchange` waits for replies and what it records.
 #[derive(Debug, Clone, Copy)]
 pub struct ExchangeOpts {
@@ -236,6 +255,7 @@ impl RawConn {
 
     async fn next(&mut self, deadline: Instant) -> Result<Next> {
         loop {
+            check_header(&self.buf)?;
             if let Some(message) = Message::parse(&mut self.buf)? {
                 return Ok(Next::Message(message));
             }
@@ -370,6 +390,18 @@ mod tests {
         buf.extend_from_slice(&(body.len() as u32 + 4).to_be_bytes());
         buf.extend_from_slice(body);
         Message::parse(&mut buf).unwrap().unwrap()
+    }
+
+    #[test]
+    fn caps_message_size() {
+        let header = |len: u32| [&b"D"[..], &len.to_be_bytes()].concat();
+        assert!(check_header(b"").is_ok());
+        assert!(check_header(&header(4)[..3]).is_ok());
+        assert!(check_header(&header(4)).is_ok());
+        assert!(check_header(&header(MAX_MESSAGE as u32)).is_ok());
+        assert!(check_header(&header(MAX_MESSAGE as u32 + 1)).is_err());
+        assert!(check_header(&header(u32::MAX)).is_err());
+        assert!(check_header(&header(3)).is_err());
     }
 
     #[test]
