@@ -23,7 +23,30 @@ pub struct Finding {
     pub detail: String,
     pub query: String,
     pub calls: u64,
+    /// Line in the input where the query first appears.
+    pub line: usize,
 }
+
+/// A query from the input, with how often it ran and where it first appears.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Query {
+    pub text: String,
+    pub calls: u64,
+    pub line: usize,
+}
+
+/// Every rule with a one-line summary, for SARIF output.
+pub const RULES: &[(&str, &str)] = &[
+    ("session-advisory-lock", "Session-level advisory lock"),
+    ("session-set-config", "set_config() scoped to the session"),
+    ("session-set", "SET or RESET scoped to the session"),
+    ("listen", "LISTEN needs a dedicated session"),
+    ("temp-table", "Temp table that outlives the transaction"),
+    ("with-hold-cursor", "WITH HOLD cursor"),
+    ("sql-prepare", "SQL-level PREPARE"),
+    ("discard", "DISCARD on a shared server connection"),
+    ("multi-statement-transaction", "Several statements in one query string that starts a transaction"),
+];
 
 pub struct Report {
     pub findings: Vec<Finding>,
@@ -42,51 +65,131 @@ const SESSION_ADVISORY_LOCKS: &[&str] = &[
 ];
 
 /// Load queries from a pg_stat_statements CSV export (needs a `query` column,
-/// `calls` is optional) or from a plain .sql file.
-pub fn load_queries(path: &Path) -> Result<Vec<(String, u64)>> {
+/// `calls` is optional), a Postgres log (`.log` for stderr format, `.json` for
+/// jsonlog), or a plain .sql file.
+pub fn load_queries(path: &Path) -> Result<Vec<Query>> {
     let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-    if path.extension().is_some_and(|e| e == "csv") {
-        let mut reader = csv::Reader::from_reader(text.as_bytes());
-        let headers = reader.headers()?.clone();
-        let Some(query_col) = headers.iter().position(|h| h == "query") else {
-            anyhow::bail!("{} has no `query` column", path.display());
-        };
-        let calls_col = headers.iter().position(|h| h == "calls");
-        let mut out = Vec::new();
-        for record in reader.records() {
-            let record = record?;
-            let query = record.get(query_col).unwrap_or_default().to_string();
-            let calls = calls_col
-                .and_then(|c| record.get(c))
-                .and_then(|c| c.parse().ok())
-                .unwrap_or(1);
-            out.push((query, calls));
-        }
-        return Ok(out);
+    match path.extension().and_then(|e| e.to_str()) {
+        Some("csv") => load_csv(&text).with_context(|| format!("reading {}", path.display())),
+        Some("log") => Ok(load_stderr_log(&text)),
+        Some("json") => Ok(load_json_log(&text)),
+        _ => load_sql(&text).with_context(|| format!("splitting {}", path.display())),
     }
-    let statements = pg_query::split_with_parser(&text)
-        .or_else(|_| pg_query::split_with_scanner(&text))
-        .map_err(|e| anyhow::anyhow!("splitting {}: {e}", path.display()))?;
-    Ok(statements.into_iter().map(|s| (s.trim().to_string(), 1)).filter(|(s, _)| !s.is_empty()).collect())
 }
 
-pub fn scan(queries: &[(String, u64)]) -> Report {
+fn load_csv(text: &str) -> Result<Vec<Query>> {
+    let mut reader = csv::Reader::from_reader(text.as_bytes());
+    let headers = reader.headers()?.clone();
+    let Some(query_col) = headers.iter().position(|h| h == "query") else {
+        anyhow::bail!("no `query` column");
+    };
+    let calls_col = headers.iter().position(|h| h == "calls");
+    let mut out = Vec::new();
+    for record in reader.records() {
+        let record = record?;
+        out.push(Query {
+            text: record.get(query_col).unwrap_or_default().to_string(),
+            calls: calls_col.and_then(|c| record.get(c)).and_then(|c| c.parse().ok()).unwrap_or(1),
+            line: record.position().map_or(0, |p| p.line() as usize),
+        });
+    }
+    Ok(out)
+}
+
+fn load_sql(text: &str) -> Result<Vec<Query>> {
+    let statements = pg_query::split_with_parser(text)
+        .or_else(|_| pg_query::split_with_scanner(text))
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    Ok(statements
+        .into_iter()
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| {
+            // The splitter returns slices of `text`, so the offset gives the line.
+            let start = s.as_ptr() as usize - text.as_ptr() as usize + (s.len() - s.trim_start().len());
+            Query { text: s.trim().to_string(), calls: 1, line: text[..start].matches('\n').count() + 1 }
+        })
+        .collect())
+}
+
+/// The SQL in a log message from `log_statement` or `log_min_duration_statement`:
+/// `statement: ...` or `execute <name>: ...`, optionally after `duration: N ms  `.
+fn logged_sql(message: &str) -> Option<&str> {
+    let message = match message.strip_prefix("duration: ") {
+        Some(rest) => rest.split_once(" ms  ")?.1,
+        None => message,
+    };
+    if let Some(sql) = message.strip_prefix("statement: ") {
+        return Some(sql);
+    }
+    message.strip_prefix("execute ")?.split_once(": ").map(|(_, sql)| sql)
+}
+
+/// Postgres stderr log. The line prefix is configurable, so look for `LOG:  `.
+/// Continuation lines of a multi-line statement start with a tab.
+fn load_stderr_log(text: &str) -> Vec<Query> {
+    let mut out: Vec<Query> = Vec::new();
+    let mut open = false;
+    for (i, line) in text.lines().enumerate() {
+        if let (true, Some(rest)) = (open, line.strip_prefix('\t')) {
+            let last = out.last_mut().expect("open implies a query");
+            last.text.push('\n');
+            last.text.push_str(rest);
+            continue;
+        }
+        let sql = line.split_once("LOG:  ").and_then(|(_, message)| logged_sql(message));
+        open = sql.is_some();
+        if let Some(sql) = sql {
+            out.push(Query { text: sql.to_string(), calls: 1, line: i + 1 });
+        }
+    }
+    out
+}
+
+/// Postgres jsonlog: one JSON object per line with a `message` field.
+fn load_json_log(text: &str) -> Vec<Query> {
+    text.lines()
+        .enumerate()
+        .filter_map(|(i, line)| {
+            let entry: serde_json::Value = serde_json::from_str(line).ok()?;
+            let sql = logged_sql(entry.get("message")?.as_str()?)?;
+            Some(Query { text: sql.to_string(), calls: 1, line: i + 1 })
+        })
+        .collect()
+}
+
+pub fn scan(queries: &[Query]) -> Report {
     // Merge duplicates so each query is reported once with its total calls.
-    let mut merged: BTreeMap<&str, u64> = BTreeMap::new();
-    for (query, calls) in queries {
-        *merged.entry(query.as_str()).or_default() += calls;
+    let mut merged: BTreeMap<&str, (u64, usize)> = BTreeMap::new();
+    for q in queries {
+        let entry = merged.entry(q.text.as_str()).or_insert((0, q.line));
+        entry.0 += q.calls;
+        entry.1 = entry.1.min(q.line);
     }
 
     let mut findings = Vec::new();
     let mut unparsed = 0;
-    for (query, calls) in &merged {
+    for (query, (calls, line)) in &merged {
         let Ok(parsed) = pg_query::parse(query, pg_query::ParserOptions::DEFAULT) else {
             unparsed += 1;
             continue;
         };
         let mut push = |rule, severity, detail: String| {
-            findings.push(Finding { rule, severity, detail, query: query.to_string(), calls: *calls });
+            findings.push(Finding { rule, severity, detail, query: query.to_string(), calls: *calls, line: *line });
         };
+
+        let starts_transaction = parsed.protobuf.stmts.first().is_some_and(|raw| {
+            matches!(raw.stmt.as_ref().and_then(|s| s.node.as_ref()), Some(NodeEnum::TransactionStmt(_)))
+        });
+        if starts_transaction && parsed.protobuf.stmts.len() > 1 {
+            push(
+                "multi-statement-transaction",
+                Severity::Warn,
+                "This one query string starts with BEGIN, COMMIT or ROLLBACK and has more statements \
+                 after it. Some poolers only handle the first statement and defer or drop the rest \
+                 (PgDog: https://github.com/pgdogdev/pgdog/issues/1849). Send them separately."
+                    .to_string(),
+            );
+        }
 
         for function in parsed.functions() {
             let short = function.rsplit('.').next().unwrap_or(&function);
@@ -200,6 +303,15 @@ pub fn scan(queries: &[(String, u64)]) -> Report {
                         cursor.portalname
                     ),
                 ),
+                NodeEnum::DiscardStmt(_) => push(
+                    "discard",
+                    Severity::Warn,
+                    "DISCARD resets the server connection it runs on. Under transaction pooling \
+                     that connection is shared, and the pooler's view of it (tracked settings, \
+                     prepared statements) can stop matching. It is usually only needed in session \
+                     mode, where the pooler runs it for you."
+                        .to_string(),
+                ),
                 NodeEnum::PrepareStmt(prepare) => push(
                     "sql-prepare",
                     Severity::Warn,
@@ -245,8 +357,12 @@ fn has_false_literal(parsed: &pg_query::ParseResult) -> bool {
 mod tests {
     use super::*;
 
+    fn query(text: &str, calls: u64) -> Query {
+        Query { text: text.to_string(), calls, line: 1 }
+    }
+
     fn rules(sql: &str) -> Vec<&'static str> {
-        scan(&[(sql.to_string(), 1)]).findings.iter().map(|f| f.rule).collect()
+        scan(&[query(sql, 1)]).findings.iter().map(|f| f.rule).collect()
     }
 
     #[test]
@@ -260,6 +376,10 @@ mod tests {
         assert_eq!(rules("DECLARE c CURSOR WITH HOLD FOR SELECT 1"), vec!["with-hold-cursor"]);
         assert_eq!(rules("PREPARE q AS SELECT 1"), vec!["sql-prepare"]);
         assert_eq!(rules("SELECT set_config('app.user', '1', false)"), vec!["session-set-config"]);
+        assert_eq!(rules("SET ROLE app_reader"), vec!["session-set"]);
+        assert_eq!(rules("DISCARD ALL"), vec!["discard"]);
+        assert_eq!(rules("BEGIN; INSERT INTO t VALUES (1); COMMIT"), vec!["multi-statement-transaction"]);
+        assert_eq!(rules("ROLLBACK; SELECT 1"), vec!["multi-statement-transaction"]);
     }
 
     #[test]
@@ -271,12 +391,55 @@ mod tests {
         assert!(rules("DECLARE c CURSOR FOR SELECT 1").is_empty());
         assert!(rules("SELECT set_config('app.user', '1', true)").is_empty());
         assert!(rules("SELECT * FROM users WHERE id = $1").is_empty());
+        assert!(rules("BEGIN").is_empty());
+        assert!(rules("SELECT 1; SELECT 2").is_empty());
     }
 
     #[test]
     fn merges_duplicate_queries() {
-        let report = scan(&[("LISTEN a".into(), 2), ("LISTEN a".into(), 3)]);
+        let report = scan(&[query("LISTEN a", 2), Query { line: 7, ..query("LISTEN a", 3) }]);
         assert_eq!(report.findings.len(), 1);
         assert_eq!(report.findings[0].calls, 5);
+        assert_eq!(report.findings[0].line, 1);
+    }
+
+    #[test]
+    fn sql_file_lines() {
+        let queries = load_sql("SELECT 1;\n\n  LISTEN a;\nSELECT\n  2;").unwrap();
+        let lines: Vec<_> = queries.iter().map(|q| (q.text.as_str(), q.line)).collect();
+        assert_eq!(lines, vec![("SELECT 1", 1), ("LISTEN a", 3), ("SELECT\n  2", 4)]);
+    }
+
+    #[test]
+    fn stderr_log() {
+        let log = "\
+2026-10-30 12:00:00.000 UTC [42] app@db LOG:  statement: BEGIN; INSERT INTO t VALUES (1); COMMIT
+2026-10-30 12:00:00.100 UTC [42] app@db LOG:  duration: 0.512 ms  statement: SELECT *
+\tFROM t
+2026-10-30 12:00:00.200 UTC [42] app@db LOG:  execute <unnamed>: SELECT pg_advisory_lock($1)
+2026-10-30 12:00:00.200 UTC [42] app@db DETAIL:  parameters: $1 = '7'
+2026-10-30 12:00:00.300 UTC [42] app@db LOG:  duration: 1.000 ms  execute S_1: LISTEN jobs
+2026-10-30 12:00:00.400 UTC [42] app@db LOG:  connection authorized: user=app
+";
+        let queries = load_stderr_log(log);
+        let got: Vec<_> = queries.iter().map(|q| (q.text.as_str(), q.line)).collect();
+        assert_eq!(
+            got,
+            vec![
+                ("BEGIN; INSERT INTO t VALUES (1); COMMIT", 1),
+                ("SELECT *\nFROM t", 2),
+                ("SELECT pg_advisory_lock($1)", 4),
+                ("LISTEN jobs", 6),
+            ]
+        );
+    }
+
+    #[test]
+    fn json_log() {
+        let log = r#"{"timestamp":"2026-10-30 12:00:00 UTC","error_severity":"LOG","message":"statement: LISTEN jobs"}
+{"timestamp":"2026-10-30 12:00:01 UTC","error_severity":"LOG","message":"connection received: host=x"}
+{"timestamp":"2026-10-30 12:00:02 UTC","error_severity":"LOG","message":"duration: 2.1 ms  execute <unnamed>: SELECT 1"}"#;
+        let got: Vec<_> = load_json_log(log).into_iter().map(|q| (q.text, q.line)).collect();
+        assert_eq!(got, vec![("LISTEN jobs".to_string(), 1), ("SELECT 1".to_string(), 3)]);
     }
 }

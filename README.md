@@ -76,16 +76,33 @@ scenarios in reverse order; verdicts should not change.
 
 ## Scanning your queries
 
+From pg_stat_statements:
+
 ```sh
 psql -c "\copy (SELECT query, calls FROM pg_stat_statements) TO 'queries.csv' CSV HEADER"
 poolproof scan queries.csv
 ```
 
-Exit code is 1 if anything would break under transaction pooling (`--strict` also fails on
-warnings), so it can run in CI. `--format json` gives machine-readable output.
+From Postgres logs, with `log_statement = 'all'` or `log_min_duration_statement` set:
+`poolproof scan postgresql.log` (stderr format) or `poolproof scan postgresql.json`
+(jsonlog). Logs keep multi-statement query strings whole; pg_stat_statements splits them,
+so some problems only show up in logs. A `.sql` file works too, e.g. your migrations.
 
-Rules today: session `SET`/`RESET` and `set_config(..., false)`, session advisory locks,
-`LISTEN`, temp tables without `ON COMMIT DROP`, `WITH HOLD` cursors and SQL-level `PREPARE`.
+Exit code is 1 if anything would break under transaction pooling (`--strict` also fails on
+warnings), so it can run in CI. `--format json` gives machine-readable output and
+`--format sarif` works with GitHub code scanning:
+
+```yaml
+- run: poolproof scan migrations/all.sql --format sarif > poolproof.sarif || true
+- uses: github/codeql-action/upload-sarif@v4
+  with:
+    sarif_file: poolproof.sarif
+```
+
+Rules today: session `SET`/`RESET` (including `SET ROLE`) and `set_config(..., false)`,
+session advisory locks, `LISTEN`, temp tables without `ON COMMIT DROP`, `WITH HOLD`
+cursors, SQL-level `PREPARE`, `DISCARD`, and query strings that start a transaction and
+run more statements in it.
 
 ## Writing a scenario
 

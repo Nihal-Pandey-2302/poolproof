@@ -46,9 +46,10 @@ enum Command {
     /// Scan queries (pg_stat_statements CSV or a .sql file) for patterns that
     /// break under transaction pooling.
     Scan {
+        /// pg_stat_statements CSV, Postgres log (.log stderr, .json jsonlog) or .sql file.
         input: PathBuf,
-        #[arg(long, value_enum, default_value_t = Format::Text)]
-        format: Format,
+        #[arg(long, value_enum, default_value_t = ScanFormat::Text)]
+        format: ScanFormat,
         /// Exit non-zero on warnings too, not just on queries that break.
         #[arg(long)]
         strict: bool,
@@ -61,9 +62,11 @@ enum Command {
 }
 
 #[derive(Clone, Copy, ValueEnum)]
-enum Format {
+enum ScanFormat {
     Text,
     Json,
+    /// SARIF 2.1.0, for GitHub code scanning and other SARIF viewers.
+    Sarif,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -179,8 +182,9 @@ async fn run(cli: Cli) -> Result<ExitCode> {
             let queries = scan::load_queries(&input)?;
             let report = scan::scan(&queries);
             match format {
-                Format::Json => println!("{}", serde_json::to_string_pretty(&report.findings)?),
-                Format::Text => print_scan(&report),
+                ScanFormat::Json => println!("{}", serde_json::to_string_pretty(&report.findings)?),
+                ScanFormat::Sarif => println!("{}", serde_json::to_string_pretty(&sarif(&report, &input))?),
+                ScanFormat::Text => print_scan(&report),
             }
             let failing = report
                 .findings
@@ -273,6 +277,48 @@ fn markdown(targets: &[Target], scenarios: &[scenario::Scenario], results: &[Res
     out
 }
 
+fn sarif(report: &scan::Report, input: &std::path::Path) -> serde_json::Value {
+    use serde_json::json;
+
+    let rules: Vec<_> =
+        scan::RULES.iter().map(|(id, summary)| json!({"id": id, "shortDescription": {"text": summary}})).collect();
+    let uri = input.to_string_lossy().replace('\\', "/");
+    let results: Vec<_> = report
+        .findings
+        .iter()
+        .map(|f| {
+            let level = match f.severity {
+                scan::Severity::Breaks => "error",
+                scan::Severity::Warn => "warning",
+            };
+            json!({
+                "ruleId": f.rule,
+                "level": level,
+                "message": {"text": format!("{} Calls: {}.", f.detail, f.calls)},
+                "locations": [{
+                    "physicalLocation": {
+                        "artifactLocation": {"uri": uri},
+                        "region": {"startLine": f.line.max(1)},
+                    },
+                }],
+            })
+        })
+        .collect();
+    json!({
+        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+        "version": "2.1.0",
+        "runs": [{
+            "tool": {"driver": {
+                "name": "poolproof",
+                "informationUri": env!("CARGO_PKG_REPOSITORY"),
+                "version": env!("CARGO_PKG_VERSION"),
+                "rules": rules,
+            }},
+            "results": results,
+        }],
+    })
+}
+
 fn print_scan(report: &scan::Report) {
     for f in &report.findings {
         let label = match f.severity {
@@ -281,7 +327,7 @@ fn print_scan(report: &scan::Report) {
         };
         let query: String = f.query.split_whitespace().collect::<Vec<_>>().join(" ");
         let query = if query.len() > 100 { format!("{}...", &query[..query.floor_char_boundary(100)]) } else { query };
-        println!("{label:<7} {:<22} calls={:<8} {query}", f.rule, f.calls);
+        println!("{label:<7} {:<27} calls={:<8} {query}", f.rule, f.calls);
         println!("        {}", f.detail);
     }
     let breaks = report.findings.iter().filter(|f| f.severity == scan::Severity::Breaks).count();
