@@ -321,13 +321,15 @@ const RESET_ALL: &str = "SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_act
     WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'";
 
 /// `reset = "auto"`: the same, for the sessions from one address and user only.
-fn reset_auto_sql(addr: &str, user: &str) -> String {
-    let literal = |s: &str| format!("'{}'", s.replace('\'', "''"));
+/// Both values come from the system under test, so neither may steer the statement:
+/// the address is a parsed IpAddr, and the user an E'' literal with backslashes and
+/// quotes doubled, safe whatever standard_conforming_strings is.
+fn reset_auto_sql(addr: std::net::IpAddr, user: &str) -> String {
+    let user = user.replace('\\', "\\\\").replace('\'', "''");
     format!(
         "SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity WHERE datname = current_database() \
-         AND client_addr = {}::inet AND usename = {} AND pid <> pg_backend_pid() AND backend_type = 'client backend'",
-        literal(addr),
-        literal(user)
+         AND client_addr = '{addr}'::inet AND usename = E'{user}' AND pid <> pg_backend_pid() \
+         AND backend_type = 'client backend'"
     )
 }
 
@@ -399,14 +401,30 @@ pub async fn resolve_reset(target: &Target, yes: bool, t: &Timeouts) -> Result<(
                     "Postgres sees no client address for them (a Unix socket?)".into(),
                 ));
             };
-            if ours.first() == Some(&Some(addr.clone())) {
+            let Ok(addr) = addr.parse::<std::net::IpAddr>() else {
+                return Err(refuse(
+                    "the address Postgres reports for the pooler isn't an IP address".into(),
+                ));
+            };
+            // 10.0.0.1 and ::ffff:10.0.0.1 are the same host.
+            let ours = ours
+                .first()
+                .cloned()
+                .flatten()
+                .and_then(|a| a.parse::<std::net::IpAddr>().ok());
+            if ours.is_some_and(|ours| ours.to_canonical() == addr.to_canonical()) {
                 return Err(refuse(format!(
                     "the pooler connects from {addr}, the same address as poolproof"
                 )));
             }
+            // Anything else from that address and user goes too: a NAT or a sidecar
+            // that shares the pooler's address can't be told apart from it.
             Ok((
                 vec![TargetStatement::plain(&reset_auto_sql(addr, user))],
-                format!("reset: '{name}': ends sessions of user {user} from {addr} on database {db} at {host} (auto)"),
+                format!(
+                    "reset: '{name}': ends every session of user {user} from {addr} (not only the pooler's) \
+                     on database {db} at {host} (auto)"
+                ),
             ))
         }
     }
@@ -677,9 +695,15 @@ mod tests {
 
     #[test]
     fn auto_reset_quotes_what_it_was_told() {
-        let sql = reset_auto_sql("10.0.0.7", "o'neil");
+        let sql = reset_auto_sql("10.0.0.7".parse().unwrap(), "o'neil");
         assert!(sql.contains("client_addr = '10.0.0.7'::inet"), "{sql}");
-        assert!(sql.contains("usename = 'o''neil'"), "{sql}");
+        assert!(sql.contains("usename = E'o''neil'"), "{sql}");
+        // A user name trying to end the literal, with or without standard_conforming_strings.
+        let sql = reset_auto_sql("::1".parse().unwrap(), "x\\' OR true --");
+        assert!(
+            sql.contains("client_addr = '::1'::inet AND usename = E'x\\\\'' OR true --' AND pid"),
+            "{sql}"
+        );
     }
 
     #[test]
@@ -734,9 +758,9 @@ mod tests {
         })
         .await;
         let (sql, line) = resolve_reset(&target(port, Reset::Auto), false, &t).await.unwrap();
-        assert_eq!(sql[0].sql(), reset_auto_sql("10.0.0.7", "app"));
+        assert_eq!(sql[0].sql(), reset_auto_sql("10.0.0.7".parse().unwrap(), "app"));
         assert!(
-            line.contains("ends sessions of user app from 10.0.0.7 on database app"),
+            line.contains("ends every session of user app from 10.0.0.7 (not only the pooler's) on database app"),
             "{line}"
         );
 
@@ -761,6 +785,33 @@ mod tests {
         .await;
         let err = resolve_reset(&target(same, Reset::Auto), false, &t).await.unwrap_err();
         assert!(err.contains("the same address as poolproof"), "{err}");
+
+        // The same host written as an IPv4-mapped IPv6 address.
+        let mapped = answering(|sql| {
+            if sql.contains("session_user") {
+                vec![Some("::ffff:10.0.0.1"), Some("app")]
+            } else {
+                vec![Some("10.0.0.1")]
+            }
+        })
+        .await;
+        let err = resolve_reset(&target(mapped, Reset::Auto), false, &t)
+            .await
+            .unwrap_err();
+        assert!(err.contains("the same address as poolproof"), "{err}");
+
+        let not_ip = answering(|sql| {
+            if sql.contains("session_user") {
+                vec![Some("10.0.0.7' OR true --"), Some("app")]
+            } else {
+                vec![Some("10.0.0.1")]
+            }
+        })
+        .await;
+        let err = resolve_reset(&target(not_ip, Reset::Auto), false, &t)
+            .await
+            .unwrap_err();
+        assert!(err.contains("isn't an IP address"), "{err}");
     }
 
     #[tokio::test]

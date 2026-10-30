@@ -120,10 +120,11 @@ reset = "auto"
 
 `reset` decides how much each run is isolated from the one before:
 
-- `"auto"` ends only the pooler's sessions: the ones from the address and user Postgres
-  sees the pooler connect as (asked once per target, through the pooler). It refuses to
-  run when it can't tell them apart from others: a pooler on a Unix socket, or on the
-  same address as poolproof. It assumes one pooler per Postgres: another pooler's leaked
+- `"auto"` ends the sessions from the address and user Postgres sees the pooler connect
+  as (asked once per target, through the pooler). That is every such session, not only
+  the pooler's: behind a NAT (Kubernetes, a cloud NAT in front of RDS) or next to an app
+  on the same host, other sessions share that address and user and end too. It refuses
+  to run when the pooler is on a Unix socket or on the same address as poolproof. It assumes one pooler per Postgres: another pooler's leaked
   locks stay, and so do sessions the pooler opens from a second address (clusters,
   several nodes, a restart on a new IP). Other applications using the same pooler lose
   their server connections, which the pooler then reopens.
@@ -134,8 +135,8 @@ reset = "auto"
   warns. With `--pooler` and `--direct`, `--reset auto` or `--reset all` picks one.
 
 Before the first scenario, `run` prints what the reset will touch, e.g.
-`reset: 'prod-like-pgbouncer': ends sessions of user app from 10.0.0.7 on database db at
-postgres-host:5432 (auto)`. The JSON report records which kind each target used.
+`reset: 'prod-like-pgbouncer': ends every session of user app from 10.0.0.7 (not only the
+pooler's) on database db at postgres-host:5432 (auto)`. The JSON report records which kind each target used.
 
 To share the outcome with your team, `--format html` writes one self-contained page with
 the grid and every step's trace. `--format json` saves the raw results;
