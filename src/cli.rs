@@ -62,6 +62,10 @@ enum Command {
         /// differ between the two runs is an ERROR: it tests timing, not the pooler.
         #[arg(long)]
         check_scenarios: bool,
+        /// Seconds each step may take before it counts as a hang. A scenario's
+        /// `timeout_ms` overrides it.
+        #[arg(long, value_name = "SECS", default_value_t = 10, value_parser = clap::value_parser!(u64).range(1..))]
+        step_timeout: u64,
         /// Which failures make the exit code 1. An ERROR (nothing to compare) counts
         /// unless this is `none`.
         #[arg(long, value_enum, default_value_t = FailOn::Any)]
@@ -145,6 +149,7 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
             format,
             check_scenarios,
             fail_on,
+            step_timeout,
         } => {
             let targets = match (pooler, direct) {
                 (Some(pooler), Some(direct)) => Targets::single(pooler, direct, mode),
@@ -165,6 +170,10 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
                     color: color_enabled(),
                 },
                 check_scenarios,
+                timeouts: runner::Timeouts {
+                    step: std::time::Duration::from_secs(step_timeout),
+                    ..Default::default()
+                },
             };
             let (target_infos, results) = runner::suite::run(&targets.targets, &scenarios, &opts).await?;
 

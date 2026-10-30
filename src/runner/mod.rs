@@ -31,6 +31,15 @@ pub struct Timeouts {
     pub notify: Duration,
     /// How long to wait for the pooler to answer again after a reset.
     pub ready: Duration,
+    /// `lock_timeout` for setup, teardown and reset statements. A pooler can leak a
+    /// lock (some scenarios test exactly that), and a teardown blocked on it must fail,
+    /// not hang the run.
+    pub direct_lock: Duration,
+    /// `statement_timeout` for the same statements. Stays well above reset's 5 s wait
+    /// per terminated backend.
+    pub direct_statement: Duration,
+    /// Extra time on top of `direct_statement` before giving up on the server itself.
+    pub direct_grace: Duration,
 }
 
 impl Default for Timeouts {
@@ -41,6 +50,9 @@ impl Default for Timeouts {
             quiet: Duration::from_millis(500),
             notify: Duration::from_secs(1),
             ready: Duration::from_secs(10),
+            direct_lock: Duration::from_secs(5),
+            direct_statement: Duration::from_secs(30),
+            direct_grace: Duration::from_secs(5),
         }
     }
 }
