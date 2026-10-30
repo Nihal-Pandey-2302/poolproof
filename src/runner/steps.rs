@@ -88,7 +88,7 @@ pub async fn run_steps(
             let url = if step.direct { direct } else { pooled };
             match connect(url, t).await {
                 Ok((client, driver, notices)) => {
-                    let pid = if url == direct {
+                    let pid = if on_postgres(step.direct) {
                         backend_pid(&client, t).await
                     } else {
                         None
