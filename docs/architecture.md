@@ -37,7 +37,8 @@ src/report/
   html.rs, report.html   the self-contained results page
 src/scan/
   mod.rs                 Finding, Severity, rule list, rule -> scenario mapping
-  input.rs               pg_stat_statements CSV, stderr and jsonlog logs, .sql files
+  input.rs               pg_stat_statements CSV, csvlog, stderr and jsonlog logs, .sql files;
+                         --input, stdin, read as a stream and merged by query text
   rules.rs               the rules, on the parsed statement tree
 src/output/
   text.rs                `run` results on the terminal
@@ -102,7 +103,7 @@ Details that matter when changing this:
 ## How `scan` works
 
 ```text
-input file -> scan::input::load_queries -> Vec<Query> (SQL, calls, line)
+file or stdin -> scan::input::load_queries -> Vec<Query> (SQL, calls, line)
            -> scan::rules::scan -> findings (rule, severity, query)
            -> with --pooler: report::find_target + check_finding
                              (rule -> scenarios -> that pooler's verdicts)
@@ -124,8 +125,8 @@ report given with `--results`.
 | A targets file field | `targets.rs`, README's targets example |
 | A field in the JSON report | `report/mod.rs`; it's a stable format, see the versioning policy in CHANGELOG.md |
 | The results table or page | `report/markdown.rs`, `report/html.rs` and `report/report.html` |
-| A `scan` rule | `scan/rules.rs`, `RULES` and the rule -> scenario map in `scan/mod.rs`, README's rule list |
-| A `scan` input format | `scan/input.rs` |
+| A `scan` rule | `scan/rules.rs`, `RULES` and the rule -> scenario map in `scan/mod.rs`, README's rule list, expected findings in the corpus (`tests/fixtures/scan/*.toml`, run by `tests/scan_corpus.rs`) |
+| A `scan` input format | `scan/input.rs` (`InputFormat` is also the list of `--input` values) |
 | Terminal or SARIF output | `output/` |
 | A command or flag | `cli.rs`, README |
 | A pooler or version in the matrix | `docker/compose.yml`, `targets.toml` (with `product`, `version`, `config`), the version list in README.md, the Docker ignore list in `.github/dependabot.yml`, then regenerate `results/` |

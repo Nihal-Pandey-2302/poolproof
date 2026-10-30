@@ -178,7 +178,10 @@ Rules today: session `SET`/`RESET` (including `SET ROLE`) and `set_config(..., f
 parameter there, as pg_stat_statements shows it, gives a warning to check the value),
 session advisory locks, `LISTEN`, temp tables without `ON COMMIT DROP`, `WITH HOLD`
 cursors, SQL-level `PREPARE`, `DISCARD`, `DEALLOCATE ALL`, `LOAD`, and query strings that
-start a transaction and run more statements in it.
+start a transaction and run more statements in it. Function calls are checked anywhere in a
+statement, including the query inside `PREPARE` and `DECLARE CURSOR`, but not in the body
+of `CREATE VIEW`, `CREATE FUNCTION` or `CREATE RULE`, which doesn't run then (`CREATE
+MATERIALIZED VIEW` does run its query, so it is checked).
 
 ## Writing a scenario
 
