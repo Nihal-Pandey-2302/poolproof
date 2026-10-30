@@ -28,3 +28,8 @@ simple = "COMMIT"
 [[step]]
 client = "a"
 simple = "FETCH 1 FROM pp_own_cur"
+
+# Clean up, so nothing is left on the pooler's server connection for a later run.
+[[step]]
+client = "a"
+simple = "CLOSE pp_own_cur"

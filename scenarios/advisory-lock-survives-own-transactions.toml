@@ -28,3 +28,8 @@ simple = "COMMIT"
 [[step]]
 client = "a"
 simple = "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 424243 AND pid = pg_backend_pid()"
+
+# Clean up, so nothing is left on the pooler's server connection for a later run.
+[[step]]
+client = "a"
+simple = "SELECT pg_advisory_unlock(424243)::text"

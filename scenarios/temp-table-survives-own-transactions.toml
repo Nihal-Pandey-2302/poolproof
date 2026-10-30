@@ -28,3 +28,8 @@ simple = "COMMIT"
 [[step]]
 client = "a"
 simple = "SELECT count(*) FROM pp_own_tmp"
+
+# Clean up, so nothing is left on the pooler's server connection for a later run.
+[[step]]
+client = "a"
+simple = "DROP TABLE pp_own_tmp"
