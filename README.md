@@ -84,7 +84,8 @@ poolproof run --pooler postgres://user@pooler-host:6432/db \
 ```
 
 A URL without a password gets one the way psql does: from `PGPASSWORD`, else from the
-password file (`PGPASSFILE`, default `~/.pgpass`; ignored unless only you can read it).
+password file (`PGPASSFILE`, default `~/.pgpass`; ignored unless only you can read it;
+a Unix socket matches as `localhost`, and only the first of several hosts is looked up).
 In a URL, percent-encode special characters in the password (`@` is `%40`). Output
 never shows passwords.
 
