@@ -75,6 +75,16 @@ happen every time instead of by luck. `POSTGRES_IMAGE=postgres:18.4` picks the s
 version. `scripts/update-results.sh` rebuilds `results/` and `RESULTS.md` for Postgres 17
 and 18 from a fresh test bed.
 
+The test bed listens on 127.0.0.1 only. To run more than one at a time, give each its own
+port offset:
+
+```sh
+scripts/testbed.sh up 100                    # project poolproof-100, every port + 100
+scripts/testbed.sh targets 100 > t100.toml   # targets.toml with the ports shifted
+cargo run -- run --targets t100.toml
+scripts/testbed.sh down 100
+```
+
 To test your own pooler, point poolproof at it and at the Postgres server behind it:
 
 ```sh
@@ -115,9 +125,16 @@ poolproof scan queries.csv
 ```
 
 From Postgres logs, with `log_statement = 'all'` or `log_min_duration_statement` set:
-`poolproof scan postgresql.log` (stderr format) or `poolproof scan postgresql.json`
-(jsonlog). Logs keep multi-statement query strings whole; pg_stat_statements splits them,
-so some problems only show up in logs. A `.sql` file works too, e.g. your migrations.
+`poolproof scan postgresql.log` (stderr format), `postgresql.csv` (csvlog) or
+`postgresql.json` (jsonlog). Logs keep multi-statement query strings whole;
+pg_stat_statements splits them, so some problems only show up in logs. Logs are read as a
+stream, so multi-GB files are fine. poolproof reads the English log prefixes (`LOG:`,
+`statement:`), so the server needs `lc_messages = 'C'` or another English locale. A `.sql`
+file works too, e.g. your migrations.
+
+`--input pgss|csvlog|log|jsonlog|sql` says what the input is when the extension doesn't
+(a `.csv` is told apart by its first row). `-` reads stdin:
+`pg_dump --schema-only mydb | poolproof scan - --input sql`.
 
 ### Against your pooler
 
@@ -154,10 +171,11 @@ Without `--pooler`, the exit code is 1 if anything would break under transaction
     sarif_file: poolproof.sarif
 ```
 
-Rules today: session `SET`/`RESET` (including `SET ROLE`) and `set_config(..., false)`,
+Rules today: session `SET`/`RESET` (including `SET ROLE`) and `set_config(..., false)` (a
+parameter there, as pg_stat_statements shows it, gives a warning to check the value),
 session advisory locks, `LISTEN`, temp tables without `ON COMMIT DROP`, `WITH HOLD`
-cursors, SQL-level `PREPARE`, `DISCARD`, and query strings that start a transaction and
-run more statements in it.
+cursors, SQL-level `PREPARE`, `DISCARD`, `DEALLOCATE ALL`, `LOAD`, and query strings that
+start a transaction and run more statements in it.
 
 ## Writing a scenario
 
@@ -223,7 +241,8 @@ pooler. Use it on a new scenario: a PASS only means something if Postgres did wh
 expected.
 
 The best scenarios come from real bug reports. If your pooler bit you, a scenario with a
-link to the issue is the most useful contribution.
+link to the issue is the most useful contribution. [CONTRIBUTING.md](CONTRIBUTING.md) has
+the workflow.
 
 ## Status
 
