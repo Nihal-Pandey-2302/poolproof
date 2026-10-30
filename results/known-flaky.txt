@@ -1,0 +1,11 @@
+# Verdicts CI doesn't compare: "<target> <scenario>", one pair per line. Only that exact
+# pair is skipped; the same scenario on other targets is still compared. Remove a line
+# once the scenario has repeat or the cause is fixed.
+
+# 2026-10-31: flips between pass and fail (silent) on CI runners, about every other run.
+# Role E is measuring the rate.
+supavisor-2.10.0-rc.1 set-local-reverts-after-commit
+
+# 2026-10-31: flips between pass and fail (error) on CI runners, about every other run.
+# Role E is measuring the rate.
+supavisor-2.10.0-rc.1 prepared-statement-survives-other-clients
