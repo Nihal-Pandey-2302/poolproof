@@ -124,25 +124,39 @@ impl std::fmt::Display for Side {
     }
 }
 
+/// What one run produced. Teardown is kept apart from the steps: on the target run,
+/// a teardown that fails (say, on a lock the pooler leaked) mustn't hide a FAIL.
+struct Run {
+    outcomes: Result<Vec<Outcome>, String>,
+    teardown: Result<(), String>,
+}
+
+impl Run {
+    /// The outcomes, or the first error of the run, teardown included.
+    fn all(self) -> Result<Vec<Outcome>, String> {
+        let outcomes = self.outcomes?;
+        self.teardown?;
+        Ok(outcomes)
+    }
+}
+
 /// One run of a scenario's steps with reset, setup and teardown around it. Teardown
-/// runs even when setup or a step fails; the first error is the one returned.
-async fn run_once(
-    scenario: &Scenario,
-    pooled: &str,
-    direct: &str,
-    reset: &[String],
-    side: Side,
-) -> Result<Vec<Outcome>, String> {
-    run_direct(direct, reset)
-        .await
-        .map_err(|e| format!("reset ({side}): {e:#}"))?;
+/// runs even when setup or a step fails.
+async fn run_once(scenario: &Scenario, pooled: &str, direct: &str, reset: &[String], side: Side) -> Run {
+    let failed = |reason| Run {
+        outcomes: Err(reason),
+        teardown: Ok(()),
+    };
+    if let Err(e) = run_direct(direct, reset).await {
+        return failed(format!("reset ({side}): {e:#}"));
+    }
     // A reset kills the pooler's server connections, and it needs a moment to open new
     // ones. Without a reset there's nothing to wait for.
     if side == Side::Target
         && !reset.is_empty()
         && let Err(e) = wait_ready(pooled).await
     {
-        return Err(format!("{e:#}"));
+        return failed(format!("{e:#}"));
     }
     let outcomes = match run_direct(direct, &scenario.setup).await {
         Ok(()) => run_steps(scenario, pooled, direct)
@@ -153,9 +167,7 @@ async fn run_once(
     let teardown = run_direct(direct, &scenario.teardown)
         .await
         .map_err(|e| format!("teardown ({side}): {e:#}"));
-    let outcomes = outcomes?;
-    teardown?;
-    Ok(outcomes)
+    Run { outcomes, teardown }
 }
 
 /// Run a scenario against plain Postgres, then through the pooler, and compare.
@@ -171,7 +183,7 @@ pub async fn check(
     reset: &[String],
     check_scenarios: bool,
 ) -> Checked {
-    let expected = match run_once(scenario, direct, direct, reset, Side::Baseline).await {
+    let expected = match run_once(scenario, direct, direct, reset, Side::Baseline).await.all() {
         Ok(expected) => expected,
         Err(reason) => return Checked::error(reason),
     };
@@ -179,7 +191,7 @@ pub async fn check(
         return Checked::error(reason);
     }
     if check_scenarios {
-        let again = match run_once(scenario, direct, direct, reset, Side::Baseline).await {
+        let again = match run_once(scenario, direct, direct, reset, Side::Baseline).await.all() {
             Ok(again) => again,
             Err(reason) => return Checked::error(reason),
         };
@@ -191,8 +203,9 @@ pub async fn check(
     let mut kept: Option<Checked> = None;
     let mut failures = 0;
     for _ in 0..scenario.repeat {
-        let checked = match run_once(scenario, pooled, direct, reset, Side::Target).await {
-            Ok(actual) => compare(scenario, &expected, actual),
+        let run = run_once(scenario, pooled, direct, reset, Side::Target).await;
+        let checked = match run.outcomes {
+            Ok(actual) => after_teardown(compare(scenario, &expected, actual), run.teardown),
             Err(reason) => Checked::error(reason),
         };
         let failed = !matches!(checked.verdict, Verdict::Pass);
@@ -206,6 +219,15 @@ pub async fn check(
     let mut checked = kept.unwrap_or_else(|| Checked::error("repeat is 0".into()));
     checked.runs = scenario.repeat;
     checked.failures = failures;
+    checked
+}
+
+/// A failed teardown on the target run only matters when the steps passed: a FAIL
+/// found before it is the real result.
+fn after_teardown(mut checked: Checked, teardown: Result<(), String>) -> Checked {
+    if let (Verdict::Pass, Err(reason)) = (&checked.verdict, teardown) {
+        checked.verdict = Verdict::Error { reason };
+    }
     checked
 }
 
@@ -462,6 +484,24 @@ mod tests {
         );
         let checked = check(&toml("status"), &url, &url, &[], true).await;
         assert!(matches!(checked.verdict, Verdict::Pass));
+    }
+
+    #[test]
+    fn a_failed_target_teardown_keeps_a_fail() {
+        let s = scenario("name = 't'\ndescription = 't'\n[[step]]\nclient = 'a'\nsimple = 'SELECT 1'\n");
+        let one = Outcome::Ok {
+            rows: vec![vec![Some("1".into())]],
+            tags: vec![1],
+        };
+        let expected = [one.clone()];
+        let teardown = || Err("teardown (target): lock timeout".to_string());
+        let failed = after_teardown(compare(&s, &expected, vec![Outcome::empty()]), teardown());
+        assert!(matches!(failed.verdict, Verdict::Fail { .. }));
+        let passed = after_teardown(compare(&s, &expected, vec![one.clone()]), teardown());
+        assert_eq!(reason(&passed), "teardown (target): lock timeout");
+        assert_eq!(passed.steps.len(), 1);
+        let clean = after_teardown(compare(&s, &expected, vec![one]), Ok(()));
+        assert!(matches!(clean.verdict, Verdict::Pass));
     }
 
     #[tokio::test]
