@@ -5,7 +5,7 @@ use serde::Serialize;
 mod input;
 mod rules;
 
-pub use input::load_queries;
+pub use input::{InputFormat, load_queries, read_queries};
 pub use rules::scan;
 
 /// Severity of a finding under transaction pooling.
@@ -89,6 +89,8 @@ pub const RULES: &[(&str, &str)] = &[
     ("with-hold-cursor", "WITH HOLD cursor"),
     ("sql-prepare", "SQL-level PREPARE"),
     ("discard", "DISCARD on a shared server connection"),
+    ("deallocate-all", "DEALLOCATE ALL on a shared server connection"),
+    ("load", "LOAD of a library into the session"),
     (
         "multi-statement-transaction",
         "Several statements in one query string that starts a transaction",

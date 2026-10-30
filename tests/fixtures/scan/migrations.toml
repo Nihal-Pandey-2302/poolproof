@@ -1,0 +1,81 @@
+# Migration tools: golang-migrate, Flyway, Liquibase, Alembic, Ecto.
+
+[[query]]
+sql = 'SELECT pg_advisory_lock($1)'
+form = "pgss"
+expect = ["session-advisory-lock"]
+note = "golang-migrate postgres/pgx driver Lock()"
+
+[[query]]
+sql = 'CREATE TABLE IF NOT EXISTS "public"."schema_migrations" (version bigint not null primary key, dirty boolean not null)'
+form = "log"
+expect = []
+note = "golang-migrate"
+
+[[query]]
+sql = 'TRUNCATE "public"."schema_migrations"'
+form = "pgss"
+expect = []
+note = "golang-migrate SetVersion"
+
+[[query]]
+sql = '''BEGIN;
+CREATE TABLE accounts (id bigserial PRIMARY KEY, email text NOT NULL);
+CREATE UNIQUE INDEX accounts_email_idx ON accounts (email);
+COMMIT;'''
+form = "log"
+expect = ["multi-statement-transaction"]
+note = "golang-migrate sends each migration file as one query string"
+
+[[query]]
+sql = 'SELECT pg_try_advisory_xact_lock($1)'
+form = "pgss"
+expect = []
+note = "Flyway, default postgresql.transactional.lock=true"
+
+[[query]]
+sql = 'SELECT pg_try_advisory_lock($1)'
+form = "pgss"
+expect = ["session-advisory-lock"]
+note = "Flyway with postgresql.transactional.lock=false (needed for CREATE INDEX CONCURRENTLY)"
+
+[[query]]
+sql = 'SET search_path = "public"'
+form = "pgss-17"
+expect = ["session-set"]
+note = "Flyway switching to the configured schema"
+
+[[query]]
+sql = "UPDATE public.databasechangeloglock SET LOCKED = TRUE, LOCKEDBY = 'build-7 (10.0.0.12)', LOCKGRANTED = NOW() WHERE ID = 1 AND LOCKED = FALSE"
+form = "log"
+expect = []
+note = "Liquibase lock, a table row"
+
+[[query]]
+sql = 'UPDATE public.databasechangeloglock SET LOCKED = $1, LOCKEDBY = $2, LOCKGRANTED = NOW() WHERE ID = $3 AND LOCKED = $4'
+form = "pgss"
+expect = []
+note = "same, pg_stat_statements"
+
+[[query]]
+sql = 'CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL, CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num))'
+form = "log"
+expect = []
+note = "Alembic"
+
+[[query]]
+sql = "UPDATE alembic_version SET version_num='3f2a9c1d7e4b' WHERE alembic_version.version_num = '1b8e5d0c2a6f'"
+form = "log"
+expect = []
+note = "Alembic"
+
+[[query]]
+sql = 'LOCK TABLE "schema_migrations" IN SHARE UPDATE EXCLUSIVE MODE'
+form = "pgss"
+expect = []
+note = "Ecto default migration_lock"
+
+[[query]]
+sql = 'CREATE INDEX CONCURRENTLY "orders_user_id_index" ON "orders" ("user_id")'
+form = "pgss"
+expect = []

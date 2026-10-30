@@ -53,6 +53,24 @@ fn is_failure_line(line: &str) -> bool {
     line.starts_with("Error ") || line == "TIMEOUT" || line == "CLOSED"
 }
 
+/// Error codes the harness itself produces when a step never got a real answer.
+/// NO_STATEMENT isn't one: it follows a prepare that failed, and if Postgres rejected
+/// that prepare, the outcome is deterministic and worth comparing.
+const HARNESS_CODES: &[&str] = &["CONNECT", "TIMEOUT", "CLIENT", "CLOSED"];
+
+/// The first baseline step that failed in the harness rather than in Postgres. Postgres
+/// is the oracle, so a baseline like that can't be compared: an unreachable server
+/// would otherwise "match" an unreachable pooler.
+pub(super) fn baseline_failure(expected: &[Outcome]) -> Option<String> {
+    let failed = |o: &Outcome| match o {
+        Outcome::Error { code, .. } => HARNESS_CODES.contains(&code.as_str()),
+        Outcome::Messages { messages } => messages.iter().any(|l| l == "TIMEOUT" || l == "CLOSED"),
+        Outcome::Ok { .. } | Outcome::Abandoned => false,
+    };
+    let (i, outcome) = expected.iter().enumerate().find(|(_, o)| failed(o))?;
+    Some(format!("baseline failed at step {}: {outcome}", i + 1))
+}
+
 impl FailKind {
     pub(super) fn of(expected: &Outcome, actual: &Outcome) -> Self {
         match actual {
@@ -63,7 +81,11 @@ impl FailKind {
                     Outcome::Messages { messages } => messages.as_slice(),
                     _ => &[],
                 };
-                if messages.iter().any(|l| l == "TIMEOUT") {
+                // Replies that stop short of what Postgres sent, with nothing wrong in
+                // them, are a hang too: after a Flush there's no ReadyForQuery to wait
+                // for, so the step ends when the server goes quiet instead of at TIMEOUT.
+                let cut_short = messages.len() < expected_lines.len() && expected_lines.starts_with(messages);
+                if cut_short || messages.iter().any(|l| l == "TIMEOUT") {
                     FailKind::Hang
                 } else if messages
                     .iter()
@@ -142,6 +164,38 @@ mod tests {
             FailKind::Error
         );
         assert_eq!(FailKind::of(&pg, &msgs(&["ParseComplete", "TIMEOUT"])), FailKind::Hang);
+        // Pooler swallowed the reply to a Flush: nothing, or less than Postgres sent.
+        let flushed = msgs(&["ParseComplete", "Error 42601"]);
+        assert_eq!(FailKind::of(&flushed, &msgs(&[])), FailKind::Hang);
+        assert_eq!(FailKind::of(&flushed, &msgs(&["ParseComplete"])), FailKind::Hang);
+        // Same length but different stays what it was.
+        assert_eq!(
+            FailKind::of(&flushed, &msgs(&["ParseComplete", "NoData"])),
+            FailKind::Silent
+        );
+        assert_eq!(
+            FailKind::of(&flushed, &msgs(&["ParseComplete", "Error 08P01"])),
+            FailKind::Error
+        );
+    }
+
+    #[test]
+    fn harness_errors_in_the_baseline_are_failures() {
+        let msgs = |m: &[&str]| Outcome::Messages {
+            messages: m.iter().map(|s| s.to_string()).collect(),
+        };
+        for code in HARNESS_CODES {
+            let failure = baseline_failure(&[Outcome::empty(), Outcome::error(code, "x")]).unwrap();
+            assert!(failure.starts_with("baseline failed at step 2: error"), "{failure}");
+        }
+        assert!(baseline_failure(&[msgs(&["ParseComplete", "TIMEOUT"])]).is_some());
+        assert!(baseline_failure(&[msgs(&["CLOSED"])]).is_some());
+        // Errors from Postgres itself are what scenarios test for.
+        assert!(baseline_failure(&[Outcome::error("42P01", "x"), msgs(&["Error 42P05", "ReadyForQuery I"])]).is_none());
+        assert!(baseline_failure(&[Outcome::Abandoned]).is_none());
+        // An execute after a prepare that Postgres itself rejected: deterministic, so
+        // it's compared like any other outcome.
+        assert!(baseline_failure(&[Outcome::error("25P02", "x"), Outcome::error("NO_STATEMENT", "x")]).is_none());
     }
 
     #[test]

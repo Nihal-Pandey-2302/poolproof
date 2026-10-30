@@ -39,7 +39,11 @@ A failure is one of three kinds:
 - **silent**: the pooler returned a result, but not the one Postgres returned. The
   application gets wrong data and no error. These are the dangerous ones.
 - **error**: the pooler refused with an error where Postgres didn't. Loud, so you notice.
-- **hang**: no reply within 10 seconds.
+- **hang**: no reply within 10 seconds, or replies that stop short of what Postgres sent.
+
+ERROR means there was nothing to compare: a target URL didn't answer before the run, a
+step on the Postgres side got no reply (timeout, connection failure), or setup, teardown
+or reset failed. It only stops that scenario, and `run` exits 1 as for a FAIL.
 
 ```text
 $ poolproof run --filter multi-statement
@@ -121,9 +125,16 @@ poolproof scan queries.csv
 ```
 
 From Postgres logs, with `log_statement = 'all'` or `log_min_duration_statement` set:
-`poolproof scan postgresql.log` (stderr format) or `poolproof scan postgresql.json`
-(jsonlog). Logs keep multi-statement query strings whole; pg_stat_statements splits them,
-so some problems only show up in logs. A `.sql` file works too, e.g. your migrations.
+`poolproof scan postgresql.log` (stderr format), `postgresql.csv` (csvlog) or
+`postgresql.json` (jsonlog). Logs keep multi-statement query strings whole;
+pg_stat_statements splits them, so some problems only show up in logs. Logs are read as a
+stream, so multi-GB files are fine. poolproof reads the English log prefixes (`LOG:`,
+`statement:`), so the server needs `lc_messages = 'C'` or another English locale. A `.sql`
+file works too, e.g. your migrations.
+
+`--input pgss|csvlog|log|jsonlog|sql` says what the input is when the extension doesn't
+(a `.csv` is told apart by its first row). `-` reads stdin:
+`pg_dump --schema-only mydb | poolproof scan - --input sql`.
 
 ### Against your pooler
 
@@ -160,10 +171,11 @@ Without `--pooler`, the exit code is 1 if anything would break under transaction
     sarif_file: poolproof.sarif
 ```
 
-Rules today: session `SET`/`RESET` (including `SET ROLE`) and `set_config(..., false)`,
+Rules today: session `SET`/`RESET` (including `SET ROLE`) and `set_config(..., false)` (a
+parameter there, as pg_stat_statements shows it, gives a warning to check the value),
 session advisory locks, `LISTEN`, temp tables without `ON COMMIT DROP`, `WITH HOLD`
-cursors, SQL-level `PREPARE`, `DISCARD`, and query strings that start a transaction and
-run more statements in it.
+cursors, SQL-level `PREPARE`, `DISCARD`, `DEALLOCATE ALL`, `LOAD`, and query strings that
+start a transaction and run more statements in it.
 
 ## Writing a scenario
 
