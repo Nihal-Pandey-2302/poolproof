@@ -52,6 +52,49 @@ jobs:
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
 
+  # Harness self-test: the pp-proxy targets must get exactly selftest/expected.toml.
+  # Passthrough must pass everything; each fault must break only its scenarios.
+  selftest:
+    needs: [test, tools]
+    # About 4.5 minutes: skipped on draft PRs, like the suite.
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: |
+            .
+            tools/pp-proxy
+
+      - name: Start Postgres and the self-test proxies
+        run: docker compose -f docker/compose.yml --profile selftest up -d --wait --wait-timeout 300 postgres pp-proxy
+
+      - name: Run the self-test
+        run: |
+          cargo build
+          (cd tools/pp-proxy && cargo build --locked --bin pp-selftest-check)
+          # Exit 1 means some scenario failed, which is expected here; 2 means poolproof broke.
+          set +e
+          ./target/debug/poolproof run --targets selftest/targets.toml --format json > selftest.json
+          code=$?
+          set -e
+          if [ "$code" -gt 1 ]; then exit "$code"; fi
+          tools/pp-proxy/target/debug/pp-selftest-check selftest/expected.toml selftest.json scenarios
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: selftest
+          path: selftest.json
+
+      - name: Proxy logs
+        if: failure()
+        run: docker compose -f docker/compose.yml --profile selftest logs pp-proxy
+
   # Advisories, licenses, banned crates and sources (deny.toml).
   deny:
     runs-on: ubuntu-latest
