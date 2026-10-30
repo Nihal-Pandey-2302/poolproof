@@ -134,17 +134,21 @@ pub struct Privileges {
 }
 
 impl Privileges {
-    /// The first requirement these privileges don't meet, as a SKIP reason.
+    /// Every requirement these privileges don't meet, as a SKIP reason.
     pub fn missing(&self, requires: &[Requirement]) -> Option<String> {
-        let unmet = requires.iter().find(|r| {
-            !self.superuser
-                && match r {
-                    Requirement::Superuser => true,
-                    Requirement::Createrole => !self.createrole,
-                    Requirement::PgSignalBackend => !self.pg_signal_backend,
-                }
-        })?;
-        Some(format!("needs {unmet} on direct"))
+        let unmet: Vec<String> = requires
+            .iter()
+            .filter(|r| {
+                !self.superuser
+                    && match r {
+                        Requirement::Superuser => true,
+                        Requirement::Createrole => !self.createrole,
+                        Requirement::PgSignalBackend => !self.pg_signal_backend,
+                    }
+            })
+            .map(|r| r.to_string())
+            .collect();
+        (!unmet.is_empty()).then(|| format!("needs {} on direct", unmet.join(", ")))
     }
 }
 
@@ -240,10 +244,13 @@ mod tests {
             Requirement::Superuser,
         ];
         assert_eq!(none.missing(&[]), None);
-        assert_eq!(none.missing(&all).as_deref(), Some("needs createrole on direct"));
+        assert_eq!(
+            none.missing(&all).as_deref(),
+            Some("needs createrole, pg_signal_backend, superuser on direct")
+        );
         assert_eq!(
             createrole.missing(&all).as_deref(),
-            Some("needs pg_signal_backend on direct")
+            Some("needs pg_signal_backend, superuser on direct")
         );
         assert_eq!(createrole.missing(&[Requirement::Createrole]), None);
         assert_eq!(superuser.missing(&all), None);
