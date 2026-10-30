@@ -108,14 +108,15 @@ direct = "postgres://postgres:postgres@127.0.0.1:55432/app?sslmode=disable"
 mode = "transaction"
 reset = "all"
 
-# Clients reach this PgBouncer over TLS only, and both URLs check the certificate
+# Clients reach this PgBouncer over TLS only, and the pooler URL checks its certificate
 # against the test bed's own CA (made at compose up; see docker/tls/make-certs.sh).
+# Postgres itself stays plain: it is shared with the other targets.
 [[target]]
 name = "pgbouncer-1.26.1-tls"
 product = "pgbouncer"
 version = "1.26.1"
 config = "tls"
 pooler = "postgres://postgres:postgres@127.0.0.1:56444/app?sslmode=verify-full&sslrootcert=docker/tls/out/ca.pem"
-direct = "postgres://postgres:postgres@127.0.0.1:55432/app?sslmode=verify-full&sslrootcert=docker/tls/out/ca.pem"
+direct = "postgres://postgres:postgres@127.0.0.1:55432/app?sslmode=disable"
 mode = "transaction"
 reset = "all"

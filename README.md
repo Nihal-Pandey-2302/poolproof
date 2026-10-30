@@ -72,9 +72,10 @@ cargo run -- run
 
 Each pooler in the test bed has a pool of one server connection, so leaks between clients
 happen every time instead of by luck. `POSTGRES_IMAGE=postgres:18.4` picks the server
-version. One PgBouncer accepts clients over TLS only; its certificate comes from a CA
-the test bed makes when it starts (`docker/tls/out/ca.pem`). `scripts/update-results.sh` rebuilds `results/` and `RESULTS.md` for Postgres 17
-and 18 from a fresh test bed.
+version. One PgBouncer accepts clients over TLS only (its connections to Postgres stay
+plain); its certificate comes from a CA the test bed makes when it starts
+(`docker/tls/out/ca.pem`). `scripts/update-results.sh` rebuilds `results/` and
+`RESULTS.md` for Postgres 17 and 18 from a fresh test bed.
 
 To test your own pooler, point poolproof at it and at the Postgres server behind it:
 
@@ -95,11 +96,12 @@ offers it, else plaintext without a word), `require`, `verify-ca` or `verify-ful
 the URL or `PGSSLMODE`. `prefer` never checks certificates, even with a root certificate
 present, so it is encrypted but not authenticated: use `verify-full` for anything not on
 localhost. `sslrootcert` (or `PGSSLROOTCERT`) names the CA file, or `system` for the
-operating system's store (which needs `verify-full`, and makes it the default); without it, `~/.postgresql/root.crt` is used when it exists, and
-`require` then checks the chain like `verify-ca`. `send` steps and cancel requests use the
-same settings. Not supported yet: client certificates and `sslnegotiation=direct`.
-A URL names one host: several hosts or ports, `hostaddr`, `target_session_attrs` and
-`load_balance_hosts` are refused, since poolproof would otherwise pick a host on its own.
+operating system's store (which needs `verify-full`, and makes it the default); without
+it, `~/.postgresql/root.crt` is used when it exists, and `require` then checks the chain
+like `verify-ca`. `send` steps and cancel requests use the same settings. Not supported
+yet: client certificates and `sslnegotiation=direct`. A URL names one host: several hosts
+or ports, `hostaddr`, `target_session_attrs` and `load_balance_hosts` are refused, since
+poolproof would otherwise pick a host on its own.
 
 For several poolers, or to reset state between scenarios, use a targets file
 (`--targets`, default `targets.toml`):
@@ -122,13 +124,14 @@ reset = "auto"
 `reset` decides how much each run is isolated from the one before:
 
 - `"auto"` ends the sessions from the address and user Postgres sees the pooler connect
-  as (asked once per target, through the pooler). That is every such session, not only
-  the pooler's: behind a NAT (Kubernetes, a cloud NAT in front of RDS) or next to an app
-  on the same host, other sessions share that address and user and end too. It refuses
-  to run when the pooler is on a Unix socket or on the same address as poolproof. It assumes one pooler per Postgres: another pooler's leaked
-  locks stay, and so do sessions the pooler opens from a second address (clusters,
-  several nodes, a restart on a new IP). Other applications using the same pooler lose
-  their server connections, which the pooler then reopens.
+  as (asked once per target, through the pooler). That is every such session, not only the
+  pooler's: behind a NAT (Kubernetes, a cloud NAT in front of RDS) or next to an app on
+  the same host, other sessions share that address and user and end too. It refuses to run
+  when the pooler is on a Unix socket or on the same address as poolproof. It assumes one
+  pooler per Postgres: another pooler's leaked locks stay, and so do sessions the pooler
+  opens from a second address (clusters, several nodes, a restart on a new IP). Other
+  applications using the same pooler lose their server connections, which the pooler then
+  reopens.
 - `"all"` ends every other session on the database. Against a Postgres that isn't on
   this machine it needs `run --yes`.
 - A list of statements runs as written.
@@ -137,7 +140,8 @@ reset = "auto"
 
 Before the first scenario, `run` prints what the reset will touch, e.g.
 `reset: 'prod-like-pgbouncer': ends every session of user app from 10.0.0.7 (not only the
-pooler's) on database db at postgres-host:5432 (auto)`. The JSON report records which kind each target used.
+pooler's) on database db at postgres-host:5432 (auto)`. The JSON report records which
+kind each target used.
 
 To share the outcome with your team, `--format html` writes one self-contained page with
 the grid and every step's trace. `--format json` saves the raw results;

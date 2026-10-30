@@ -1,8 +1,7 @@
 #!/bin/sh
-# One-shot: a throwaway CA and a server certificate for the test bed's TLS targets,
+# One-shot: a throwaway CA and a server certificate for the test bed's TLS pooler,
 # kept in the `tls` volume. Only ca.pem goes to /out (docker/tls/out on the host,
-# git-ignored), for clients to trust. Postgres and PgBouncer run as different users,
-# so each gets its own key copy.
+# git-ignored), for clients to trust. The key is made readable for PgBouncer's user.
 set -eu
 cd /certs
 if [ ! -f ca.pem ]; then
@@ -15,7 +14,6 @@ if [ ! -f ca.pem ]; then
     -extfile san.ext -out server.crt 2>/dev/null
   rm server.csr san.ext
 fi
-install -m 600 -o 999 -g 999 server.key postgres.key
 install -m 600 -o 70 -g 70 server.key pgbouncer.key
 chmod 644 ca.pem server.crt
 cp ca.pem /out/ca.pem
