@@ -227,8 +227,21 @@ fn parse(origin: &str, text: &str) -> Result<Scenario> {
     if scenario.repeat == 0 {
         bail!("{origin}: repeat must be at least 1");
     }
+    let mut prepared = std::collections::HashSet::new();
     for step in &scenario.steps {
-        step.action().with_context(|| format!("in {origin}"))?;
+        match step.action().with_context(|| format!("in {origin}"))? {
+            Action::Prepare { name, .. } => {
+                prepared.insert((step.client.as_str(), name));
+            }
+            // Otherwise the execute would fail the same way on both sides and pass.
+            Action::Execute(name) if !prepared.contains(&(step.client.as_str(), name)) => {
+                bail!(
+                    "{origin}: client '{}' executes '{name}', which it never prepared before",
+                    step.client
+                );
+            }
+            _ => {}
+        }
     }
     Ok(scenario)
 }
@@ -265,6 +278,17 @@ mod tests {
         let bundled = names(bundled().unwrap());
         assert!(!bundled.is_empty());
         assert_eq!(bundled, names(load_dir(&dir).unwrap()));
+    }
+
+    #[test]
+    fn execute_needs_an_earlier_prepare_by_the_same_client() {
+        let head = "name = 't'\ndescription = 't'\n";
+        let prepare = |client: &str| format!("[[step]]\nclient = '{client}'\nprepare = 'SELECT 1'\nname = 'q'\n");
+        let execute = "[[step]]\nclient = 'a'\nexecute = 'q'\n";
+        assert!(parse("t", &format!("{head}{}{execute}", prepare("a"))).is_ok());
+        let err = parse("t", &format!("{head}{execute}{}", prepare("a"))).unwrap_err();
+        assert!(format!("{err:#}").contains("never prepared"), "{err:#}");
+        assert!(parse("t", &format!("{head}{}{execute}", prepare("b"))).is_err());
     }
 
     #[test]

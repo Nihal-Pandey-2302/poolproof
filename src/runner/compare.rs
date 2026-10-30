@@ -54,7 +54,9 @@ fn is_failure_line(line: &str) -> bool {
 }
 
 /// Error codes the harness itself produces when a step never got a real answer.
-const HARNESS_CODES: &[&str] = &["CONNECT", "TIMEOUT", "CLIENT", "CLOSED", "NO_STATEMENT"];
+/// NO_STATEMENT isn't one: it follows a prepare that failed, and if Postgres rejected
+/// that prepare, the outcome is deterministic and worth comparing.
+const HARNESS_CODES: &[&str] = &["CONNECT", "TIMEOUT", "CLIENT", "CLOSED"];
 
 /// The first baseline step that failed in the harness rather than in Postgres. Postgres
 /// is the oracle, so a baseline like that can't be compared: an unreachable server
@@ -191,6 +193,9 @@ mod tests {
         // Errors from Postgres itself are what scenarios test for.
         assert!(baseline_failure(&[Outcome::error("42P01", "x"), msgs(&["Error 42P05", "ReadyForQuery I"])]).is_none());
         assert!(baseline_failure(&[Outcome::Abandoned]).is_none());
+        // An execute after a prepare that Postgres itself rejected: deterministic, so
+        // it's compared like any other outcome.
+        assert!(baseline_failure(&[Outcome::error("25P02", "x"), Outcome::error("NO_STATEMENT", "x")]).is_none());
     }
 
     #[test]
