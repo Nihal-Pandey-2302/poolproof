@@ -131,8 +131,9 @@ impl RawMessage {
     }
 }
 
-/// The largest backend message accepted. A server can claim any length up to 4 GB,
-/// and parsing reserves that much before reading it.
+/// The largest backend message accepted on a `send` connection. A server can claim
+/// any length up to 4 GB, and parsing reserves that much before reading it.
+/// tokio-postgres clients use their own codec and are not covered by this cap.
 const MAX_MESSAGE: usize = 64 << 20;
 
 /// Rejects a message header whose length is impossible or above `MAX_MESSAGE`.
@@ -345,8 +346,15 @@ fn summary(message: &Message, parameter_status: bool) -> Result<Option<String>> 
         Message::EmptyQueryResponse => "EmptyQueryResponse".to_string(),
         Message::CopyInResponse(_) => "CopyInResponse".to_string(),
         Message::CopyOutResponse(_) => "CopyOutResponse".to_string(),
-        // Escaped so a row's trailing newline doesn't split the line.
-        Message::CopyData(body) => format!("CopyData {}", String::from_utf8_lossy(body.data()).escape_debug()),
+        Message::CopyData(body) => match std::str::from_utf8(body.data()) {
+            // Escaped so a row's trailing newline doesn't split the line.
+            Ok(text) => format!("CopyData {}", text.escape_debug()),
+            // Binary COPY: lossy text would hide differences.
+            Err(_) => {
+                let hex: String = body.data().iter().map(|b| format!("{b:02x}")).collect();
+                format!("CopyData hex:{hex}")
+            }
+        },
         Message::CopyDone => "CopyDone".to_string(),
         Message::CommandComplete(body) => format!("CommandComplete {}", body.tag()?),
         Message::ParameterDescription(body) => format!("ParameterDescription {}", body.parameters().count()?),
@@ -408,6 +416,10 @@ mod tests {
         let line = |m: Message| summary(&m, false).unwrap().unwrap();
         assert_eq!(line(backend(b'H', b"\0\0\x02\0\0\0\0")), "CopyOutResponse");
         assert_eq!(line(backend(b'd', b"1\ta\n")), "CopyData 1\\ta\\n");
+        assert_eq!(
+            line(backend(b'd', b"PGCOPY\n\xff\r\n\0")),
+            "CopyData hex:5047434f50590aff0d0a00"
+        );
         assert_eq!(line(backend(b'c', b"")), "CopyDone");
     }
 
