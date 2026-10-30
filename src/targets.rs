@@ -96,12 +96,13 @@ impl Target {
         let endpoint = |field: &str, url: &str| -> Result<Endpoint> {
             // A value is data: encoded so it can't end the field it's in, e.g. a
             // password with `@` turning the rest into the host.
-            let quote = if url.starts_with("postgres://") || url.starts_with("postgresql://") {
-                percent_encode
-            } else {
-                backslash_escape
-            };
-            let url = expand_vars(url, env, quote).with_context(|| field.to_string())?;
+            let is_url = url.starts_with("postgres://") || url.starts_with("postgresql://");
+            let quote = if is_url { percent_encode } else { backslash_escape };
+            // An empty value would shift what follows into this field (`password= dbname=x`
+            // makes "dbname=x" the password) or drop it. Only a URL's password may be
+            // empty: that just means no password.
+            let may_be_empty = |before: &str| is_url && in_url_password(before);
+            let url = expand_vars(url, env, quote, &may_be_empty).with_context(|| field.to_string())?;
             Endpoint::resolve(&url, env).with_context(|| field.to_string())
         };
         Ok(Target {
@@ -110,7 +111,7 @@ impl Target {
             reset: t
                 .reset
                 .iter()
-                .map(|sql| expand_vars(sql, env, |v| v.to_string()).context("reset"))
+                .map(|sql| expand_vars(sql, env, |v| v.to_string(), &|_| true).context("reset"))
                 .collect::<Result<_>>()?,
             name: t.name,
             mode: t.mode,
@@ -121,10 +122,23 @@ impl Target {
     }
 }
 
+/// Whether text ending here is inside a URL's password: after `scheme://user:` and
+/// before the `@`.
+fn in_url_password(before: &str) -> bool {
+    before
+        .split_once("://")
+        .is_some_and(|(_, authority)| authority.contains(':') && !authority.contains(['@', '/', '?']))
+}
+
 /// Replaces `${NAME}` with the environment variable NAME, passed through `quote`, so
 /// passwords can stay out of the file. `$${` stands for a literal `${`; any other `$` is
-/// left alone.
-fn expand_vars(text: &str, env: &dyn Fn(&str) -> Option<String>, quote: fn(&str) -> String) -> Result<String> {
+/// left alone. An empty value is an error unless `may_be_empty` accepts the text before it.
+fn expand_vars(
+    text: &str,
+    env: &dyn Fn(&str) -> Option<String>,
+    quote: fn(&str) -> String,
+    may_be_empty: &dyn Fn(&str) -> bool,
+) -> Result<String> {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(i) = rest.find('$') {
@@ -147,6 +161,9 @@ fn expand_vars(text: &str, env: &dyn Fn(&str) -> Option<String>, quote: fn(&str)
             let Some(value) = env(name) else {
                 bail!("environment variable {name} is not set");
             };
+            if value.is_empty() && !may_be_empty(&text[..text.len() - rest.len()]) {
+                bail!("environment variable {name} is empty");
+            }
             out.push_str(&quote(&value));
             rest = &after[end + 1..];
         } else {
@@ -343,11 +360,13 @@ fn pgpass_lookup(text: &str, wanted: [&str; 4]) -> Option<String> {
         while let Some(c) = chars.next() {
             match c {
                 ':' => break,
-                '\\' => password.extend(chars.next()),
+                // A trailing lone backslash stays, as in libpq.
+                '\\' => password.push(chars.next().unwrap_or('\\')),
                 c => password.push(c),
             }
         }
-        return Some(password);
+        // An empty password counts as none.
+        return Some(password).filter(|p| !p.is_empty());
     }
     None
 }
@@ -379,7 +398,7 @@ mod tests {
     #[test]
     fn expands_variables() {
         let env = env_of(&[("PW", "s3cret"), ("_X1", "x")]);
-        let raw = |s: &str| expand_vars(s, &env, |v| v.to_string());
+        let raw = |s: &str| expand_vars(s, &env, |v| v.to_string(), &|_| false);
         assert_eq!(raw("postgres://u:${PW}@h/${_X1}").unwrap(), "postgres://u:s3cret@h/x");
         assert_eq!(raw("$${PW} $1 $$ a$").unwrap(), "${PW} $1 $$ a$");
         let err = |s: &str| raw(s).unwrap_err().to_string();
@@ -398,18 +417,38 @@ mod tests {
                 "name = 't'\nmode = 'transaction'\npooler = \"\"\"{template}\"\"\"\ndirect = \"\"\"{template}\"\"\"\n"
             ))
             .unwrap();
-            Target::from_file(file, &env).unwrap().pooler
+            Target::from_file(file, &env).map(|t| t.pooler)
         };
+        let templates = [
+            "postgres://u:${PW}@127.0.0.1:1/app",
+            "host=127.0.0.1 port=1 user=u password=${PW} dbname=app",
+            "host=127.0.0.1 port=1 user=u password='${PW}' dbname=app",
+            "host=127.0.0.1 user=u password=${PW} port=1 dbname=app",
+        ];
         for value in ["x@127.0.0.1:2/", "ab%41", "a b'c\\d:e/f?g#h&i=j"] {
-            for template in [
-                "postgres://u:${PW}@127.0.0.1:1/app",
-                "host=127.0.0.1 port=1 user=u password=${PW} dbname=app",
-                "host=127.0.0.1 port=1 user=u password='${PW}' dbname=app",
-            ] {
-                let e = resolve(template, value);
+            for template in templates {
+                let e = resolve(template, value).unwrap();
                 assert_eq!(password(&e).as_deref(), Some(value), "{template}");
                 assert_eq!(e.to_string(), "postgres://u@127.0.0.1:1/app", "{template}");
             }
+        }
+
+        // Empty: fine as a URL password (none), an error anywhere else, since it would
+        // shift the next field into this one.
+        let e = resolve(templates[0], "").unwrap();
+        assert_eq!(password(&e).unwrap_or_default(), "");
+        assert_eq!(e.to_string(), "postgres://u@127.0.0.1:1/app");
+        for template in &templates[1..] {
+            let err = format!("{:#}", resolve(template, "").unwrap_err());
+            assert!(err.ends_with("environment variable PW is empty"), "{template}: {err}");
+        }
+        for template in [
+            "postgres://u:x@127.0.0.1:${PW}/app",
+            "postgres://${PW}:x@127.0.0.1:1/app",
+            "postgres://u@${PW}/app",
+            "postgres://u@127.0.0.1:1/${PW}",
+        ] {
+            assert!(resolve(template, "").is_err(), "{template}");
         }
     }
 
@@ -468,6 +507,12 @@ mod tests {
             pgpass_lookup(star, ["*", "5432", "db", "u"]).as_deref(),
             Some("literal")
         );
+        // A trailing lone backslash stays; an empty password is none.
+        assert_eq!(
+            pgpass_lookup("*:*:*:*:ab\\", ["h", "1", "d", "u"]).as_deref(),
+            Some("ab\\")
+        );
+        assert_eq!(pgpass_lookup("*:*:*:*:", ["h", "1", "d", "u"]), None);
     }
 
     #[test]
