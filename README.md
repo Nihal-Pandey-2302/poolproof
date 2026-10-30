@@ -97,7 +97,8 @@ For several poolers, or to reset state between scenarios, use a targets file
 name = "prod-like-pgbouncer"
 # ${NAME} is replaced with the environment variable NAME ($${ for a literal ${). In a
 # URL the value is percent-encoded (escaped in key=value strings), so any password works;
-# in reset statements it goes in as is.
+# in reset statements it goes in as is. An empty value is an error, except as a URL
+# password (where it means no password).
 pooler = "postgres://user:${POOLER_PASSWORD}@pooler-host:6432/db"
 direct = "postgres://user@postgres-host:5432/db"   # password from PGPASSWORD or ~/.pgpass
 mode = "transaction"
