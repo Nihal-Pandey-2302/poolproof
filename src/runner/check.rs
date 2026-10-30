@@ -467,6 +467,25 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "needs POOLPROOF_TEST_PG"]
+    async fn send_steps_record_parameter_status_when_asked() {
+        let url = test_pg();
+        let s = scenario(
+            "name = 't'\ndescription = 't'\n[[step]]\nclient = 'a'\n\
+             send = [\"query SET application_name = 'pp_c10'\"]\ncompare_parameter_status = true\n",
+        );
+        let checked = check(&s, &url, &url, &[], &Timeouts::default(), false).await;
+        assert!(matches!(checked.verdict, Verdict::Pass));
+        let Outcome::Messages { messages } = &checked.steps[0].0 else {
+            panic!("expected send replies")
+        };
+        assert!(
+            messages.contains(&"ParameterStatus application_name=pp_c10".to_string()),
+            "{messages:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn preflight_names_the_unreachable_side() {
         let reason = preflight(CLOSED_PORT, CLOSED_PORT, &Timeouts::default())
             .await

@@ -214,6 +214,9 @@ Step actions:
   are read up to one ReadyForQuery per `sync`/`query`/`copydone`; without those, until the
   server is quiet for half a second. Errors are recorded by SQLSTATE only. A client that uses
   `send` has its own raw connection; `disconnect` is its only other step.
+  ParameterStatus replies are skipped, since poolers add and drop them freely; with
+  `compare_parameter_status = true` a `send` step records them and compares them as a
+  set, wherever in the reply they come.
 
 Options on a `simple` step: `background = true` starts the query and moves on, so other
 clients can act while it runs. `abandon_after_ms` drops the connection without a goodbye

@@ -19,6 +19,9 @@ impl Outcome {
             // Error messages can differ in wording between servers, so only the code counts.
             Compare::Full => match (self, other) {
                 (Outcome::Error { code: a, .. }, Outcome::Error { code: b, .. }) => a == b,
+                (Outcome::Messages { messages: a }, Outcome::Messages { messages: b }) => {
+                    split_parameter_status(a) == split_parameter_status(b)
+                }
                 _ => self == other,
             },
         }
@@ -45,6 +48,18 @@ pub enum FailKind {
     Error,
     /// The pooler didn't answer within the step timeout.
     Hang,
+}
+
+/// A reply split into its ParameterStatus lines, sorted, and the rest in order. Poolers
+/// move ParameterStatus around within a reply, which is harmless; dropping one or
+/// sending a different value is not. The lines only exist when a step asks for them.
+fn split_parameter_status(lines: &[String]) -> (Vec<&str>, Vec<&str>) {
+    let (mut status, rest): (Vec<&str>, Vec<&str>) = lines
+        .iter()
+        .map(String::as_str)
+        .partition(|l| l.starts_with("ParameterStatus "));
+    status.sort_unstable();
+    (status, rest)
 }
 
 /// A `send` reply line that means something went wrong: an error, a timeout, or
@@ -196,6 +211,47 @@ mod tests {
         // An execute after a prepare that Postgres itself rejected: deterministic, so
         // it's compared like any other outcome.
         assert!(baseline_failure(&[Outcome::error("25P02", "x"), Outcome::error("NO_STATEMENT", "x")]).is_none());
+    }
+
+    #[test]
+    fn parameter_status_lines_compare_as_a_set() {
+        let msgs = |m: &[&str]| Outcome::Messages {
+            messages: m.iter().map(|s| s.to_string()).collect(),
+        };
+        let pg = msgs(&[
+            "CommandComplete SET",
+            "ParameterStatus application_name=pp",
+            "ParameterStatus TimeZone=UTC",
+            "ReadyForQuery I",
+        ]);
+        // Moved within the reply: poolers do that, and it's harmless.
+        let moved = msgs(&[
+            "ParameterStatus TimeZone=UTC",
+            "CommandComplete SET",
+            "ReadyForQuery I",
+            "ParameterStatus application_name=pp",
+        ]);
+        assert!(pg.matches(&moved, Compare::Full));
+        let dropped = msgs(&["CommandComplete SET", "ParameterStatus TimeZone=UTC", "ReadyForQuery I"]);
+        assert!(!pg.matches(&dropped, Compare::Full));
+        assert_eq!(FailKind::of(&pg, &dropped), FailKind::Silent);
+        let faked = msgs(&[
+            "CommandComplete SET",
+            "ParameterStatus application_name=other",
+            "ParameterStatus TimeZone=UTC",
+            "ReadyForQuery I",
+        ]);
+        assert!(!pg.matches(&faked, Compare::Full));
+        // The other lines still count in order.
+        let reordered = msgs(&[
+            "ReadyForQuery I",
+            "ParameterStatus application_name=pp",
+            "ParameterStatus TimeZone=UTC",
+            "CommandComplete SET",
+        ]);
+        assert!(!pg.matches(&reordered, Compare::Full));
+        // `status` only looks at failures.
+        assert!(pg.matches(&dropped, Compare::Status));
     }
 
     #[test]
