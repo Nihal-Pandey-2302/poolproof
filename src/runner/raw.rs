@@ -251,7 +251,7 @@ pub struct RawConn {
     stream: RawStream,
     buf: BytesMut,
     /// From BackendKeyData: the backend pid, or the pooler's stand-in for it.
-    pub pid: Option<i32>,
+    pub(crate) pid: Option<i32>,
 }
 
 impl RawConn {
