@@ -99,7 +99,10 @@ impl FailKind {
                 // Replies that stop short of what Postgres sent, with nothing wrong in
                 // them, are a hang too: after a Flush there's no ReadyForQuery to wait
                 // for, so the step ends when the server goes quiet instead of at TIMEOUT.
-                let cut_short = messages.len() < expected_lines.len() && expected_lines.starts_with(messages);
+                // ParameterStatus lines don't count: a dropped one is a silent failure.
+                let (_, got) = split_parameter_status(messages);
+                let (_, wanted) = split_parameter_status(expected_lines);
+                let cut_short = got.len() < wanted.len() && wanted.starts_with(&got);
                 if cut_short || messages.iter().any(|l| l == "TIMEOUT") {
                     FailKind::Hang
                 } else if messages
@@ -235,6 +238,19 @@ mod tests {
         let dropped = msgs(&["CommandComplete SET", "ParameterStatus TimeZone=UTC", "ReadyForQuery I"]);
         assert!(!pg.matches(&dropped, Compare::Full));
         assert_eq!(FailKind::of(&pg, &dropped), FailKind::Silent);
+        // After a Flush, a dropped ParameterStatus at the end leaves a prefix of the
+        // Postgres reply. That's still silent: the reply itself is complete.
+        let flushed = msgs(&[
+            "ParseComplete",
+            "BindComplete",
+            "CommandComplete SET",
+            "ParameterStatus application_name=x",
+        ]);
+        let no_status = msgs(&["ParseComplete", "BindComplete", "CommandComplete SET"]);
+        assert!(!flushed.matches(&no_status, Compare::Full));
+        assert_eq!(FailKind::of(&flushed, &no_status), FailKind::Silent);
+        // A reply really cut short is still a hang.
+        assert_eq!(FailKind::of(&flushed, &msgs(&["ParseComplete"])), FailKind::Hang);
         let faked = msgs(&[
             "CommandComplete SET",
             "ParameterStatus application_name=other",
