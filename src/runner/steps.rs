@@ -10,10 +10,16 @@ use super::pg::{Conn, backend_pid, connect, db_error, row_value, simple_outcome,
 use super::raw::{ExchangeOpts, RawConn};
 use super::{Outcome, Timeouts};
 use crate::scenario::{Action, Scenario};
+use crate::targets::Endpoint;
 
 /// Run a scenario's steps. `pooled` is where normal clients connect; `direct` is
-/// plain Postgres. For the baseline run both are the same URL.
-pub async fn run_steps(scenario: &Scenario, pooled: &str, direct: &str, t: &Timeouts) -> Result<Vec<Outcome>> {
+/// plain Postgres. For the baseline run both are the same endpoint.
+pub async fn run_steps(
+    scenario: &Scenario,
+    pooled: &Endpoint,
+    direct: &Endpoint,
+    t: &Timeouts,
+) -> Result<Vec<Outcome>> {
     // Loading already checks this; scenarios built in code don't go through loading.
     scenario.check_clients()?;
     // In the baseline every client is on Postgres.
@@ -44,7 +50,7 @@ pub async fn run_steps(scenario: &Scenario, pooled: &str, direct: &str, t: &Time
                 Action::Send(messages) => {
                     if !raw.contains_key(step.client.as_str()) {
                         let url = if step.direct { direct } else { pooled };
-                        match RawConn::connect(url, t.connect).await {
+                        match RawConn::connect(url.config(), t.connect).await {
                             Ok(conn) => {
                                 raw.insert(&step.client, conn);
                             }
@@ -248,8 +254,9 @@ mod tests {
         )
         .unwrap();
         // Rejected before connecting, so the unreachable URLs are never used.
-        let url = "postgres://u@127.0.0.1:1/db";
-        let err = run_steps(&scenario, url, "postgres://u@127.0.0.1:2/db", &Timeouts::default())
+        let pooled = Endpoint::parse("postgres://u@127.0.0.1:1/db").unwrap();
+        let direct = Endpoint::parse("postgres://u@127.0.0.1:2/db").unwrap();
+        let err = run_steps(&scenario, &pooled, &direct, &Timeouts::default())
             .await
             .unwrap_err();
         assert!(err.to_string().contains("mixes direct and pooled"), "{err}");

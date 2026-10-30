@@ -6,6 +6,7 @@ use super::pg::{connect, wait_ready};
 use super::steps::run_steps;
 use super::{Outcome, Timeouts};
 use crate::scenario::Scenario;
+use crate::targets::Endpoint;
 
 /// Start of the ERROR reason when a target's pooler URL doesn't answer before the run.
 /// The self-test matches on it, so keep it stable.
@@ -13,11 +14,11 @@ pub const POOLER_UNREACHABLE: &str = "target unreachable: pooler:";
 /// Same for the target's direct (plain Postgres) URL.
 pub const DIRECT_UNREACHABLE: &str = "target unreachable: direct:";
 
-async fn run_direct(url: &str, statements: &[String], t: &Timeouts) -> Result<()> {
+async fn run_direct(direct: &Endpoint, statements: &[String], t: &Timeouts) -> Result<()> {
     if statements.is_empty() {
         return Ok(());
     }
-    let (client, driver, _) = connect(url, t).await?;
+    let (client, driver, _) = connect(direct, t).await?;
     for sql in statements {
         client
             .batch_execute(sql)
@@ -30,8 +31,8 @@ async fn run_direct(url: &str, statements: &[String], t: &Timeouts) -> Result<()
 }
 
 /// Connect and run `SELECT 1` once.
-async fn probe(url: &str, t: &Timeouts) -> Result<()> {
-    let (client, driver, _) = connect(url, t).await?;
+async fn probe(endpoint: &Endpoint, t: &Timeouts) -> Result<()> {
+    let (client, driver, _) = connect(endpoint, t).await?;
     let res = timeout(t.step, client.simple_query("SELECT 1")).await;
     drop(client);
     let _ = timeout(t.step, driver).await;
@@ -41,7 +42,7 @@ async fn probe(url: &str, t: &Timeouts) -> Result<()> {
 
 /// Check that a target's direct and pooler URLs both answer, before running any
 /// scenario on it. The error is the ERROR reason for each of its scenarios.
-pub async fn preflight(pooled: &str, direct: &str, t: &Timeouts) -> Result<(), String> {
+pub async fn preflight(pooled: &Endpoint, direct: &Endpoint, t: &Timeouts) -> Result<(), String> {
     probe(direct, t)
         .await
         .map_err(|e| format!("{DIRECT_UNREACHABLE} {e:#}"))?;
@@ -75,8 +76,8 @@ impl Checked {
 /// or a step fails; the first error is the one returned.
 async fn run_once(
     scenario: &Scenario,
-    pooled: &str,
-    direct: &str,
+    pooled: &Endpoint,
+    direct: &Endpoint,
     reset: &[String],
     side: &str,
     t: &Timeouts,
@@ -110,7 +111,13 @@ async fn run_once(
 /// `reset` runs on `direct` before each run so state leaked on the pooler's server
 /// connections by an earlier scenario can't change this one's result. Anything that
 /// stops the comparison is a `Verdict::Error` for this scenario only.
-pub async fn check(scenario: &Scenario, pooled: &str, direct: &str, reset: &[String], t: &Timeouts) -> Checked {
+pub async fn check(
+    scenario: &Scenario,
+    pooled: &Endpoint,
+    direct: &Endpoint,
+    reset: &[String],
+    t: &Timeouts,
+) -> Checked {
     let expected = match run_once(scenario, direct, direct, reset, "baseline", t).await {
         Ok(expected) => expected,
         Err(reason) => return Checked::error(reason),
@@ -169,7 +176,9 @@ mod tests {
 
     use super::*;
 
-    const CLOSED_PORT: &str = "postgres://x:y@127.0.0.1:1/app";
+    fn closed_port() -> Endpoint {
+        Endpoint::parse("postgres://x:y@127.0.0.1:1/app").unwrap()
+    }
 
     fn scenario(toml_text: &str) -> Scenario {
         toml::from_str(toml_text).unwrap()
@@ -185,7 +194,7 @@ mod tests {
     #[tokio::test]
     async fn unreachable_postgres_is_an_error_not_a_pass() {
         let s = scenario("name = 't'\ndescription = 't'\n[[step]]\nclient = 'a'\nsimple = 'SELECT 1'\n");
-        let checked = check(&s, CLOSED_PORT, CLOSED_PORT, &[], &Timeouts::default()).await;
+        let checked = check(&s, &closed_port(), &closed_port(), &[], &Timeouts::default()).await;
         let reason = reason(&checked);
         assert!(
             reason.starts_with("baseline failed at step 1: error CONNECT"),
@@ -198,7 +207,7 @@ mod tests {
         let s = scenario(
             "name = 't'\ndescription = 't'\nsetup = ['SELECT 1']\n[[step]]\nclient = 'a'\nsimple = 'SELECT 1'\n",
         );
-        let checked = check(&s, CLOSED_PORT, CLOSED_PORT, &[], &Timeouts::default()).await;
+        let checked = check(&s, &closed_port(), &closed_port(), &[], &Timeouts::default()).await;
         let reason = reason(&checked);
         assert!(reason.starts_with("setup (baseline): "), "{reason}");
     }
@@ -209,7 +218,7 @@ mod tests {
         let mut s = scenario("name = 't'\ndescription = 't'\nrepeat = 3\nstep = []\n");
         s.steps.clear();
         let started = Instant::now();
-        let checked = check(&s, CLOSED_PORT, CLOSED_PORT, &[], &Timeouts::default()).await;
+        let checked = check(&s, &closed_port(), &closed_port(), &[], &Timeouts::default()).await;
         assert!(matches!(checked.verdict, Verdict::Pass));
         assert!(
             started.elapsed() < Duration::from_secs(2),
@@ -220,7 +229,7 @@ mod tests {
 
     #[tokio::test]
     async fn preflight_names_the_unreachable_side() {
-        let reason = preflight(CLOSED_PORT, CLOSED_PORT, &Timeouts::default())
+        let reason = preflight(&closed_port(), &closed_port(), &Timeouts::default())
             .await
             .unwrap_err();
         assert!(reason.starts_with(DIRECT_UNREACHABLE), "{reason}");

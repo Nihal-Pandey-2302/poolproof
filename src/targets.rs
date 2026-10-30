@@ -1,74 +1,402 @@
 //! The targets file: which poolers to test and the Postgres behind each.
 
-use std::path::Path;
+use std::fmt;
+use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::Deserialize;
+use tokio_postgres::Config;
+use tokio_postgres::config::Host;
 
 use crate::scenario::PoolMode;
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct Targets {
-    #[serde(rename = "target")]
     pub targets: Vec<Target>,
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct Target {
     pub name: String,
-    /// Connection URL through the pooler.
-    pub pooler: String,
-    /// Connection URL for the Postgres server behind it.
-    pub direct: String,
+    /// Where clients connect through the pooler.
+    pub pooler: Endpoint,
+    /// The Postgres server behind it.
+    pub direct: Endpoint,
     pub mode: PoolMode,
     /// What is being tested, for grouping in reports: e.g. `pgbouncer`, `1.26.1`, and a
     /// config label like `default` or `strict`.
-    #[serde(default)]
     pub product: Option<String>,
-    #[serde(default)]
     pub version: Option<String>,
-    #[serde(default)]
     pub config: Option<String>,
     /// Statements run on `direct` before every run to drop state leaked on the
     /// pooler's server connections, usually by terminating them. Without it,
     /// one scenario's leak can change the next one's result.
-    #[serde(default)]
     pub reset: Vec<String>,
+}
+
+/// A target as written in the file, before `${VAR}` substitution and URL parsing.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TargetsFile {
+    #[serde(rename = "target")]
+    targets: Vec<TargetFile>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TargetFile {
+    name: String,
+    pooler: String,
+    direct: String,
+    mode: PoolMode,
+    #[serde(default)]
+    product: Option<String>,
+    #[serde(default)]
+    version: Option<String>,
+    #[serde(default)]
+    config: Option<String>,
+    #[serde(default)]
+    reset: Vec<String>,
 }
 
 impl Targets {
     pub fn load(path: &Path) -> Result<Self> {
         let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-        toml::from_str(&text).context("parsing targets")
+        let file: TargetsFile = toml::from_str(&text).context("parsing targets")?;
+        let env = |name: &str| std::env::var(name).ok();
+        let targets = file
+            .targets
+            .into_iter()
+            .map(|t| {
+                let name = t.name.clone();
+                Target::from_file(t, &env).with_context(|| format!("target '{name}'"))
+            })
+            .collect::<Result<_>>()?;
+        Ok(Targets { targets })
     }
 
     /// The one target given with `run --pooler URL --direct URL`.
-    pub fn single(pooler: String, direct: String, mode: PoolMode) -> Self {
-        Targets {
+    pub fn single(pooler: &str, direct: &str, mode: PoolMode) -> Result<Self> {
+        Ok(Targets {
             targets: vec![Target {
                 name: "pooler".into(),
-                pooler,
-                direct,
+                pooler: Endpoint::parse(pooler).context("--pooler")?,
+                direct: Endpoint::parse(direct).context("--direct")?,
                 mode,
                 product: None,
                 version: None,
                 config: None,
                 reset: vec![],
             }],
+        })
+    }
+}
+
+impl Target {
+    fn from_file(t: TargetFile, env: &dyn Fn(&str) -> Option<String>) -> Result<Self> {
+        let endpoint = |field: &str, url: &str| -> Result<Endpoint> {
+            let url = expand_vars(url, env).with_context(|| field.to_string())?;
+            Endpoint::resolve(&url, env).with_context(|| field.to_string())
+        };
+        Ok(Target {
+            pooler: endpoint("pooler", &t.pooler)?,
+            direct: endpoint("direct", &t.direct)?,
+            reset: t
+                .reset
+                .iter()
+                .map(|sql| expand_vars(sql, env).context("reset"))
+                .collect::<Result<_>>()?,
+            name: t.name,
+            mode: t.mode,
+            product: t.product,
+            version: t.version,
+            config: t.config,
+        })
+    }
+}
+
+/// Replaces `${NAME}` with the environment variable NAME, so passwords can stay out of
+/// the file. `$${` stands for a literal `${`; any other `$` is left alone.
+fn expand_vars(text: &str, env: &dyn Fn(&str) -> Option<String>) -> Result<String> {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(i) = rest.find('$') {
+        out.push_str(&rest[..i]);
+        rest = &rest[i..];
+        if let Some(after) = rest.strip_prefix("$${") {
+            out.push_str("${");
+            rest = after;
+        } else if let Some(after) = rest.strip_prefix("${") {
+            let Some(end) = after.find('}') else {
+                bail!("unclosed `${{`");
+            };
+            let name = &after[..end];
+            let valid = name.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+                && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+            if !valid {
+                bail!("invalid variable name `{name}`");
+            }
+            let Some(value) = env(name) else {
+                bail!("environment variable {name} is not set");
+            };
+            out.push_str(&value);
+            rest = &after[end + 1..];
+        } else {
+            out.push('$');
+            rest = &rest[1..];
         }
     }
+    out.push_str(rest);
+    Ok(out)
+}
+
+/// A server to connect to: the parsed URL, with a password from PGPASSWORD or the
+/// password file filled in when the URL has none. Displays without the password.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Endpoint {
+    config: Config,
+}
+
+impl Endpoint {
+    /// Parses a connection URL (or `key=value` string) and fills in the password the
+    /// way libpq does: the URL's own, else PGPASSWORD, else PGPASSFILE or ~/.pgpass.
+    pub fn parse(url: &str) -> Result<Self> {
+        Self::resolve(url, &|name: &str| std::env::var(name).ok())
+    }
+
+    fn resolve(url: &str, env: &dyn Fn(&str) -> Option<String>) -> Result<Self> {
+        // The parse error never includes the URL, so it can't leak a password.
+        let mut config = Config::from_str(url).context("invalid connection URL")?;
+        if config.get_password().is_none() {
+            if let Some(password) = env("PGPASSWORD") {
+                config.password(password);
+            } else if let Some(password) = password_from_file(&config, env) {
+                config.password(password);
+            }
+        }
+        Ok(Endpoint { config })
+    }
+
+    pub fn config(&self) -> &Config {
+        &self.config
+    }
+}
+
+impl fmt::Display for Endpoint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&redact(&self.config))
+    }
+}
+
+impl fmt::Debug for Endpoint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&redact(&self.config))
+    }
+}
+
+/// A connection as `postgres://user@host:port/db`, rebuilt from its parts so the
+/// password can't be in it. The only way an endpoint is shown.
+pub fn redact(config: &Config) -> String {
+    let user = config.get_user().unwrap_or_default();
+    let ports = config.get_ports();
+    let hosts: Vec<String> = config
+        .get_hosts()
+        .iter()
+        .enumerate()
+        .map(|(i, host)| {
+            let host = match host {
+                Host::Tcp(h) if h.contains(':') => format!("[{h}]"),
+                Host::Tcp(h) => h.clone(),
+                #[cfg(unix)]
+                Host::Unix(path) => path.display().to_string(),
+            };
+            // One port applies to every host.
+            match ports.get(i).or(ports.first()) {
+                Some(port) => format!("{host}:{port}"),
+                None => host,
+            }
+        })
+        .collect();
+    let db = config.get_dbname().unwrap_or(user);
+    format!("postgres://{user}@{}/{db}", hosts.join(","))
+}
+
+/// The password file libpq would read: PGPASSFILE, else ~/.pgpass
+/// (%APPDATA%\postgresql\pgpass.conf on Windows).
+fn password_file(env: &dyn Fn(&str) -> Option<String>) -> Option<PathBuf> {
+    if let Some(path) = env("PGPASSFILE") {
+        return Some(path.into());
+    }
+    if cfg!(windows) {
+        env("APPDATA").map(|dir| Path::new(&dir).join("postgresql").join("pgpass.conf"))
+    } else {
+        env("HOME").map(|dir| Path::new(&dir).join(".pgpass"))
+    }
+}
+
+fn password_from_file(config: &Config, env: &dyn Fn(&str) -> Option<String>) -> Option<String> {
+    let path = password_file(env)?;
+    let meta = std::fs::metadata(&path).ok()?;
+    if !meta.is_file() {
+        return None;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if meta.permissions().mode() & 0o077 != 0 {
+            eprintln!(
+                "warning: password file {} has group or world access; permissions should be u=rw (0600) or less",
+                path.display()
+            );
+            return None;
+        }
+    }
+    let text = std::fs::read_to_string(&path).ok()?;
+    let user = config.get_user()?;
+    // libpq matches a Unix socket as "localhost".
+    let host = match config.get_hosts().first() {
+        Some(Host::Tcp(h)) => h.as_str(),
+        _ => "localhost",
+    };
+    let port = config.get_ports().first().copied().unwrap_or(5432).to_string();
+    let db = config.get_dbname().unwrap_or(user);
+    pgpass_lookup(&text, [host, &port, db, user])
+}
+
+/// The password from the first `host:port:db:user:password` line that matches, with
+/// `*` matching anything and `\` escaping `:` and `\`, as libpq reads it.
+fn pgpass_lookup(text: &str, wanted: [&str; 4]) -> Option<String> {
+    'lines: for line in text.lines() {
+        let line = line.trim_end_matches('\r');
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let mut chars = line.chars();
+        for want in wanted {
+            let mut field = String::new();
+            loop {
+                match chars.next() {
+                    None => continue 'lines,
+                    Some(':') => break,
+                    Some('\\') => field.extend(chars.next()),
+                    Some(c) => field.push(c),
+                }
+            }
+            if field != "*" && field != want {
+                continue 'lines;
+            }
+        }
+        // The rest of the line is the password, colons included.
+        let mut password = String::new();
+        while let Some(c) = chars.next() {
+            match c {
+                '\\' => password.extend(chars.next()),
+                c => password.push(c),
+            }
+        }
+        return Some(password);
+    }
+    None
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
+
+    fn env_of(vars: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> + use<> {
+        let vars: HashMap<String, String> = vars.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        move |name| vars.get(name).cloned()
+    }
+
+    fn password(e: &Endpoint) -> Option<String> {
+        e.config()
+            .get_password()
+            .map(|p| String::from_utf8_lossy(p).into_owned())
+    }
 
     #[test]
     fn bundled_targets_parse_with_reset() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("targets.toml");
-        let targets: Targets = toml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("targets.toml");
+        let targets = Targets::load(&path).unwrap();
         assert!(targets.targets.iter().all(|t| !t.reset.is_empty()));
+    }
+
+    #[test]
+    fn expands_variables() {
+        let env = env_of(&[("PW", "s3cret"), ("_X1", "x")]);
+        assert_eq!(
+            expand_vars("postgres://u:${PW}@h/${_X1}", &env).unwrap(),
+            "postgres://u:s3cret@h/x"
+        );
+        assert_eq!(expand_vars("$${PW} $1 $$ a$", &env).unwrap(), "${PW} $1 $$ a$");
+        let err = |s: &str| expand_vars(s, &env).unwrap_err().to_string();
+        assert_eq!(err("${MISSING}"), "environment variable MISSING is not set");
+        assert_eq!(err("${PW"), "unclosed `${`");
+        assert_eq!(err("${1X}"), "invalid variable name `1X`");
+    }
+
+    #[test]
+    fn password_precedence() {
+        let pw = |url: &str, vars: &[(&str, &str)]| password(&Endpoint::resolve(url, &env_of(vars)).unwrap());
+        let env = [("PGPASSWORD", "from-env"), ("PGPASSFILE", "/nonexistent")];
+        assert_eq!(pw("postgres://u:inline@h/db", &env).as_deref(), Some("inline"));
+        assert_eq!(pw("postgres://u@h/db", &env).as_deref(), Some("from-env"));
+        assert_eq!(pw("postgres://u@h/db", &[("PGPASSFILE", "/nonexistent")]), None);
+    }
+
+    #[test]
+    fn reads_password_file() {
+        let dir = std::env::temp_dir().join(format!("poolproof-pgpass-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("pgpass");
+        std::fs::write(&path, "# comment\nother:*:*:*:no\nh:5433:db:u:from-file\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        let env = env_of(&[("PGPASSFILE", path.to_str().unwrap())]);
+        let pw = |url: &str| password(&Endpoint::resolve(url, &env).unwrap());
+        assert_eq!(pw("postgres://u@h:5433/db").as_deref(), Some("from-file"));
+        assert_eq!(pw("postgres://u@h:5432/db"), None);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+            assert_eq!(
+                pw("postgres://u@h:5433/db"),
+                None,
+                "readable by others: ignored like libpq"
+            );
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn pgpass_lines() {
+        let text = "*:*:*:u\\:x:a\\\\b:c\n\nh:*:*:*:p\\:q\n";
+        assert_eq!(
+            pgpass_lookup(text, ["h", "5432", "db", "u:x"]).as_deref(),
+            Some("a\\b:c")
+        );
+        assert_eq!(pgpass_lookup(text, ["h", "5432", "db", "v"]).as_deref(), Some("p:q"));
+        assert_eq!(pgpass_lookup(text, ["g", "5432", "db", "v"]), None);
+        assert_eq!(pgpass_lookup("h:5432:db", ["h", "5432", "db", "u"]), None);
+    }
+
+    #[test]
+    fn redacts_passwords() {
+        let shown = |url: &str| Endpoint::resolve(url, &env_of(&[])).unwrap().to_string();
+        assert_eq!(shown("postgres://u:s3cret@h:5433/db"), "postgres://u@h:5433/db");
+        assert_eq!(shown("host=h user=u password='s3 cret' dbname=db"), "postgres://u@h/db");
+        assert_eq!(
+            shown("postgres://u:pw@[::1]:5432,h2:5433/db"),
+            "postgres://u@[::1]:5432,h2:5433/db"
+        );
+        let e = Endpoint::resolve("postgres://u:s3cret@h/db", &env_of(&[])).unwrap();
+        assert!(!format!("{e:?}").contains("s3cret"));
+        let err = Endpoint::resolve("postgres://u:s3cret@h:notaport/db", &env_of(&[])).unwrap_err();
+        assert!(!format!("{err:#}").contains("s3cret"), "{err:#}");
     }
 }

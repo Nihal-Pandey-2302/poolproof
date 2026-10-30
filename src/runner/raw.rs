@@ -177,8 +177,7 @@ pub struct RawConn {
 }
 
 impl RawConn {
-    pub async fn connect(url: &str, connect_timeout: Duration) -> Result<Self> {
-        let config = tokio_postgres::Config::from_str(url).context("parsing connection URL")?;
+    pub async fn connect(config: &tokio_postgres::Config, connect_timeout: Duration) -> Result<Self> {
         let host = match config.get_hosts().first() {
             Some(Host::Tcp(host)) => host.clone(),
             _ => bail!("send steps need a TCP host"),

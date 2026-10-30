@@ -131,7 +131,7 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
             format,
         } => {
             let targets = match (pooler, direct) {
-                (Some(pooler), Some(direct)) => Targets::single(pooler, direct, mode),
+                (Some(pooler), Some(direct)) => Targets::single(&pooler, &direct, mode)?,
                 _ => Targets::load(&targets)?,
             };
             let mut scenarios = load_scenarios(scenarios.as_deref())?;
