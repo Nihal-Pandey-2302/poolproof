@@ -1,5 +1,7 @@
 name = "protocol-pipeline-recovers-after-error"
 description = "In a pipeline, a failing request must not affect the request after the next Sync."
+# Pipelines race inside some poolers: run the pooler side several times.
+repeat = 5
 
 [[step]]
 client = "a"

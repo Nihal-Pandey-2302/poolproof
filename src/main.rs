@@ -209,16 +209,20 @@ async fn run(cli: Cli) -> Result<ExitCode> {
                     if filter.as_ref().is_some_and(|f| !s.name.contains(f.as_str())) {
                         continue;
                     }
-                    let (verdict, steps) = if s.modes.contains(&target.mode) {
+                    let (verdict, steps, runs, failures) = if s.modes.contains(&target.mode) {
                         let checked = runner::check(s, &target.pooler, &target.direct, &target.reset)
                             .await
                             .with_context(|| format!("{} / {}", target.name, s.name))?;
-                        (checked.verdict, checked.steps)
+                        (checked.verdict, checked.steps, checked.runs, checked.failures)
                     } else {
-                        (Verdict::Skip { reason: format!("not applicable to {} mode", target.mode) }, vec![])
+                        let reason = format!("not applicable to {} mode", target.mode);
+                        (Verdict::Skip { reason }, vec![], 0, 0)
                     };
                     if matches!(format, RunFormat::Text) {
                         print_verdict(&target.name, s, &verdict);
+                        if runs > 1 && failures > 0 {
+                            println!("      failed in {failures} of {runs} runs (timing-sensitive)");
+                        }
                         if verbose {
                             for (i, (step, (expected, actual))) in s.steps.iter().zip(&steps).enumerate() {
                                 println!("      {}. {}", i + 1, step.describe());
@@ -234,6 +238,8 @@ async fn run(cli: Cli) -> Result<ExitCode> {
                         scenario: s.name.clone(),
                         verdict,
                         steps,
+                        runs,
+                        failures,
                     });
                 }
             }
@@ -254,6 +260,7 @@ async fn run(cli: Cli) -> Result<ExitCode> {
                         description: s.description.clone(),
                         refs: s.refs.clone(),
                         steps: s.steps.iter().map(|step| step.describe()).collect(),
+                        repeat: s.repeat,
                     })
                     .collect();
                 let report = report::Report {

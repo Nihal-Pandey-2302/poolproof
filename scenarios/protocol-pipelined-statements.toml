@@ -1,5 +1,7 @@
 name = "protocol-pipelined-statements"
 description = "Several named statements prepared and run in one pipeline must all return their own results."
+# Pipelines race inside some poolers: run the pooler side several times.
+repeat = 5
 
 [[step]]
 client = "a"

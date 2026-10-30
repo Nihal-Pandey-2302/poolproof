@@ -23,8 +23,8 @@ poolproof does two things:
 cargo install --git https://github.com/Nihal-Pandey-2302/poolproof
 ```
 
-Or download a binary for Linux or macOS (x86_64 and arm64) from the releases page. The
-scenarios are built into the binary.
+Or download a binary for Linux, macOS (x86_64 and arm64) or Windows (x86_64) from the
+releases page. The scenarios and the latest results are built into the binary.
 
 ## Results
 
@@ -41,7 +41,7 @@ A failure is one of three kinds:
 - **error**: the pooler refused with an error where Postgres didn't. Loud, so you notice.
 - **hang**: no reply within 10 seconds.
 
-```
+```text
 $ poolproof run --filter multi-statement
 FAIL  pgdog-0.1.62             multi-statement-begin (silent)
       A simple query that starts with BEGIN must run every statement in the string.
@@ -51,7 +51,7 @@ FAIL  pgdog-0.1.62             multi-statement-begin (silent)
       from https://github.com/pgdogdev/pgdog/issues/1849
 ```
 
-```
+```text
 $ poolproof scan queries.csv
 BREAKS  session-advisory-lock       calls=48211    SELECT pg_advisory_lock($1)
         pg_advisory_lock() holds the lock for the whole session. ...
@@ -120,7 +120,7 @@ so some problems only show up in logs. A `.sql` file works too, e.g. your migrat
 Add `--pooler` and every finding is checked against what that pooler version actually did
 in poolproof's own runs (built into the binary, no setup needed):
 
-```
+```text
 $ poolproof scan postgresql.log --pooler pgdog-0.1.62
 BREAKS   multi-statement-transaction calls=1        BEGIN; INSERT INTO t VALUES (1); COMMIT
          on pgdog-0.1.62: multi-statement-begin fails silently
@@ -206,6 +206,13 @@ if the query is still running after that long, like a client that crashed or tim
 
 Options on any step: `delay_ms` sleeps first, e.g. so a cancel lands while a query runs.
 `compare` can be `full` (default), `status` or `ignore`.
+
+Scenario options: `setup` and `teardown` run directly on Postgres around each run;
+`modes` limits which pooling modes a scenario applies to; `repeat = 5` runs the pooler side
+five times and fails if any run fails. Use `repeat` when the outcome depends on timing
+inside the pooler, as with pipelines: reports then show how many runs failed, and CI
+doesn't treat a change in those verdicts as a regression, because the worst case can differ
+between machines.
 
 `poolproof run -v --filter <name>` prints every step's result on Postgres and through the
 pooler. Use it on a new scenario: a PASS only means something if Postgres did what you

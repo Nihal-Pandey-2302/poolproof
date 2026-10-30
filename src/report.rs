@@ -37,6 +37,9 @@ pub struct ScenarioInfo {
     pub description: String,
     pub refs: Vec<String>,
     pub steps: Vec<String>,
+    /// More than 1 for timing-sensitive scenarios, whose worst case can vary by machine.
+    #[serde(default = "one")]
+    pub repeat: u32,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -47,6 +50,16 @@ pub struct ResultRow {
     pub verdict: Verdict,
     /// Every step's outcome on both sides; empty if the pooler run never happened.
     pub steps: Vec<StepOutcomes>,
+    /// How many times the pooler side ran (the scenario's `repeat`) and how many of
+    /// those runs failed.
+    #[serde(default = "one")]
+    pub runs: u32,
+    #[serde(default)]
+    pub failures: u32,
+}
+
+fn one() -> u32 {
+    1
 }
 
 #[derive(Serialize, Deserialize)]
@@ -73,7 +86,11 @@ impl Report {
     }
 
     fn verdict(&self, target: &str, scenario: &str) -> Option<&Verdict> {
-        self.results.iter().find(|r| r.target == target && r.scenario == scenario).map(|r| &r.verdict)
+        self.row(target, scenario).map(|r| &r.verdict)
+    }
+
+    fn row(&self, target: &str, scenario: &str) -> Option<&ResultRow> {
+        self.results.iter().find(|r| r.target == target && r.scenario == scenario)
     }
 }
 
@@ -179,7 +196,8 @@ pub fn markdown(reports: &[Report]) -> String {
     out.push_str("pooler gave a different result than Postgres: **silent** means a wrong result with no\n");
     out.push_str("error (the dangerous kind), error means the pooler refused, hang means no reply. Not\n");
     out.push_str("every FAIL is a bug: some are documented limits of the pooling mode. Links point to the\n");
-    out.push_str("report each scenario came from.\n\n");
+    out.push_str("report each scenario came from. A fraction like 2/5 means the scenario is timing-sensitive\n");
+    out.push_str("and failed in 2 of 5 runs.\n\n");
     let _ = write!(out, "| Scenario |");
     for c in &columns {
         let _ = write!(out, " {} |", c.label);
@@ -188,7 +206,8 @@ pub fn markdown(reports: &[Report]) -> String {
     for s in &scenarios {
         let _ = write!(out, "| `{}` |", s.name);
         for c in &columns {
-            let cell = match c.report.verdict(&c.target.name, &s.name) {
+            let row = c.report.row(&c.target.name, &s.name);
+            let cell = match row.map(|r| &r.verdict) {
                 Some(Verdict::Pass) => "pass",
                 Some(Verdict::Fail { mismatch }) => match mismatch.kind {
                     FailKind::Silent => "**FAIL** silent",
@@ -199,7 +218,11 @@ pub fn markdown(reports: &[Report]) -> String {
                 Some(Verdict::Skip { .. }) => "skip",
                 None => "",
             };
-            let _ = write!(out, " {cell} |");
+            let runs = match row {
+                Some(r) if r.runs > 1 && r.failures > 0 => format!(" {}/{}", r.failures, r.runs),
+                _ => String::new(),
+            };
+            let _ = write!(out, " {cell}{runs} |");
         }
         out.push('\n');
     }

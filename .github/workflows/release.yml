@@ -1,6 +1,7 @@
 name: release
 
-# Pushing a tag like v0.1.0 builds binaries and publishes a GitHub release.
+# Pushing a tag like v0.1.0 builds binaries (Linux, macOS, Windows) and publishes a
+# GitHub release.
 # Running it by hand only builds, so the matrix can be checked without releasing.
 on:
   push:
@@ -18,6 +19,7 @@ jobs:
           - { target: aarch64-unknown-linux-gnu, os: ubuntu-22.04-arm }
           - { target: aarch64-apple-darwin, os: macos-latest }
           - { target: x86_64-apple-darwin, os: macos-latest }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -26,18 +28,21 @@ jobs:
           targets: ${{ matrix.target }}
       - run: cargo build --release --locked --target ${{ matrix.target }}
       - name: Package
+        shell: bash
         run: |
           name=poolproof-${{ matrix.target }}
+          exe=poolproof; [ "$RUNNER_OS" = Windows ] && exe=poolproof.exe
           mkdir "$name"
-          cp target/${{ matrix.target }}/release/poolproof README.md LICENSE-MIT LICENSE-APACHE "$name"/
-          tar czf "$name.tar.gz" "$name"
+          cp "target/${{ matrix.target }}/release/$exe" README.md LICENSE-MIT LICENSE-APACHE "$name"/
+          if [ "$RUNNER_OS" = Windows ]; then 7z a "$name.zip" "$name" >/dev/null; else tar czf "$name.tar.gz" "$name"; fi
       - name: Smoke test
         if: matrix.target != 'x86_64-apple-darwin'
+        shell: bash
         run: ./target/${{ matrix.target }}/release/poolproof list | grep -q multi-statement-begin
       - uses: actions/upload-artifact@v7
         with:
           name: poolproof-${{ matrix.target }}
-          path: poolproof-${{ matrix.target }}.tar.gz
+          path: poolproof-${{ matrix.target }}.*
 
   release:
     if: startsWith(github.ref, 'refs/tags/')
@@ -53,6 +58,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          sha256sum poolproof-*.tar.gz > SHA256SUMS
+          sha256sum poolproof-*.tar.gz poolproof-*.zip > SHA256SUMS
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
-            --title "$GITHUB_REF_NAME" --generate-notes poolproof-*.tar.gz SHA256SUMS
+            --title "$GITHUB_REF_NAME" --generate-notes poolproof-*.tar.gz poolproof-*.zip SHA256SUMS

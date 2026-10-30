@@ -1,0 +1,15 @@
+name = "protocol-four-pipelined-requests"
+description = "Four requests pipelined on one connection, each ending in Sync, must all get their results."
+# Pipelines race inside some poolers: run the pooler side several times.
+repeat = 5
+# What postgres.js sends for four queries in Promise.all with prepare: false.
+refs = ["https://github.com/supabase/supavisor/issues/1239"]
+
+[[step]]
+client = "a"
+send = [
+  "parse - SELECT 1", "bind - -", "execute -", "sync",
+  "parse - SELECT 2", "bind - -", "execute -", "sync",
+  "parse - SELECT 3", "bind - -", "execute -", "sync",
+  "parse - SELECT 4", "bind - -", "execute -", "sync",
+]

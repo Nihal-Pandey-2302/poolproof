@@ -26,6 +26,10 @@ impl std::fmt::Display for PoolMode {
     }
 }
 
+fn one() -> u32 {
+    1
+}
+
 fn all_modes() -> Vec<PoolMode> {
     vec![PoolMode::Session, PoolMode::Transaction, PoolMode::Statement]
 }
@@ -43,6 +47,10 @@ pub struct Scenario {
     pub refs: Vec<String>,
     #[serde(default = "all_modes")]
     pub modes: Vec<PoolMode>,
+    /// Run the pooler side this many times and fail if any run fails. For scenarios
+    /// whose outcome depends on timing inside the pooler, such as pipelines.
+    #[serde(default = "one")]
+    pub repeat: u32,
     /// Statements run directly on Postgres before each run.
     #[serde(default)]
     pub setup: Vec<String>,
@@ -204,6 +212,9 @@ const BUNDLED: &[(&str, &str)] = include!(concat!(env!("OUT_DIR"), "/bundled.rs"
 
 fn parse(origin: &str, text: &str) -> Result<Scenario> {
     let scenario: Scenario = toml::from_str(text).with_context(|| format!("parsing {origin}"))?;
+    if scenario.repeat == 0 {
+        bail!("{origin}: repeat must be at least 1");
+    }
     for step in &scenario.steps {
         step.action().with_context(|| format!("in {origin}"))?;
     }

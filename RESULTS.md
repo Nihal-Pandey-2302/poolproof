@@ -4,7 +4,8 @@ Each scenario runs against plain Postgres, then through the pooler. FAIL means t
 pooler gave a different result than Postgres: **silent** means a wrong result with no
 error (the dangerous kind), error means the pooler refused, hang means no reply. Not
 every FAIL is a bug: some are documented limits of the pooling mode. Links point to the
-report each scenario came from.
+report each scenario came from. A fraction like 2/5 means the scenario is timing-sensitive
+and failed in 2 of 5 runs.
 
 | Scenario | pgbouncer-1.24.1 (pg 17.11) | pgbouncer-1.25.2 (pg 17.11) | pgbouncer-1.26.1 (pg 17.11) | pgdog-0.1.50 (pg 17.11) | pgdog-0.1.56 (pg 17.11) | pgdog-0.1.62 (pg 17.11) | pgdog-0.1.62-pubsub (pg 17.11) | supavisor-2.9.13 (pg 17.11) | supavisor-2.10.0-rc.1 (pg 17.11) | supavisor-2.10.0-rc.1-strict (pg 17.11) | pgbouncer-1.24.1 (pg 18.4) | pgbouncer-1.25.2 (pg 18.4) | pgbouncer-1.26.1 (pg 18.4) | pgdog-0.1.50 (pg 18.4) | pgdog-0.1.56 (pg 18.4) | pgdog-0.1.62 (pg 18.4) | pgdog-0.1.62-pubsub (pg 18.4) | supavisor-2.9.13 (pg 18.4) | supavisor-2.10.0-rc.1 (pg 18.4) | supavisor-2.10.0-rc.1-strict (pg 18.4) |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -24,7 +25,8 @@ report each scenario came from.
 | `prepare-in-aborted-transaction` | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass |
 | `prepared-statement-survives-other-clients` | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass |
 | `protocol-error-after-flush` | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass |
-| `protocol-pipeline-recovers-after-error` | pass | pass | pass | pass | pass | pass | pass | FAIL hang | pass | pass | pass | pass | pass | pass | pass | pass | pass | FAIL hang | pass | pass |
+| `protocol-four-pipelined-requests` | pass | pass | pass | pass | pass | pass | pass | FAIL hang 5/5 | pass | pass | pass | pass | pass | pass | pass | pass | pass | FAIL hang 4/5 | pass | pass |
+| `protocol-pipeline-recovers-after-error` | pass | pass | pass | pass | pass | pass | pass | FAIL hang 5/5 | pass | pass | pass | pass | pass | pass | pass | pass | pass | FAIL hang 5/5 | pass | pass |
 | `protocol-pipelined-statements` | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass |
 | `protocol-statement-names-isolated` | pass | pass | pass | pass | pass | pass | pass | FAIL error | FAIL error | FAIL error | pass | pass | pass | pass | pass | pass | pass | FAIL error | FAIL error | FAIL error |
 | `protocol-statement-reparsed-after-close` | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass |
@@ -903,6 +905,24 @@ A simple query that starts with BEGIN must run every statement in the string.
 - postgres: `ok rows=[] tags=[0, 1, 0]`
 - pooler: `ok rows=[] tags=[0]`
 - from https://github.com/pgdogdev/pgdog/issues/1849
+
+### supavisor-2.9.13 (pg 17.11) / protocol-four-pipelined-requests (hang)
+
+Four requests pipelined on one connection, each ending in Sync, must all get their results.
+
+- step 1: `[a] send: parse - SELECT 1 / bind - - / execute - / sync / parse - SELECT 2 / bind - - / execute - / sync / parse - SELECT 3 / bind - - / execute - / sync / parse - SELECT 4 / bind - - / execute - / sync`
+- postgres: `ParseComplete, BindComplete, DataRow 1, CommandComplete SELECT 1, ReadyForQuery I, ParseComplete, BindComplete, DataRow 2, CommandComplete SELECT 1, ReadyForQuery I, ParseComplete, BindComplete, DataRow 3, CommandComplete SELECT 1, ReadyForQuery I, ParseComplete, BindComplete, DataRow 4, CommandComplete SELECT 1, ReadyForQuery I`
+- pooler: `ParseComplete, BindComplete, DataRow 1, CommandComplete SELECT 1, ReadyForQuery I, TIMEOUT`
+- from https://github.com/supabase/supavisor/issues/1239
+
+### supavisor-2.9.13 (pg 18.4) / protocol-four-pipelined-requests (hang)
+
+Four requests pipelined on one connection, each ending in Sync, must all get their results.
+
+- step 1: `[a] send: parse - SELECT 1 / bind - - / execute - / sync / parse - SELECT 2 / bind - - / execute - / sync / parse - SELECT 3 / bind - - / execute - / sync / parse - SELECT 4 / bind - - / execute - / sync`
+- postgres: `ParseComplete, BindComplete, DataRow 1, CommandComplete SELECT 1, ReadyForQuery I, ParseComplete, BindComplete, DataRow 2, CommandComplete SELECT 1, ReadyForQuery I, ParseComplete, BindComplete, DataRow 3, CommandComplete SELECT 1, ReadyForQuery I, ParseComplete, BindComplete, DataRow 4, CommandComplete SELECT 1, ReadyForQuery I`
+- pooler: `ParseComplete, BindComplete, DataRow 1, CommandComplete SELECT 1, ReadyForQuery I, TIMEOUT`
+- from https://github.com/supabase/supavisor/issues/1239
 
 ### supavisor-2.9.13 (pg 17.11) / protocol-pipeline-recovers-after-error (hang)
 

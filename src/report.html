@@ -263,7 +263,8 @@ footer { color: var(--muted); font-size: 12px; max-width: 1400px; margin: 0 auto
         let st = state(x);
         const cls = x && x.result === "error" ? "skip" : st;
         const sym = x && x.result === "error" ? symbol.error_run : symbol[st];
-        const label = `${s.name} on ${c.t.name}, Postgres ${c.pg}: ${x && x.result === "error" ? "could not run" : word[st]}`;
+        const flaky = x && x.runs > 1 && x.failures > 0 ? ` in ${x.failures} of ${x.runs} runs` : "";
+        const label = `${s.name} on ${c.t.name}, Postgres ${c.pg}: ${x && x.result === "error" ? "could not run" : word[st]}${flaky}`;
         tr.append(el("td", { class: "cell" + (c.first ? " first" : "") },
           el("button", { class: "chip " + cls, title: label, "aria-label": label, onclick: () => x && show(s, c, x) }, sym)));
       }
@@ -298,6 +299,8 @@ footer { color: var(--muted); font-size: 12px; max-width: 1400px; margin: 0 auto
       el("button", { class: "close", "aria-label": "Close", onclick: () => dlg.close() }, "×"));
     const body = el("div", { class: "dlg-body" }, el("p", {}, s.description));
     if (s.refs.length) body.append(el("p", {}, "From: ", s.refs.flatMap((r, i) => [i ? ", " : null, el("a", { href: r, target: "_blank", rel: "noopener" }, r.replace("https://github.com/", ""))])));
+    if (x.runs > 1) body.append(el("p", {}, `Timing-sensitive: the pooler side ran ${x.runs} times and failed ${x.failures} of them.` +
+      (x.failures ? " The trace below is from the first failing run." : "") + " The worst case can vary between machines."));
     if (x.result === "error") body.append(el("p", { class: "mono" }, x.reason));
     if (x.result === "skip") body.append(el("p", {}, x.reason));
     if (x.steps.length) {

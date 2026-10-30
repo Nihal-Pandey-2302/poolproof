@@ -482,10 +482,12 @@ pub enum Verdict {
 }
 
 /// The verdict plus each step's (postgres, pooler) outcomes. `steps` is empty when the
-/// pooler run never happened.
+/// pooler run never happened. With `repeat`, the first failing run is the one kept.
 pub struct Checked {
     pub verdict: Verdict,
     pub steps: Vec<(Outcome, Outcome)>,
+    pub runs: u32,
+    pub failures: u32,
 }
 
 /// Run a scenario against plain Postgres, then through the pooler, and compare.
@@ -502,8 +504,38 @@ pub async fn check(scenario: &Scenario, pooled: &str, direct: &str, reset: &[Str
     if !reset.is_empty()
         && let Err(e) = wait_ready(pooled).await
     {
-        return Ok(Checked { verdict: Verdict::Error { reason: format!("{e:#}") }, steps: vec![] });
+        return Ok(Checked { verdict: Verdict::Error { reason: format!("{e:#}") }, steps: vec![], runs: 0, failures: 0 });
     }
+
+    let mut kept: Option<Checked> = None;
+    let mut failures = 0;
+    for run in 1..=scenario.repeat {
+        let checked = if run == 1 {
+            check_target(scenario, pooled, direct, &expected).await?
+        } else {
+            run_direct(direct, reset).await.context("reset (target)")?;
+            match (reset.is_empty(), wait_ready(pooled).await) {
+                (false, Err(e)) => {
+                    Checked { verdict: Verdict::Error { reason: format!("{e:#}") }, steps: vec![], runs: 1, failures: 0 }
+                }
+                _ => check_target(scenario, pooled, direct, &expected).await?,
+            }
+        };
+        let failed = !matches!(checked.verdict, Verdict::Pass);
+        failures += u32::from(failed);
+        // Keep the first failure; otherwise the latest pass.
+        if kept.as_ref().is_none_or(|k| matches!(k.verdict, Verdict::Pass)) {
+            kept = Some(checked);
+        }
+    }
+    let mut checked = kept.expect("repeat is at least 1");
+    checked.runs = scenario.repeat;
+    checked.failures = failures;
+    Ok(checked)
+}
+
+/// One pooler-side run of a scenario, compared with the baseline outcomes.
+async fn check_target(scenario: &Scenario, pooled: &str, direct: &str, expected: &[Outcome]) -> Result<Checked> {
     run_direct(direct, &scenario.setup).await.context("setup (target)")?;
     let actual = run_steps(scenario, pooled, direct).await;
     run_direct(direct, &scenario.teardown).await.context("teardown (target)")?;
@@ -522,7 +554,7 @@ pub async fn check(scenario: &Scenario, pooled: &str, direct: &str, reset: &[Str
         Some(mismatch) => Verdict::Fail { mismatch },
         None => Verdict::Pass,
     };
-    Ok(Checked { verdict, steps: expected.into_iter().zip(actual).collect() })
+    Ok(Checked { verdict, steps: expected.iter().cloned().zip(actual).collect(), runs: 1, failures: 0 })
 }
 
 #[cfg(test)]

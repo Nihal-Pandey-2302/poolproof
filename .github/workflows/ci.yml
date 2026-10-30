@@ -48,10 +48,13 @@ jobs:
           if [ "$code" -gt 1 ]; then exit "$code"; fi
           ./target/release/poolproof report new.json >> "$GITHUB_STEP_SUMMARY"
 
-      # Only verdicts are compared. Error text in the details can depend on timing.
+      # Only verdicts are compared, and not for timing-sensitive scenarios (repeat > 1),
+      # whose worst case can differ between machines. Error text can depend on timing too.
       - name: Compare with committed results
         run: |
-          verdicts='.results[] | "\(.target) \(.scenario) \(.result) \(.mismatch.kind // "")"'
+          verdicts='[.scenarios[] | select(.repeat > 1) | .name] as $timing
+            | .results[] | select(.scenario as $s | $timing | index($s) | not)
+            | "\(.target) \(.scenario) \(.result) \(.mismatch.kind // "")"'
           if ! diff <(jq -r "$verdicts" results/postgres-${{ matrix.postgres }}.json | sort) \
                     <(jq -r "$verdicts" new.json | sort); then
             echo "::error::Verdicts changed on Postgres ${{ matrix.postgres }}. Run scripts/update-results.sh and commit."
@@ -59,6 +62,7 @@ jobs:
           fi
 
       - uses: actions/upload-artifact@v7
+        if: always()
         with:
           name: results-postgres-${{ matrix.postgres }}
           path: new.json

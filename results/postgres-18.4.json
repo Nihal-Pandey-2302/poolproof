@@ -90,7 +90,8 @@
       "steps": [
         "[a] abandon after 300ms: SELECT pg_sleep(15)::text",
         "[b] simple: SELECT 'b served'::text"
-      ]
+      ],
+      "repeat": 1
     },
     {
       "name": "aborted-transaction-not-reused",
@@ -102,7 +103,8 @@
         "[a] simple: BEGIN; SET LOCAL statement_timeout = 100; SELECT pg_sleep(1); COMMIT",
         "[a] disconnect",
         "[b] simple: SELECT 'b ok'::text"
-      ]
+      ],
+      "repeat": 1
     },
     {
       "name": "advisory-lock-released-on-disconnect",
@@ -114,7 +116,8 @@
         "[a] simple: SELECT pg_advisory_lock(424242)::text",
         "[a] disconnect",
         "[check (direct)] simple: SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 424242"
-      ]
+      ],
+      "repeat": 1
     },
     {
       "name": "cancel-from-idle-client-is-harmless",
@@ -127,7 +130,8 @@
         "[b] background: SELECT pg_sleep(2)::text",
         "[a] cancel",
         "[b] wait"
-      ]
+      ],
+      "repeat": 1
     },
     {
       "name": "cancel-reaches-running-query",
@@ -137,7 +141,8 @@
         "[a] background: SELECT pg_sleep(8)::text",
         "[a] cancel",
         "[a] wait"
-      ]
+      ],
+      "repeat": 1
     },
     {
       "name": "cancel-under-saturated-pool",
@@ -153,7 +158,8 @@
         "[a] wait",
         "[a] simple: ROLLBACK",
         "[b] wait"
-      ]
+      ],
+      "repeat": 1
     },
     {
       "name": "copy-from-stdin",
@@ -163,7 +169,8 @@
         "[a] send: query COPY pp_copy FROM STDIN",
         "[a] send: copydata 1\n2\n3\n / copydone",
         "[check (direct)] simple: SELECT count(*) FROM pp_copy"
-      ]
+      ],
+      "repeat": 1
     },
     {
       "name": "cursor-isolated-between-clients",
@@ -172,7 +179,8 @@
       "steps": [
         "[a] simple: DECLARE pp_cur CURSOR WITH HOLD FOR SELECT generate_series(1, 3)::text",
         "[b] simple: FETCH 1 FROM pp_cur"
-      ]
+      ],
+      "repeat": 1
     },
     {
       "name": "discard-all-in-transaction-fails",
@@ -182,7 +190,8 @@
         "[a] simple: BEGIN",
         "[a] simple: DISCARD ALL",
         "[a] simple: ROLLBACK"
-      ]
+      ],
+      "repeat": 1
     },
     {
       "name": "discard-all-resets-settings",
@@ -192,7 +201,8 @@
         "[a] simple: SET work_mem = '7MB'",
         "[a] simple: DISCARD ALL",
         "[a] simple: SHOW work_mem"
-      ]
+      ],
+      "repeat": 1
     },
     {
       "name": "empty-search-path-from-set-config",
@@ -204,7 +214,8 @@
         "[a] simple: SELECT set_config('search_path', '', false)",
         "[b] simple: SET search_path = public",
         "[a] simple: SHOW search_path"
-      ]
+      ],
+      "repeat": 1
     },
     {
       "name": "listen-notify-delivered",
@@ -216,7 +227,8 @@
         "[a] simple: LISTEN pp_chan",
         "[b] simple: NOTIFY pp_chan, 'hello'",
         "[a] notifications"
-      ]
+      ],
+      "repeat": 1
     },
     {
       "name": "multi-statement-begin",
@@ -228,7 +240,8 @@
         "[app] simple: BEGIN; INSERT INTO pp_multi VALUES (1); COMMIT",
         "[app] disconnect",
         "[check (direct)] simple: SELECT count(*) FROM pp_multi"
-      ]
+      ],
+      "repeat": 1
     },
     {
       "name": "prepare-in-aborted-transaction",
@@ -241,7 +254,8 @@
         "[a] simple: SELECT 1/0",
         "[a] prepare q: SELECT 'after error'::text",
         "[a] simple: ROLLBACK"
-      ]
+      ],
+      "repeat": 1
     },
     {
       "name": "prepared-statement-survives-other-clients",
@@ -252,7 +266,8 @@
         "[b] simple: SELECT 1",
         "[b] disconnect",
         "[a] execute q"
-      ]
+      ],
+      "repeat": 1
     },
     {
       "name": "protocol-error-after-flush",
@@ -264,7 +279,19 @@
         "[a] send: parse - SELEC 1 / flush",
         "[a] send: sync",
         "[a] send: parse - SELECT 'recovered'::text / bind - - / execute - / sync"
-      ]
+      ],
+      "repeat": 1
+    },
+    {
+      "name": "protocol-four-pipelined-requests",
+      "description": "Four requests pipelined on one connection, each ending in Sync, must all get their results.",
+      "refs": [
+        "https://github.com/supabase/supavisor/issues/1239"
+      ],
+      "steps": [
+        "[a] send: parse - SELECT 1 / bind - - / execute - / sync / parse - SELECT 2 / bind - - / execute - / sync / parse - SELECT 3 / bind - - / execute - / sync / parse - SELECT 4 / bind - - / execute - / sync"
+      ],
+      "repeat": 5
     },
     {
       "name": "protocol-pipeline-recovers-after-error",
@@ -272,7 +299,8 @@
       "refs": [],
       "steps": [
         "[a] send: parse - SELECT 1/0 / bind - - / execute - / sync / parse - SELECT 'second'::text / bind - - / execute - / sync"
-      ]
+      ],
+      "repeat": 5
     },
     {
       "name": "protocol-pipelined-statements",
@@ -281,7 +309,8 @@
       "steps": [
         "[a] send: parse p1 SELECT 'one'::text / parse p2 SELECT 'two'::text / bind - p2 / execute - / bind - p1 / execute - / sync",
         "[a] send: describe statement p1 / sync"
-      ]
+      ],
+      "repeat": 5
     },
     {
       "name": "protocol-statement-names-isolated",
@@ -292,7 +321,8 @@
         "[b] send: parse s1 SELECT 'from b'::text / sync",
         "[b] send: bind - s1 / execute - / sync",
         "[a] send: bind - s1 / execute - / sync"
-      ]
+      ],
+      "repeat": 1
     },
     {
       "name": "protocol-statement-reparsed-after-close",
@@ -305,7 +335,8 @@
         "[a] send: parse s1 SELECT 'new'::text / sync",
         "[b] send: query SELECT 2",
         "[a] send: bind - s1 / execute - / sync"
-      ]
+      ],
+      "repeat": 1
     },
     {
       "name": "protocol-unnamed-statement-survives-other-clients",
@@ -315,7 +346,8 @@
         "[a] send: parse - SELECT 'from a'::text / sync",
         "[b] send: query SELECT 1",
         "[a] send: bind - - / execute - / sync"
-      ]
+      ],
+      "repeat": 1
     },
     {
       "name": "search-path-isolated-between-clients",
@@ -325,7 +357,8 @@
         "[a] simple: SET search_path = ''",
         "[b] simple: SET search_path = public",
         "[a] simple: SHOW search_path"
-      ]
+      ],
+      "repeat": 1
     },
     {
       "name": "set-does-not-leak-after-disconnect",
@@ -337,7 +370,8 @@
         "[a] simple: SET work_mem = '7MB'",
         "[a] disconnect",
         "[b] simple: SHOW work_mem"
-      ]
+      ],
+      "repeat": 1
     },
     {
       "name": "set-isolated-between-clients",
@@ -349,7 +383,8 @@
         "[a] simple: SET work_mem = '7MB'",
         "[b] simple: SET work_mem = '9MB'",
         "[a] simple: SHOW work_mem"
-      ]
+      ],
+      "repeat": 1
     },
     {
       "name": "set-local-reverts-after-commit",
@@ -365,7 +400,8 @@
         "[a] simple: SET LOCAL statement_timeout TO DEFAULT",
         "[a] simple: COMMIT",
         "[a] simple: SHOW statement_timeout"
-      ]
+      ],
+      "repeat": 1
     },
     {
       "name": "set-role-isolated-between-clients",
@@ -374,7 +410,8 @@
       "steps": [
         "[a] simple: SET ROLE pp_role",
         "[b] simple: SELECT current_user::text"
-      ]
+      ],
+      "repeat": 1
     },
     {
       "name": "set-role-reset-after-pinned-disconnect",
@@ -387,7 +424,8 @@
         "[a] simple: SET ROLE pp_role",
         "[a] disconnect",
         "[b] simple: SELECT current_user::text"
-      ]
+      ],
+      "repeat": 1
     },
     {
       "name": "sql-prepare-isolated-between-clients",
@@ -397,7 +435,8 @@
         "[a] simple: PREPARE pp_q AS SELECT 'from a'::text",
         "[b] simple: EXECUTE pp_q",
         "[a] simple: EXECUTE pp_q"
-      ]
+      ],
+      "repeat": 1
     },
     {
       "name": "temp-table-isolated-between-clients",
@@ -408,7 +447,8 @@
       "steps": [
         "[a] simple: CREATE TEMP TABLE pp_tmp (x int)",
         "[b] simple: SELECT count(*) FROM pp_tmp"
-      ]
+      ],
+      "repeat": 1
     }
   ],
   "results": [
@@ -449,7 +489,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.24.1",
@@ -504,7 +546,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.24.1",
@@ -598,7 +642,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgbouncer-1.24.1",
@@ -677,7 +723,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.24.1",
@@ -720,7 +768,9 @@
             "message": "canceling statement due to user request"
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.24.1",
@@ -831,7 +881,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.24.1",
@@ -892,7 +944,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.24.1",
@@ -954,7 +1008,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgbouncer-1.24.1",
@@ -1005,7 +1061,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.24.1",
@@ -1068,7 +1126,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.24.1",
@@ -1166,7 +1226,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgbouncer-1.24.1",
@@ -1242,7 +1304,9 @@
             "tags": []
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgbouncer-1.24.1",
@@ -1305,7 +1369,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.24.1",
@@ -1368,7 +1434,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.24.1",
@@ -1447,7 +1515,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.24.1",
@@ -1504,7 +1574,70 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
+    },
+    {
+      "target": "pgbouncer-1.24.1",
+      "scenario": "protocol-four-pipelined-requests",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 2",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 3",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 4",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 2",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 3",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 4",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ],
+      "runs": 5,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.24.1",
@@ -1539,7 +1672,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 5,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.24.1",
@@ -1594,7 +1729,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 5,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.24.1",
@@ -1673,7 +1810,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.24.1",
@@ -1788,7 +1927,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.24.1",
@@ -1870,7 +2011,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgbouncer-1.24.1",
@@ -1960,7 +2103,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgbouncer-1.24.1",
@@ -2046,7 +2191,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgbouncer-1.24.1",
@@ -2136,7 +2283,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgbouncer-1.24.1",
@@ -2271,7 +2420,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.24.1",
@@ -2345,7 +2496,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgbouncer-1.24.1",
@@ -2455,7 +2608,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgbouncer-1.24.1",
@@ -2541,7 +2696,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgbouncer-1.24.1",
@@ -2603,7 +2760,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgbouncer-1.25.2",
@@ -2642,7 +2801,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.25.2",
@@ -2697,7 +2858,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.25.2",
@@ -2791,7 +2954,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgbouncer-1.25.2",
@@ -2870,7 +3035,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.25.2",
@@ -2913,7 +3080,9 @@
             "message": "canceling statement due to user request"
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.25.2",
@@ -3024,7 +3193,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.25.2",
@@ -3085,7 +3256,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.25.2",
@@ -3147,7 +3320,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgbouncer-1.25.2",
@@ -3198,7 +3373,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.25.2",
@@ -3261,7 +3438,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.25.2",
@@ -3359,7 +3538,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgbouncer-1.25.2",
@@ -3435,7 +3616,9 @@
             "tags": []
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgbouncer-1.25.2",
@@ -3498,7 +3681,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.25.2",
@@ -3561,7 +3746,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.25.2",
@@ -3640,7 +3827,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.25.2",
@@ -3697,7 +3886,70 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
+    },
+    {
+      "target": "pgbouncer-1.25.2",
+      "scenario": "protocol-four-pipelined-requests",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 2",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 3",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 4",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 2",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 3",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 4",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ],
+      "runs": 5,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.25.2",
@@ -3732,7 +3984,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 5,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.25.2",
@@ -3787,7 +4041,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 5,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.25.2",
@@ -3866,7 +4122,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.25.2",
@@ -3981,7 +4239,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.25.2",
@@ -4063,7 +4323,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgbouncer-1.25.2",
@@ -4153,7 +4415,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgbouncer-1.25.2",
@@ -4239,7 +4503,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgbouncer-1.25.2",
@@ -4329,7 +4595,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgbouncer-1.25.2",
@@ -4464,7 +4732,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.25.2",
@@ -4538,7 +4808,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgbouncer-1.25.2",
@@ -4648,7 +4920,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgbouncer-1.25.2",
@@ -4734,7 +5008,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgbouncer-1.25.2",
@@ -4796,7 +5072,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgbouncer-1.26.1",
@@ -4835,7 +5113,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.26.1",
@@ -4890,7 +5170,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.26.1",
@@ -4984,7 +5266,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgbouncer-1.26.1",
@@ -5063,7 +5347,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.26.1",
@@ -5106,7 +5392,9 @@
             "message": "canceling statement due to user request"
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.26.1",
@@ -5217,7 +5505,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.26.1",
@@ -5278,7 +5568,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.26.1",
@@ -5340,7 +5632,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgbouncer-1.26.1",
@@ -5391,7 +5685,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.26.1",
@@ -5454,7 +5750,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.26.1",
@@ -5540,7 +5838,9 @@
             "message": "invalid server parameter"
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgbouncer-1.26.1",
@@ -5616,7 +5916,9 @@
             "tags": []
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgbouncer-1.26.1",
@@ -5679,7 +5981,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.26.1",
@@ -5742,7 +6046,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.26.1",
@@ -5821,7 +6127,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.26.1",
@@ -5878,7 +6186,70 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
+    },
+    {
+      "target": "pgbouncer-1.26.1",
+      "scenario": "protocol-four-pipelined-requests",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 2",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 3",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 4",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 2",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 3",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 4",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ],
+      "runs": 5,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.26.1",
@@ -5913,7 +6284,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 5,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.26.1",
@@ -5968,7 +6341,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 5,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.26.1",
@@ -6047,7 +6422,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.26.1",
@@ -6162,7 +6539,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.26.1",
@@ -6244,7 +6623,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgbouncer-1.26.1",
@@ -6307,7 +6688,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.26.1",
@@ -6393,7 +6776,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgbouncer-1.26.1",
@@ -6483,7 +6868,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgbouncer-1.26.1",
@@ -6618,7 +7005,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgbouncer-1.26.1",
@@ -6692,7 +7081,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgbouncer-1.26.1",
@@ -6802,7 +7193,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgbouncer-1.26.1",
@@ -6888,7 +7281,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgbouncer-1.26.1",
@@ -6950,7 +7345,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgdog-0.1.50",
@@ -7004,7 +7401,9 @@
             "message": "checkout timeout"
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgdog-0.1.50",
@@ -7074,7 +7473,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgdog-0.1.50",
@@ -7168,7 +7569,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgdog-0.1.50",
@@ -7247,7 +7650,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.50",
@@ -7290,7 +7695,9 @@
             "message": "canceling statement due to user request"
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.50",
@@ -7401,7 +7808,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.50",
@@ -7462,7 +7871,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.50",
@@ -7524,7 +7935,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgdog-0.1.50",
@@ -7575,7 +7988,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.50",
@@ -7665,7 +8080,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgdog-0.1.50",
@@ -7763,7 +8180,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgdog-0.1.50",
@@ -7832,7 +8251,9 @@
             "tags": []
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgdog-0.1.50",
@@ -7914,7 +8335,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgdog-0.1.50",
@@ -7977,7 +8400,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.50",
@@ -8056,7 +8481,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.50",
@@ -8113,7 +8540,70 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
+    },
+    {
+      "target": "pgdog-0.1.50",
+      "scenario": "protocol-four-pipelined-requests",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 2",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 3",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 4",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 2",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 3",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 4",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ],
+      "runs": 5,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.50",
@@ -8148,7 +8638,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 5,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.50",
@@ -8203,7 +8695,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 5,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.50",
@@ -8282,7 +8776,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.50",
@@ -8397,7 +8893,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.50",
@@ -8460,7 +8958,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.50",
@@ -8523,7 +9023,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.50",
@@ -8582,7 +9084,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.50",
@@ -8645,7 +9149,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.50",
@@ -8780,7 +9286,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.50",
@@ -8827,7 +9335,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.50",
@@ -8910,7 +9420,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.50",
@@ -8996,7 +9508,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgdog-0.1.50",
@@ -9058,7 +9572,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgdog-0.1.56",
@@ -9112,7 +9628,9 @@
             "message": "checkout timeout"
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgdog-0.1.56",
@@ -9167,7 +9685,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.56",
@@ -9261,7 +9781,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgdog-0.1.56",
@@ -9340,7 +9862,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.56",
@@ -9383,7 +9907,9 @@
             "message": "canceling statement due to user request"
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.56",
@@ -9494,7 +10020,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.56",
@@ -9555,7 +10083,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.56",
@@ -9617,7 +10147,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgdog-0.1.56",
@@ -9668,7 +10200,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.56",
@@ -9758,7 +10292,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgdog-0.1.56",
@@ -9856,7 +10392,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgdog-0.1.56",
@@ -9925,7 +10463,9 @@
             "tags": []
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgdog-0.1.56",
@@ -10007,7 +10547,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgdog-0.1.56",
@@ -10070,7 +10612,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.56",
@@ -10149,7 +10693,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.56",
@@ -10206,7 +10752,70 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
+    },
+    {
+      "target": "pgdog-0.1.56",
+      "scenario": "protocol-four-pipelined-requests",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 2",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 3",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 4",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 2",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 3",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 4",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ],
+      "runs": 5,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.56",
@@ -10241,7 +10850,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 5,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.56",
@@ -10296,7 +10907,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 5,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.56",
@@ -10375,7 +10988,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.56",
@@ -10490,7 +11105,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.56",
@@ -10553,7 +11170,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.56",
@@ -10616,7 +11235,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.56",
@@ -10675,7 +11296,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.56",
@@ -10738,7 +11361,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.56",
@@ -10900,7 +11525,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgdog-0.1.56",
@@ -10947,7 +11574,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.56",
@@ -11030,7 +11659,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.56",
@@ -11116,7 +11747,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgdog-0.1.56",
@@ -11178,7 +11811,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgdog-0.1.62",
@@ -11232,7 +11867,9 @@
             "message": "checkout timeout"
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgdog-0.1.62",
@@ -11287,7 +11924,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.62",
@@ -11381,7 +12020,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgdog-0.1.62",
@@ -11460,7 +12101,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.62",
@@ -11503,7 +12146,9 @@
             "message": "canceling statement due to user request"
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.62",
@@ -11614,7 +12259,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.62",
@@ -11675,7 +12322,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.62",
@@ -11737,7 +12386,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgdog-0.1.62",
@@ -11788,7 +12439,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.62",
@@ -11851,7 +12504,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.62",
@@ -11949,7 +12604,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgdog-0.1.62",
@@ -12018,7 +12675,9 @@
             "tags": []
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgdog-0.1.62",
@@ -12100,7 +12759,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgdog-0.1.62",
@@ -12163,7 +12824,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.62",
@@ -12242,7 +12905,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.62",
@@ -12299,7 +12964,70 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
+    },
+    {
+      "target": "pgdog-0.1.62",
+      "scenario": "protocol-four-pipelined-requests",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 2",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 3",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 4",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 2",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 3",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 4",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ],
+      "runs": 5,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.62",
@@ -12334,7 +13062,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 5,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.62",
@@ -12389,7 +13119,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 5,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.62",
@@ -12468,7 +13200,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.62",
@@ -12583,7 +13317,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.62",
@@ -12646,7 +13382,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.62",
@@ -12709,7 +13447,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.62",
@@ -12768,7 +13508,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.62",
@@ -12831,7 +13573,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.62",
@@ -12993,7 +13737,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgdog-0.1.62",
@@ -13040,7 +13786,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.62",
@@ -13123,7 +13871,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.62",
@@ -13209,7 +13959,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgdog-0.1.62",
@@ -13271,7 +14023,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgdog-0.1.62-pubsub",
@@ -13325,7 +14079,9 @@
             "message": "checkout timeout"
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgdog-0.1.62-pubsub",
@@ -13380,7 +14136,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.62-pubsub",
@@ -13474,7 +14232,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgdog-0.1.62-pubsub",
@@ -13553,7 +14313,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.62-pubsub",
@@ -13596,7 +14358,9 @@
             "message": "canceling statement due to user request"
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.62-pubsub",
@@ -13707,7 +14471,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.62-pubsub",
@@ -13768,7 +14534,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.62-pubsub",
@@ -13830,7 +14598,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgdog-0.1.62-pubsub",
@@ -13881,7 +14651,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.62-pubsub",
@@ -13944,7 +14716,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.62-pubsub",
@@ -14042,7 +14816,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgdog-0.1.62-pubsub",
@@ -14103,7 +14879,9 @@
             "tags": []
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.62-pubsub",
@@ -14185,7 +14963,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgdog-0.1.62-pubsub",
@@ -14248,7 +15028,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.62-pubsub",
@@ -14327,7 +15109,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.62-pubsub",
@@ -14384,7 +15168,70 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
+    },
+    {
+      "target": "pgdog-0.1.62-pubsub",
+      "scenario": "protocol-four-pipelined-requests",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 2",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 3",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 4",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 2",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 3",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 4",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ],
+      "runs": 5,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.62-pubsub",
@@ -14419,7 +15266,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 5,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.62-pubsub",
@@ -14474,7 +15323,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 5,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.62-pubsub",
@@ -14553,7 +15404,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.62-pubsub",
@@ -14668,7 +15521,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.62-pubsub",
@@ -14731,7 +15586,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.62-pubsub",
@@ -14794,7 +15651,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.62-pubsub",
@@ -14853,7 +15712,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.62-pubsub",
@@ -14916,7 +15777,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.62-pubsub",
@@ -15078,7 +15941,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgdog-0.1.62-pubsub",
@@ -15125,7 +15990,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.62-pubsub",
@@ -15208,7 +16075,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "pgdog-0.1.62-pubsub",
@@ -15294,7 +16163,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "pgdog-0.1.62-pubsub",
@@ -15356,7 +16227,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "supavisor-2.9.13",
@@ -15395,7 +16268,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "supavisor-2.9.13",
@@ -15450,7 +16325,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "supavisor-2.9.13",
@@ -15544,7 +16421,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "supavisor-2.9.13",
@@ -15623,7 +16502,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "supavisor-2.9.13",
@@ -15666,7 +16547,9 @@
             "message": "canceling statement due to user request"
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "supavisor-2.9.13",
@@ -15777,7 +16660,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "supavisor-2.9.13",
@@ -15838,7 +16723,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "supavisor-2.9.13",
@@ -15900,7 +16787,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "supavisor-2.9.13",
@@ -15951,7 +16840,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "supavisor-2.9.13",
@@ -16014,7 +16905,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "supavisor-2.9.13",
@@ -16112,7 +17005,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "supavisor-2.9.13",
@@ -16188,7 +17083,9 @@
             "tags": []
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "supavisor-2.9.13",
@@ -16251,7 +17148,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "supavisor-2.9.13",
@@ -16314,7 +17213,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "supavisor-2.9.13",
@@ -16393,7 +17294,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "supavisor-2.9.13",
@@ -16450,7 +17353,97 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
+    },
+    {
+      "target": "supavisor-2.9.13",
+      "scenario": "protocol-four-pipelined-requests",
+      "result": "fail",
+      "mismatch": {
+        "step": 1,
+        "action": "[a] send: parse - SELECT 1 / bind - - / execute - / sync / parse - SELECT 2 / bind - - / execute - / sync / parse - SELECT 3 / bind - - / execute - / sync / parse - SELECT 4 / bind - - / execute - / sync",
+        "kind": "hang",
+        "expected": {
+          "status": "messages",
+          "messages": [
+            "ParseComplete",
+            "BindComplete",
+            "DataRow 1",
+            "CommandComplete SELECT 1",
+            "ReadyForQuery I",
+            "ParseComplete",
+            "BindComplete",
+            "DataRow 2",
+            "CommandComplete SELECT 1",
+            "ReadyForQuery I",
+            "ParseComplete",
+            "BindComplete",
+            "DataRow 3",
+            "CommandComplete SELECT 1",
+            "ReadyForQuery I",
+            "ParseComplete",
+            "BindComplete",
+            "DataRow 4",
+            "CommandComplete SELECT 1",
+            "ReadyForQuery I"
+          ]
+        },
+        "actual": {
+          "status": "messages",
+          "messages": [
+            "ParseComplete",
+            "BindComplete",
+            "DataRow 1",
+            "CommandComplete SELECT 1",
+            "ReadyForQuery I",
+            "TIMEOUT"
+          ]
+        }
+      },
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 2",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 3",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 4",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "TIMEOUT"
+            ]
+          }
+        }
+      ],
+      "runs": 5,
+      "failures": 4
     },
     {
       "target": "supavisor-2.9.13",
@@ -16508,7 +17501,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 5,
+      "failures": 5
     },
     {
       "target": "supavisor-2.9.13",
@@ -16563,7 +17558,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 5,
+      "failures": 0
     },
     {
       "target": "supavisor-2.9.13",
@@ -16661,7 +17658,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "supavisor-2.9.13",
@@ -16776,7 +17775,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "supavisor-2.9.13",
@@ -16858,7 +17859,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "supavisor-2.9.13",
@@ -16948,7 +17951,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "supavisor-2.9.13",
@@ -17034,7 +18039,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "supavisor-2.9.13",
@@ -17124,7 +18131,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "supavisor-2.9.13",
@@ -17259,7 +18268,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "supavisor-2.9.13",
@@ -17333,7 +18344,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "supavisor-2.9.13",
@@ -17443,7 +18456,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "supavisor-2.9.13",
@@ -17529,7 +18544,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "supavisor-2.9.13",
@@ -17591,7 +18608,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "supavisor-2.10.0-rc.1",
@@ -17630,7 +18649,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "supavisor-2.10.0-rc.1",
@@ -17685,7 +18706,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "supavisor-2.10.0-rc.1",
@@ -17779,7 +18802,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "supavisor-2.10.0-rc.1",
@@ -17858,7 +18883,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "supavisor-2.10.0-rc.1",
@@ -17901,7 +18928,9 @@
             "message": "canceling statement due to user request"
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "supavisor-2.10.0-rc.1",
@@ -18012,7 +19041,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "supavisor-2.10.0-rc.1",
@@ -18073,7 +19104,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "supavisor-2.10.0-rc.1",
@@ -18135,7 +19168,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "supavisor-2.10.0-rc.1",
@@ -18186,7 +19221,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "supavisor-2.10.0-rc.1",
@@ -18249,7 +19286,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "supavisor-2.10.0-rc.1",
@@ -18347,7 +19386,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "supavisor-2.10.0-rc.1",
@@ -18423,7 +19464,9 @@
             "tags": []
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "supavisor-2.10.0-rc.1",
@@ -18486,7 +19529,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "supavisor-2.10.0-rc.1",
@@ -18549,7 +19594,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "supavisor-2.10.0-rc.1",
@@ -18628,7 +19675,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "supavisor-2.10.0-rc.1",
@@ -18685,7 +19734,70 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
+    },
+    {
+      "target": "supavisor-2.10.0-rc.1",
+      "scenario": "protocol-four-pipelined-requests",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 2",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 3",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 4",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 2",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 3",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 4",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ],
+      "runs": 5,
+      "failures": 0
     },
     {
       "target": "supavisor-2.10.0-rc.1",
@@ -18720,7 +19832,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 5,
+      "failures": 0
     },
     {
       "target": "supavisor-2.10.0-rc.1",
@@ -18775,7 +19889,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 5,
+      "failures": 0
     },
     {
       "target": "supavisor-2.10.0-rc.1",
@@ -18873,7 +19989,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "supavisor-2.10.0-rc.1",
@@ -18988,7 +20106,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "supavisor-2.10.0-rc.1",
@@ -19070,7 +20190,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "supavisor-2.10.0-rc.1",
@@ -19160,7 +20282,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "supavisor-2.10.0-rc.1",
@@ -19246,7 +20370,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "supavisor-2.10.0-rc.1",
@@ -19336,7 +20462,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "supavisor-2.10.0-rc.1",
@@ -19471,7 +20599,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "supavisor-2.10.0-rc.1",
@@ -19545,7 +20675,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "supavisor-2.10.0-rc.1",
@@ -19655,7 +20787,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "supavisor-2.10.0-rc.1",
@@ -19741,7 +20875,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "supavisor-2.10.0-rc.1",
@@ -19803,7 +20939,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "supavisor-2.10.0-rc.1-strict",
@@ -19842,7 +20980,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "supavisor-2.10.0-rc.1-strict",
@@ -19897,7 +21037,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "supavisor-2.10.0-rc.1-strict",
@@ -19979,7 +21121,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "supavisor-2.10.0-rc.1-strict",
@@ -20058,7 +21202,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "supavisor-2.10.0-rc.1-strict",
@@ -20101,7 +21247,9 @@
             "message": "canceling statement due to user request"
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "supavisor-2.10.0-rc.1-strict",
@@ -20212,7 +21360,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "supavisor-2.10.0-rc.1-strict",
@@ -20273,7 +21423,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "supavisor-2.10.0-rc.1-strict",
@@ -20323,7 +21475,9 @@
             "message": "cursor \"pp_cur\" does not exist"
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "supavisor-2.10.0-rc.1-strict",
@@ -20387,7 +21541,9 @@
             "message": "connection closed"
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "supavisor-2.10.0-rc.1-strict",
@@ -20457,7 +21613,9 @@
             "message": "connection closed"
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "supavisor-2.10.0-rc.1-strict",
@@ -20535,7 +21693,9 @@
             "message": "connection closed"
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "supavisor-2.10.0-rc.1-strict",
@@ -20606,7 +21766,9 @@
             "tags": []
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "supavisor-2.10.0-rc.1-strict",
@@ -20669,7 +21831,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "supavisor-2.10.0-rc.1-strict",
@@ -20732,7 +21896,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "supavisor-2.10.0-rc.1-strict",
@@ -20811,7 +21977,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "supavisor-2.10.0-rc.1-strict",
@@ -20868,7 +22036,70 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
+    },
+    {
+      "target": "supavisor-2.10.0-rc.1-strict",
+      "scenario": "protocol-four-pipelined-requests",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 2",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 3",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 4",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 2",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 3",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow 4",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ],
+      "runs": 5,
+      "failures": 0
     },
     {
       "target": "supavisor-2.10.0-rc.1-strict",
@@ -20903,7 +22134,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 5,
+      "failures": 0
     },
     {
       "target": "supavisor-2.10.0-rc.1-strict",
@@ -20958,7 +22191,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 5,
+      "failures": 0
     },
     {
       "target": "supavisor-2.10.0-rc.1-strict",
@@ -21056,7 +22291,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "supavisor-2.10.0-rc.1-strict",
@@ -21171,7 +22408,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 0
     },
     {
       "target": "supavisor-2.10.0-rc.1-strict",
@@ -21253,7 +22492,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "supavisor-2.10.0-rc.1-strict",
@@ -21323,7 +22564,9 @@
             "message": "connection closed"
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "supavisor-2.10.0-rc.1-strict",
@@ -21397,7 +22640,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "supavisor-2.10.0-rc.1-strict",
@@ -21467,7 +22712,9 @@
             "message": "connection closed"
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "supavisor-2.10.0-rc.1-strict",
@@ -21597,7 +22844,9 @@
             "message": "connection closed"
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "supavisor-2.10.0-rc.1-strict",
@@ -21659,7 +22908,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "supavisor-2.10.0-rc.1-strict",
@@ -21755,7 +23006,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "supavisor-2.10.0-rc.1-strict",
@@ -21841,7 +23094,9 @@
             ]
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     },
     {
       "target": "supavisor-2.10.0-rc.1-strict",
@@ -21891,7 +23146,9 @@
             "message": "relation \"pp_tmp\" does not exist"
           }
         }
-      ]
+      ],
+      "runs": 1,
+      "failures": 1
     }
   ]
 }
