@@ -35,6 +35,8 @@ case $cmd in
   targets)
     script=
     for p in $ports; do script="$script s/@\\([^@:/]*\\):$p\\//@\\1:$((p + offset))\\//g;"; done
+    # Each test bed writes its own CA for the TLS target.
+    script="$script s#docker/tls/out/poolproof/#docker/tls/out/$project/#g;"
     sed "$script" targets.toml
     ;;
   env) env_lines ;;

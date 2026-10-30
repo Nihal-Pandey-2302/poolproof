@@ -64,6 +64,9 @@ services:
     image: ${POSTGRES_IMAGE:-postgres:17.11}
     entrypoint: ["/make-certs.sh"]
     user: root
+    environment:
+      # Each test bed writes its own ca.pem, so beds side by side don't overwrite it.
+      PROJECT: ${COMPOSE_PROJECT_NAME:-poolproof}
     volumes:
       - ./tls/make-certs.sh:/make-certs.sh:ro
       - tls:/certs

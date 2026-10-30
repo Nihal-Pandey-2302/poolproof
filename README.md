@@ -74,7 +74,7 @@ Each pooler in the test bed has a pool of one server connection, so leaks betwee
 happen every time instead of by luck. `POSTGRES_IMAGE=postgres:18.4` picks the server
 version. One PgBouncer accepts clients over TLS only (its connections to Postgres stay
 plain); its certificate comes from a CA the test bed makes when it starts
-(`docker/tls/out/ca.pem`). `scripts/update-results.sh` rebuilds `results/` and
+(`docker/tls/out/<compose project>/ca.pem`). `scripts/update-results.sh` rebuilds `results/` and
 `RESULTS.md` for Postgres 17 and 18 from a fresh test bed.
 
 To test your own pooler, point poolproof at it and at the Postgres server behind it:

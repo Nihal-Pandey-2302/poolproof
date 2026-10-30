@@ -1,7 +1,8 @@
 #!/bin/sh
 # One-shot: a throwaway CA and a server certificate for the test bed's TLS pooler,
-# kept in the `tls` volume. Only ca.pem goes to /out (docker/tls/out on the host,
-# git-ignored), for clients to trust. The key is made readable for PgBouncer's user.
+# kept in the `tls` volume. Only ca.pem goes to /out/$PROJECT (docker/tls/out/<compose
+# project> on the host, git-ignored), for clients to trust. The key is made readable
+# for PgBouncer's user.
 set -eu
 cd /certs
 if [ ! -f ca.pem ]; then
@@ -16,7 +17,10 @@ if [ ! -f ca.pem ]; then
 fi
 install -m 600 -o 70 -g 70 server.key pgbouncer.key
 chmod 644 ca.pem server.crt
-cp ca.pem /out/ca.pem
-# Writable for the host user, so the files can be removed without root.
-chmod 666 /out/ca.pem
-chmod 777 /out
+# Owned by whoever owns this script on the host, so it can be removed without root,
+# and writable by nobody else: it is what clients trust.
+owner=$(stat -c %u:%g /make-certs.sh)
+mkdir -p "/out/$PROJECT"
+install -m 644 ca.pem "/out/$PROJECT/ca.pem"
+chown -R "$owner" /out
+chmod 755 /out "/out/$PROJECT"
