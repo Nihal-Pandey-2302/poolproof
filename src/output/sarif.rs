@@ -70,7 +70,7 @@ fn notifications(report: &scan::Report) -> Vec<serde_json::Value> {
         out.push(json!({
             "level": "note",
             "message": {"text": format!(
-                "PL/pgSQL bodies not fully parsed, so only their words were checked: {}",
+                "Function and DO bodies not fully parsed, so only their words were checked: {}",
                 report.uninspected
             )},
         }));

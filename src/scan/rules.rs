@@ -295,7 +295,7 @@ enum IsLocal {
 
 /// Statements that run elsewhere: DO blocks run now, function bodies whenever the
 /// function is called. Function hits become warnings that name the function.
-/// Also returns how many PL/pgSQL bodies could only be word-scanned.
+/// Also returns how many bodies could only be word-scanned.
 fn embedded_hits(query: &str, parsed: &pg_query::ParseResult) -> (Vec<Hit>, usize) {
     let mut hits: Vec<Hit> = Vec::new();
     let mut uninspected = 0;
@@ -344,11 +344,10 @@ fn embedded_hits(query: &str, parsed: &pg_query::ParseResult) -> (Vec<Hit>, usiz
                         continue;
                     }
                     (None, Some("sql")) => {
-                        let parsed = function_source(&stmt.options)
-                            .and_then(|source| pg_query::parse(source, pg_query::ParserOptions::DEFAULT).ok());
-                        match parsed {
-                            Some(parsed) => Body::Parsed(vec![parsed]),
-                            None => continue,
+                        let source = function_source(&stmt.options).unwrap_or_default();
+                        match pg_query::parse(source, pg_query::ParserOptions::DEFAULT) {
+                            Ok(parsed) => Body::Parsed(vec![parsed]),
+                            Err(_) => Body::Mentions(mentions(source)),
                         }
                     }
                     (None, Some("plpgsql")) => {
@@ -441,8 +440,8 @@ impl Owner {
     }
 }
 
-/// A PL/pgSQL body: its statements, or, when even the retry fails to parse it,
-/// the rules whose functions or keywords it mentions.
+/// A function or DO body: its statements, or, when it can't be parsed (for
+/// PL/pgSQL even after the retry), the rules whose functions or keywords it mentions.
 enum Body {
     Parsed(Vec<pg_query::ParseResult>),
     Mentions(Vec<(&'static str, String)>),
@@ -528,10 +527,13 @@ fn plpgsql_statements(text: &str, source: &str, wrapper: Wrapper) -> Body {
     };
     let block = |params: &[String]| {
         let body = without_type_references(source);
+        // The body is a block that needs a `;` after its END, unless it has one. The
+        // newline ends a trailing line comment, which would otherwise swallow ours.
+        let terminated = ends_with_semicolon(&body);
         format!(
-            "$pp_inspect$ {} BEGIN {}; END $pp_inspect$",
+            "$pp_inspect$ {} BEGIN {body}\n{} END $pp_inspect$",
             declare(params),
-            body.trim_end().trim_end_matches(';')
+            if terminated { "" } else { ";" }
         )
     };
     match &wrapper {
@@ -573,6 +575,19 @@ fn plpgsql_statements(text: &str, source: &str, wrapper: Wrapper) -> Body {
             })
             .collect(),
     )
+}
+
+/// True if the last token, ignoring comments, is `;`.
+fn ends_with_semicolon(body: &str) -> bool {
+    use pg_query::protobuf::Token;
+    let Ok(tokens) = pg_query::scan_tokens(body) else {
+        return body.trim_end().ends_with(';');
+    };
+    tokens
+        .iter()
+        .rev()
+        .find(|t| t.token != Token::SqlComment as i32 && t.token != Token::CComment as i32)
+        .is_some_and(|t| t.token == Token::Ascii59 as i32)
 }
 
 /// `t.col%TYPE` becomes `text` and `t%ROWTYPE` becomes `record`, which the PL/pgSQL
@@ -1129,6 +1144,45 @@ mod tests {
             "{}",
             findings[0].detail
         );
+    }
+
+    #[test]
+    fn retry_keeps_a_trailing_line_comment_out_of_the_way() {
+        // The retry appends `; END`; a body ending in a line comment must not swallow it.
+        let report = scan(&[query(
+            "CREATE FUNCTION trg() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN \
+             PERFORM pg_advisory_lock(1); RETURN NEW; END; -- done\n$$",
+            1,
+        )]);
+        assert_eq!(report.uninspected, 0);
+        assert_eq!(report.findings.len(), 1);
+        assert!(!report.findings[0].detail.contains("could not be fully parsed"));
+    }
+
+    #[test]
+    fn unparsable_sql_function_body_is_counted() {
+        // The outer statement parses; the string body doesn't.
+        let report = scan(&[query(
+            "CREATE FUNCTION f() RETURNS void LANGUAGE sql AS $$ SELEC pg_advisory_lock(1) $$",
+            1,
+        )]);
+        assert_eq!((report.unparsed, report.uninspected), (0, 1));
+        assert_eq!(report.findings.len(), 1);
+        assert_eq!(report.findings[0].rule, "session-advisory-lock");
+        assert!(report.findings[0].detail.contains("could not be fully parsed"));
+    }
+
+    #[test]
+    fn json_report_has_counts() {
+        let report = scan(&[query("LISTEN a", 1), query("SELEC 1", 1)]);
+        let json = serde_json::to_value(&report).unwrap();
+        let keys: Vec<_> = json.as_object().unwrap().keys().cloned().collect();
+        assert_eq!(keys, vec!["findings", "queries", "uninspected", "unparsed"]);
+        assert_eq!(
+            (json["queries"].as_u64(), json["unparsed"].as_u64()),
+            (Some(2), Some(1))
+        );
+        assert_eq!(json["findings"][0]["rule"], "listen");
     }
 
     #[test]

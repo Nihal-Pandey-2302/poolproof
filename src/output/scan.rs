@@ -83,7 +83,7 @@ pub fn print_scan(report: &scan::Report) {
 fn print_uninspected(report: &scan::Report) {
     if report.uninspected > 0 {
         println!(
-            "PL/pgSQL bodies not fully parsed, so only their words were checked: {}",
+            "Function and DO bodies not fully parsed, so only their words were checked: {}",
             report.uninspected
         );
     }

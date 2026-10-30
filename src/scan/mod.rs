@@ -97,12 +97,14 @@ pub const RULES: &[(&str, &str)] = &[
     ),
 ];
 
+/// What `scan` found. `--format json` prints it as is.
+#[derive(Serialize)]
 pub struct Report {
     pub findings: Vec<Finding>,
     pub queries: usize,
     /// Queries the SQL parser rejected.
     pub unparsed: usize,
-    /// DO blocks and PL/pgSQL functions whose body the PL/pgSQL parser rejected, even
-    /// after a retry, so only their words were checked.
+    /// DO blocks and function bodies that could not be parsed (PL/pgSQL even after a
+    /// retry), so only their words were checked.
     pub uninspected: usize,
 }

@@ -147,8 +147,9 @@ Postgres version (default: newest), and `--results my-run.json` uses a run again
 own setup instead. An unknown name lists the available ones.
 
 Without `--pooler`, the exit code is 1 if anything would break under transaction pooling
-(`--strict` also fails on warnings), so it can run in CI. `--format json` gives machine-readable output and
-`--format sarif` works with GitHub code scanning:
+(`--strict` also fails on warnings), so it can run in CI. `--format json` prints an object
+with `findings` and the counts `queries`, `unparsed` and `uninspected` (function and DO
+bodies only checked for words). `--format sarif` works with GitHub code scanning:
 
 ```yaml
 - run: poolproof scan migrations/all.sql --format sarif > poolproof.sarif || true
