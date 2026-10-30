@@ -75,6 +75,8 @@ fn scenarios_for(rule: &str) -> Vec<&'static str> {
         "sql-prepare" => vec!["sql-prepare-isolated-between-clients"],
         "discard" => vec!["discard-all-resets-settings"],
         "multi-statement-transaction" => vec!["multi-statement-begin"],
+        "deallocate-all" => vec!["deallocate-all-isolated"],
+        "load" => vec!["load-isolated-between-clients"],
         _ => vec![],
     }
 }

@@ -1,0 +1,15 @@
+name = "load-isolated-between-clients"
+description = "A library one client loads with LOAD must not show up for another client."
+
+# auto_explain ships with Postgres and defines auto_explain.* settings once loaded.
+[[step]]
+client = "a"
+simple = "LOAD 'auto_explain'"
+
+[[step]]
+client = "a"
+simple = "SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_a"
+
+[[step]]
+client = "b"
+simple = "SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b"
