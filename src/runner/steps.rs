@@ -47,9 +47,56 @@ pub async fn run_steps(
 ) -> Result<Vec<Outcome>> {
     // Loading already checks this; scenarios built in code don't go through loading.
     scenario.check_clients()?;
+    let mut conns = HashMap::new();
+    let mut raw = HashMap::new();
+    let outcomes = run_until_done(scenario, pooled, direct, t, &mut conns, &mut raw).await;
+    // Whatever stopped the steps, every client still open is closed and waited for.
+    let closed = close_all(scenario, pooled == direct, conns, raw, t).await;
+    let outcomes = outcomes?;
+    closed?;
+    Ok(outcomes)
+}
+
+/// Closes every client still open; on Postgres each waits for its backend to exit, so
+/// the next run doesn't see this one's session state. Tries them all and returns the
+/// first error. A client that abandoned its query is already gone: it dropped the
+/// socket on purpose, and its backend keeps running the query.
+async fn close_all(
+    scenario: &Scenario,
+    baseline: bool,
+    conns: HashMap<&str, Conn>,
+    raw: HashMap<&str, RawConn>,
+    t: &Timeouts,
+) -> Result<()> {
+    let direct: HashMap<&str, bool> = scenario.steps.iter().map(|s| (s.client.as_str(), s.direct)).collect();
+    let mut first_error = None;
+    for (client, conn) in conns {
+        if let Err(e) = conn.close(t).await {
+            first_error.get_or_insert(e.context(format!("client '{client}' closing")));
+        }
+    }
+    for (client, conn) in raw {
+        let on_postgres = baseline || direct.get(client).copied().unwrap_or(false);
+        // TODO(#26): t.housekeeping once Timeouts has it.
+        if let Err(e) = conn.terminate(on_postgres.then_some(t.step)).await {
+            first_error.get_or_insert(e.context(format!("client '{client}' closing")));
+        }
+    }
+    first_error.map_or(Ok(()), Err)
+}
+
+/// The steps themselves. Clients stay in `conns` and `raw` until they disconnect, so
+/// the caller can close the rest even when this stops early.
+async fn run_until_done<'s>(
+    scenario: &'s Scenario,
+    pooled: &Endpoint,
+    direct: &Endpoint,
+    t: &Timeouts,
+    conns: &mut HashMap<&'s str, Conn>,
+    raw: &mut HashMap<&'s str, RawConn>,
+) -> Result<Vec<Outcome>> {
     // In the baseline every client is on Postgres.
     let on_postgres = |step_direct: bool| step_direct || pooled == direct;
-    let mut conns: HashMap<&str, Conn> = HashMap::new();
     let mut outcomes = Vec::with_capacity(scenario.steps.len());
 
     // Clients that use `send` talk raw protocol on their own connection.
@@ -59,7 +106,6 @@ pub async fn run_steps(
         .filter(|s| s.send.is_some())
         .map(|s| s.client.as_str())
         .collect();
-    let mut raw: HashMap<&str, RawConn> = HashMap::new();
     let exchange_opts = ExchangeOpts {
         step: t.step,
         quiet: t.quiet,
@@ -93,6 +139,7 @@ pub async fn run_steps(
                 }
                 Action::Disconnect => {
                     if let Some(conn) = raw.remove(step.client.as_str()) {
+                        // TODO(#26): t.housekeeping once Timeouts has it.
                         conn.terminate(on_postgres(step.direct).then_some(t.step))
                             .await
                             .with_context(|| format!("client '{}' disconnecting", step.client))?;
@@ -244,22 +291,6 @@ pub async fn run_steps(
         outcomes.push(outcome);
     }
 
-    // Every client closes here or at its disconnect step, and on Postgres each waits
-    // for its backend to exit, so the next run doesn't see this one's session state.
-    // A client that abandoned its query dropped the socket on purpose and isn't waited
-    // for: its backend keeps running the query.
-    let direct_clients: HashMap<&str, bool> = scenario.steps.iter().map(|s| (s.client.as_str(), s.direct)).collect();
-    for (client, conn) in conns.drain() {
-        conn.close(t)
-            .await
-            .with_context(|| format!("client '{client}' closing at the end"))?;
-    }
-    for (client, conn) in raw.drain() {
-        let wait = on_postgres(direct_clients.get(client).copied().unwrap_or(false)).then_some(t.step);
-        conn.terminate(wait)
-            .await
-            .with_context(|| format!("client '{client}' closing at the end"))?;
-    }
     Ok(outcomes)
 }
 
@@ -427,6 +458,76 @@ mod tests {
             run_steps(&raw_left_open, &pg, &pg, &t).await.unwrap();
             assert_gone(&run_steps(&check, &pg, &pg, &t).await.unwrap(), 0, run);
         }
+    }
+
+    /// A server that accepts any login, answers every query with an empty result and
+    /// counts the Terminates it receives, closing the socket after each.
+    async fn counting_server() -> (Endpoint, Arc<std::sync::atomic::AtomicUsize>) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        fn message(tag: u8, body: &[u8]) -> Vec<u8> {
+            [&[tag][..], &(body.len() as u32 + 4).to_be_bytes(), body].concat()
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let terminates = Arc::new(AtomicUsize::new(0));
+        let count = terminates.clone();
+        tokio::spawn(async move {
+            while let Ok((mut s, _)) = listener.accept().await {
+                let count = count.clone();
+                tokio::spawn(async move {
+                    let len = s.read_u32().await.unwrap() as usize;
+                    let mut startup = vec![0; len - 4];
+                    s.read_exact(&mut startup).await.unwrap();
+                    let ready = message(b'Z', b"I");
+                    let hello = [message(b'R', &[0; 4]), message(b'K', &[0; 8]), ready.clone()].concat();
+                    s.write_all(&hello).await.unwrap();
+                    while let Ok(tag) = s.read_u8().await {
+                        let len = s.read_u32().await.unwrap() as usize;
+                        let mut body = vec![0; len - 4];
+                        s.read_exact(&mut body).await.unwrap();
+                        if tag == b'X' {
+                            count.fetch_add(1, Ordering::SeqCst);
+                            return;
+                        }
+                        let reply = [message(b'C', b"SELECT 0\0"), ready.clone()].concat();
+                        s.write_all(&reply).await.unwrap();
+                    }
+                });
+            }
+        });
+        let endpoint = Endpoint::parse(&format!("postgres://u@127.0.0.1:{port}/db?sslmode=disable")).unwrap();
+        (endpoint, terminates)
+    }
+
+    #[tokio::test]
+    async fn clients_are_closed_even_when_a_step_stops_the_run() {
+        let scenario: Scenario = toml::from_str(
+            r#"
+            name = "stops"
+            description = ""
+            [[step]]
+            client = "a"
+            simple = "SELECT"
+            [[step]]
+            client = "b"
+            send = ["query SELECT"]
+            [[step]]
+            client = "c"
+            simple = "SELECT"
+            [[step]]
+            client = "c"
+            wait = true
+            "#,
+        )
+        .unwrap();
+        let (server, terminates) = counting_server().await;
+        let err = run_steps(&scenario, &server, &server, &Timeouts::default())
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("no background query"), "{err}");
+        // All three were closed and, being on "Postgres", waited for before returning.
+        assert_eq!(terminates.load(std::sync::atomic::Ordering::SeqCst), 3);
     }
 
     #[tokio::test]

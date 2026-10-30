@@ -43,6 +43,7 @@ impl Conn {
             pending.abort();
         }
         drop(self.client);
+        // TODO(#26): t.housekeeping once Timeouts has it.
         if timeout(t.step, self.driver).await.is_err() && self.on_postgres {
             bail!("the backend did not exit within {:?} of the disconnect", t.step);
         }
