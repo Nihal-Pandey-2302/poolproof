@@ -315,6 +315,9 @@ fn check_supported(config: &Config) -> Result<()> {
     if config.get_hosts().len() > 1 {
         bail!("not supported: more than one host");
     }
+    if config.get_ports().len() > 1 {
+        bail!("not supported: more than one port");
+    }
     if !config.get_hostaddrs().is_empty() {
         bail!("not supported: hostaddr");
     }
@@ -778,6 +781,7 @@ mod tests {
         let err = |url: &str| format!("{:#}", Endpoint::resolve(url, &env_of(&[])).unwrap_err());
         assert!(err("postgres://u@h1,h2/db").contains("not supported: more than one host"));
         assert!(err("postgres://u@h/db?hostaddr=10.0.0.1").contains("not supported: hostaddr"));
+        assert!(err("host=h port=5432,6432 user=u").contains("not supported: more than one port"));
         assert!(err("postgres://u@h/db?target_session_attrs=read-write").contains("target_session_attrs"));
         assert!(err("postgres://u@h/db?load_balance_hosts=random").contains("load_balance_hosts"));
         assert!(Endpoint::resolve("postgres://u@h/db?target_session_attrs=any", &env_of(&[])).is_ok());
