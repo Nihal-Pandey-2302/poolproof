@@ -47,6 +47,33 @@ pub fn sarif(report: &scan::Report, input: &std::path::Path) -> serde_json::Valu
                 "rules": rules,
             }},
             "results": results,
+            "invocations": [{
+                "executionSuccessful": true,
+                "toolExecutionNotifications": notifications(report),
+            }],
         }],
     })
+}
+
+/// What scan could not fully read, as SARIF notifications rather than results.
+fn notifications(report: &scan::Report) -> Vec<serde_json::Value> {
+    use serde_json::json;
+
+    let mut out = Vec::new();
+    if report.unparsed > 0 {
+        out.push(json!({
+            "level": "warning",
+            "message": {"text": format!("{} queries could not be parsed.", report.unparsed)},
+        }));
+    }
+    if report.uninspected > 0 {
+        out.push(json!({
+            "level": "note",
+            "message": {"text": format!(
+                "PL/pgSQL bodies not fully parsed, so only their words were checked: {}",
+                report.uninspected
+            )},
+        }));
+    }
+    out
 }

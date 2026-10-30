@@ -100,5 +100,9 @@ pub const RULES: &[(&str, &str)] = &[
 pub struct Report {
     pub findings: Vec<Finding>,
     pub queries: usize,
+    /// Queries the SQL parser rejected.
     pub unparsed: usize,
+    /// DO blocks and PL/pgSQL functions whose body the PL/pgSQL parser rejected, even
+    /// after a retry, so only their words were checked.
+    pub uninspected: usize,
 }

@@ -163,8 +163,10 @@ session advisory locks, `LISTEN`, temp tables without `ON COMMIT DROP`, `WITH HO
 cursors, SQL-level `PREPARE`, `DISCARD`, `DEALLOCATE ALL`, `LOAD`, and query strings that
 start a transaction and run more statements in it. Statements inside DO blocks and
 function bodies (PL/pgSQL and SQL) are checked too. Findings in a function body are
-warnings that name the function, since it runs whenever the function is called. Dynamic
-`EXECUTE` strings are not inspected.
+warnings that name the function, since it runs whenever the function is called. Parameters
+a function sets in its own `SET` clause are restored on return, so setting them in its
+body is fine. Dynamic `EXECUTE` strings are not inspected, and a body the PL/pgSQL parser
+can't read is only checked for words, with a count at the end.
 
 ## Writing a scenario
 

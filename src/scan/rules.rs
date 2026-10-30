@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use pg_query::protobuf::{FuncCall, OnCommitAction, VariableSetKind, a_const};
 use pg_query::{NodeEnum, NodeRef};
 
-use super::{Finding, Query, Report, Severity, scenarios_for};
+use super::{Finding, Query, RULES, Report, Severity, scenarios_for};
 
 // CURSOR_OPT_HOLD from parsenodes.h
 const CURSOR_OPT_HOLD: i32 = 0x0020;
@@ -26,6 +26,7 @@ pub fn scan(queries: &[Query]) -> Report {
 
     let mut findings = Vec::new();
     let mut unparsed = 0;
+    let mut uninspected_bodies = 0;
     for (query, (calls, line)) in &merged {
         let Ok(parsed) = pg_query::parse(query, pg_query::ParserOptions::DEFAULT) else {
             unparsed += 1;
@@ -54,10 +55,10 @@ pub fn scan(queries: &[Query]) -> Report {
             .iter()
             .filter_map(|raw| raw.stmt.as_ref()?.node.as_ref())
             .collect();
-        hits.extend(check(&statements));
+        hits.extend(check(&statements, &[]));
         let (embedded, uninspected) = embedded_hits(query, &parsed);
         hits.extend(embedded);
-        unparsed += uninspected;
+        uninspected_bodies += uninspected;
 
         findings.extend(hits.into_iter().map(|hit| Finding {
             rule: hit.rule,
@@ -76,6 +77,7 @@ pub fn scan(queries: &[Query]) -> Report {
         findings,
         queries: merged.len(),
         unparsed,
+        uninspected: uninspected_bodies,
     }
 }
 
@@ -99,7 +101,9 @@ impl Hit {
 }
 
 /// The rules that look at what statements run: function calls and statement kinds.
-fn check(statements: &[&NodeEnum]) -> Vec<Hit> {
+/// `scoped` lists parameters that are reverted afterwards anyway (a function's own
+/// SET clause), so setting them is not a finding.
+fn check(statements: &[&NodeEnum], scoped: &[String]) -> Vec<Hit> {
     let mut hits = Vec::new();
     let calls = function_calls(statements);
     let names: BTreeSet<&str> = calls.iter().filter_map(|call| function_name(call)).collect();
@@ -115,7 +119,7 @@ fn check(statements: &[&NodeEnum]) -> Vec<Hit> {
         ));
     }
 
-    if let Some(is_local) = set_config_is_local(&calls) {
+    if let Some(is_local) = set_config_is_local(&calls, scoped) {
         let detail = match is_local {
             IsLocal::False => {
                 "set_config(..., false) changes the setting for the session, which other \
@@ -143,7 +147,7 @@ fn check(statements: &[&NodeEnum]) -> Vec<Hit> {
                 let kind = VariableSetKind::try_from(set.kind).unwrap_or(VariableSetKind::Undefined);
                 let transaction_scoped =
                     set.is_local || (kind == VariableSetKind::VarSetMulti && set.name == "TRANSACTION");
-                if !transaction_scoped {
+                if !transaction_scoped && !scoped.iter().any(|p| p.eq_ignore_ascii_case(&set.name)) {
                     let target = if kind == VariableSetKind::VarResetAll {
                         "ALL"
                     } else {
@@ -291,7 +295,7 @@ enum IsLocal {
 
 /// Statements that run elsewhere: DO blocks run now, function bodies whenever the
 /// function is called. Function hits become warnings that name the function.
-/// Also returns how many bodies could not be read.
+/// Also returns how many PL/pgSQL bodies could only be word-scanned.
 fn embedded_hits(query: &str, parsed: &pg_query::ParseResult) -> (Vec<Hit>, usize) {
     let mut hits: Vec<Hit> = Vec::new();
     let mut uninspected = 0;
@@ -308,9 +312,14 @@ fn embedded_hits(query: &str, parsed: &pg_query::ParseResult) -> (Vec<Hit>, usiz
         };
         let text = query.get(start..end).unwrap_or(query);
 
-        let (function, body) = match node {
+        let (owner, scoped, body) = match node {
             NodeEnum::DoStmt(stmt) if language(&stmt.args).unwrap_or("plpgsql") == "plpgsql" => {
-                (None, plpgsql_statements(text))
+                let source = function_source(&stmt.args).unwrap_or_default();
+                (
+                    Owner::DoBlock,
+                    Vec::new(),
+                    plpgsql_statements(text, source, Wrapper::Do),
+                )
             }
             NodeEnum::CreateFunctionStmt(stmt) => {
                 let name = stmt
@@ -321,41 +330,71 @@ fn embedded_hits(query: &str, parsed: &pg_query::ParseResult) -> (Vec<Hit>, usiz
                         _ => None,
                     })
                     .unwrap_or_default();
+                let owner = Owner::Function {
+                    name,
+                    procedure: stmt.is_procedure,
+                };
+                let scoped = set_options(&stmt.options);
                 let body = match (&stmt.sql_body, language(&stmt.options)) {
                     // BEGIN ATOMIC ... END or RETURN expr: already parsed.
                     (Some(sql_body), _) => {
                         let mut roots = Vec::new();
                         flatten_lists(sql_body, &mut roots);
-                        hits.extend(within_function(&name, check(&roots)));
+                        hits.extend(owner.wrap(check(&roots, &scoped)));
                         continue;
                     }
-                    (None, Some("sql")) => function_source(&stmt.options)
-                        .and_then(|source| pg_query::parse(source, pg_query::ParserOptions::DEFAULT).ok())
-                        .map(|parsed| vec![parsed])
-                        .ok_or(()),
-                    (None, Some("plpgsql")) => plpgsql_statements(text),
+                    (None, Some("sql")) => {
+                        let parsed = function_source(&stmt.options)
+                            .and_then(|source| pg_query::parse(source, pg_query::ParserOptions::DEFAULT).ok());
+                        match parsed {
+                            Some(parsed) => Body::Parsed(vec![parsed]),
+                            None => continue,
+                        }
+                    }
+                    (None, Some("plpgsql")) => {
+                        let source = function_source(&stmt.options).unwrap_or_default();
+                        let params = stmt
+                            .parameters
+                            .iter()
+                            .filter_map(|p| match p.node.as_ref()? {
+                                NodeEnum::FunctionParameter(p) if !p.name.is_empty() => Some(p.name.clone()),
+                                _ => None,
+                            })
+                            .collect();
+                        let wrapper = if stmt.is_procedure {
+                            Wrapper::Procedure(params)
+                        } else {
+                            Wrapper::Function(params)
+                        };
+                        plpgsql_statements(text, source, wrapper)
+                    }
                     _ => continue,
                 };
-                (Some(name), body)
+                (owner, scoped, body)
             }
             _ => continue,
         };
-        let Ok(body) = body else {
-            uninspected += 1;
-            continue;
-        };
-        let roots: Vec<&NodeEnum> = body
-            .iter()
-            .flat_map(|parsed| &parsed.protobuf.stmts)
-            .filter_map(|raw| raw.stmt.as_ref()?.node.as_ref())
-            .collect();
-        let found = check(&roots);
-        match function {
-            Some(name) => hits.extend(within_function(&name, found)),
-            None => hits.extend(found.into_iter().map(|hit| Hit {
-                detail: format!("In a DO block: {}", hit.detail),
-                ..hit
-            })),
+        match body {
+            Body::Parsed(body) => {
+                let roots: Vec<&NodeEnum> = body
+                    .iter()
+                    .flat_map(|parsed| &parsed.protobuf.stmts)
+                    .filter_map(|raw| raw.stmt.as_ref()?.node.as_ref())
+                    .collect();
+                hits.extend(owner.wrap(check(&roots, &scoped)));
+            }
+            Body::Mentions(rules) => {
+                uninspected += 1;
+                hits.extend(rules.into_iter().map(|(rule, word)| {
+                    let summary = RULES.iter().find(|(r, _)| *r == rule).map_or("", |(_, s)| s);
+                    let detail = format!(
+                        "{} mentions `{word}` ({summary}), but its body could not be fully parsed, \
+                         so check what it runs.",
+                        owner.describe()
+                    );
+                    Hit::new(rule, Severity::Warn, detail)
+                }));
+            }
         }
     }
     // Several statements in one body can match the same rule the same way.
@@ -364,12 +403,69 @@ fn embedded_hits(query: &str, parsed: &pg_query::ParseResult) -> (Vec<Hit>, usiz
     (hits, uninspected)
 }
 
-fn within_function(name: &str, hits: Vec<Hit>) -> Vec<Hit> {
-    hits.into_iter()
-        .map(|hit| Hit {
-            severity: Severity::Warn,
-            detail: format!("In function {name}(), each time it is called: {}", hit.detail),
-            ..hit
+/// Where embedded statements come from.
+enum Owner {
+    DoBlock,
+    Function { name: String, procedure: bool },
+}
+
+impl Owner {
+    fn describe(&self) -> String {
+        match self {
+            Owner::DoBlock => "A DO block".to_string(),
+            Owner::Function { name, procedure: true } => format!("Procedure {name}()"),
+            Owner::Function { name, .. } => format!("Function {name}()"),
+        }
+    }
+
+    /// A DO block runs now, so its hits keep their severity. A function body runs on
+    /// each call, which scan can't see, so its hits become warnings that name it.
+    fn wrap(&self, hits: Vec<Hit>) -> Vec<Hit> {
+        hits.into_iter()
+            .map(|hit| match self {
+                Owner::DoBlock => Hit {
+                    detail: format!("In a DO block: {}", hit.detail),
+                    ..hit
+                },
+                Owner::Function { name, procedure } => Hit {
+                    severity: Severity::Warn,
+                    detail: format!(
+                        "In {} {name}(), each time it is called: {}",
+                        if *procedure { "procedure" } else { "function" },
+                        hit.detail
+                    ),
+                    ..hit
+                },
+            })
+            .collect()
+    }
+}
+
+/// A PL/pgSQL body: its statements, or, when even the retry fails to parse it,
+/// the rules whose functions or keywords it mentions.
+enum Body {
+    Parsed(Vec<pg_query::ParseResult>),
+    Mentions(Vec<(&'static str, String)>),
+}
+
+/// How to rebuild a PL/pgSQL body as a standalone block for a second parse attempt.
+enum Wrapper {
+    Do,
+    Function(Vec<String>),
+    Procedure(Vec<String>),
+}
+
+/// Parameters a function sets in its own SET clause, which Postgres restores when it
+/// returns.
+fn set_options(options: &[pg_query::protobuf::Node]) -> Vec<String> {
+    options
+        .iter()
+        .filter_map(|o| match o.node.as_ref()? {
+            NodeEnum::DefElem(d) if d.defname == "set" => match d.arg.as_ref()?.node.as_ref()? {
+                NodeEnum::VariableSetStmt(set) => Some(set.name.clone()),
+                _ => None,
+            },
+            _ => None,
         })
         .collect()
 }
@@ -410,28 +506,132 @@ fn flatten_lists<'a>(node: &'a pg_query::protobuf::Node, out: &mut Vec<&'a NodeE
     }
 }
 
-/// The SQL in a PL/pgSQL DO block or function (`text` is the whole statement), each
-/// statement and expression parsed on its own. Dynamic EXECUTE strings stay opaque.
-fn plpgsql_statements(text: &str) -> Result<Vec<pg_query::ParseResult>, ()> {
-    let tree = pg_query::parse_plpgsql(text).map_err(|_| ())?;
+/// Variables Postgres declares for trigger and event trigger functions. Without
+/// them the PL/pgSQL parser rejects a body that uses NEW or TG_OP.
+const TRIGGER_VARIABLES: &str = "new record; old record; tg_name text; tg_when text; tg_level text; \
+     tg_op text; tg_relid oid; tg_relname text; tg_table_name text; tg_table_schema text; \
+     tg_nargs int; tg_argv text[]; tg_event text; tg_tag text;";
+
+/// The SQL in a PL/pgSQL DO block or function (`text` is the whole statement, `source`
+/// its body), each statement and expression parsed on its own. Dynamic EXECUTE
+/// strings stay opaque.
+///
+/// The PL/pgSQL parser has no catalog, so it rejects trigger functions (NEW, OLD),
+/// `%TYPE` and `%ROWTYPE`. Then the body is parsed again as a nested block with those
+/// variables and the parameters declared, and type references as text or record.
+/// If that fails too, the body is only scanned for words.
+fn plpgsql_statements(text: &str, source: &str, wrapper: Wrapper) -> Body {
+    let mut attempts = vec![text.to_string()];
+    let declare = |params: &[String]| {
+        let params: String = params.iter().map(|p| format!("\"{p}\" record; ")).collect();
+        format!("DECLARE {TRIGGER_VARIABLES} {params}")
+    };
+    let block = |params: &[String]| {
+        let body = without_type_references(source);
+        format!(
+            "$pp_inspect$ {} BEGIN {}; END $pp_inspect$",
+            declare(params),
+            body.trim_end().trim_end_matches(';')
+        )
+    };
+    match &wrapper {
+        Wrapper::Do => attempts.push(format!("DO {}", block(&[]))),
+        Wrapper::Procedure(params) => attempts.push(format!(
+            "CREATE PROCEDURE pp_inspect() LANGUAGE plpgsql AS {}",
+            block(params)
+        )),
+        // The return type decides which RETURN forms parse; try the usual ones.
+        Wrapper::Function(params) => {
+            for returns in ["record", "void", "SETOF record"] {
+                attempts.push(format!(
+                    "CREATE FUNCTION pp_inspect() RETURNS {returns} LANGUAGE plpgsql AS {}",
+                    block(params)
+                ));
+            }
+        }
+    }
+    let Some(tree) = attempts.iter().find_map(|sql| pg_query::parse_plpgsql(sql).ok()) else {
+        return Body::Mentions(mentions(source));
+    };
     let mut exprs = Vec::new();
     collect_plpgsql_exprs(&tree, &mut exprs);
-    Ok(exprs
-        .into_iter()
-        .filter_map(|(sql, mode)| {
-            // RawParseMode in parser.h: 0 a statement, 2 an expression, 3-5 an assignment.
-            let sql = match mode {
-                0 => sql.to_string(),
-                2 => format!("SELECT {sql}"),
-                3..=5 => {
-                    let (_, value) = sql.split_once(":=").or_else(|| sql.split_once('='))?;
-                    format!("SELECT {value}")
-                }
-                _ => return None,
-            };
-            pg_query::parse(&sql, pg_query::ParserOptions::DEFAULT).ok()
-        })
-        .collect())
+    Body::Parsed(
+        exprs
+            .into_iter()
+            .filter_map(|(sql, mode)| {
+                // RawParseMode in parser.h: 0 a statement, 2 an expression, 3-5 an assignment.
+                let sql = match mode {
+                    0 => sql.to_string(),
+                    2 => format!("SELECT {sql}"),
+                    3..=5 => {
+                        let (_, value) = sql.split_once(":=").or_else(|| sql.split_once('='))?;
+                        format!("SELECT {value}")
+                    }
+                    _ => return None,
+                };
+                pg_query::parse(&sql, pg_query::ParserOptions::DEFAULT).ok()
+            })
+            .collect(),
+    )
+}
+
+/// `t.col%TYPE` becomes `text` and `t%ROWTYPE` becomes `record`, which the PL/pgSQL
+/// parser accepts without a catalog.
+fn without_type_references(body: &str) -> String {
+    let lower = body.to_ascii_lowercase();
+    let bytes = body.as_bytes();
+    let mut out = String::with_capacity(body.len());
+    let (mut copied, mut from) = (0, 0);
+    while let Some(found) = lower[from..].find('%') {
+        let percent = from + found;
+        from = percent + 1;
+        let rest = &lower[percent + 1..];
+        let (len, replacement) = if rest.starts_with("rowtype") {
+            (7, "record")
+        } else if rest.starts_with("type") {
+            (4, "text")
+        } else {
+            continue;
+        };
+        let mut start = percent;
+        while start > 0 && (bytes[start - 1].is_ascii_alphanumeric() || b"_.\"".contains(&bytes[start - 1])) {
+            start -= 1;
+        }
+        if start == percent {
+            continue;
+        }
+        out.push_str(&body[copied..start]);
+        out.push_str(replacement);
+        copied = percent + 1 + len;
+        from = copied;
+    }
+    out.push_str(&body[copied..]);
+    out
+}
+
+/// The rules a body that couldn't be parsed probably triggers, from its words.
+fn mentions(body: &str) -> Vec<(&'static str, String)> {
+    let lower = body.to_ascii_lowercase();
+    let words: Vec<&str> = lower
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .filter(|w| !w.is_empty())
+        .collect();
+    let mut found = Vec::new();
+    for (i, word) in words.iter().enumerate() {
+        let rule = match *word {
+            w if SESSION_ADVISORY_LOCKS.contains(&w) => Some("session-advisory-lock"),
+            "set_config" => Some("session-set-config"),
+            "listen" => Some("listen"),
+            "temp" | "temporary" if words.get(i + 1) == Some(&"table") => Some("temp-table"),
+            _ => None,
+        };
+        if let Some(rule) = rule
+            && !found.iter().any(|(r, _)| *r == rule)
+        {
+            found.push((rule, word.to_string()));
+        }
+    }
+    found
 }
 
 /// Every `PLpgSQL_expr` in parse_plpgsql's JSON: its SQL and parse mode.
@@ -490,38 +690,42 @@ fn function_name(call: &FuncCall) -> Option<&str> {
 }
 
 /// The most certain session-scoped `is_local` among the query's set_config calls,
-/// or None if every call passes literal true.
-fn set_config_is_local(calls: &[&FuncCall]) -> Option<IsLocal> {
+/// or None if every call passes literal true or sets a parameter in `scoped`.
+fn set_config_is_local(calls: &[&FuncCall], scoped: &[String]) -> Option<IsLocal> {
     calls
         .iter()
         .filter(|call| function_name(call) == Some("set_config"))
-        .filter_map(|call| {
-            let mut arg = is_local_arg(call);
-            while let Some(NodeEnum::TypeCast(cast)) = arg {
-                arg = cast.arg.as_ref().and_then(|a| a.node.as_ref());
-            }
-            match arg {
+        .filter(|call| {
+            let setting = match without_casts(set_config_arg(call, "setting_name", 0)) {
                 Some(NodeEnum::AConst(c)) => match &c.val {
-                    Some(a_const::Val::Boolval(b)) => (!b.boolval).then_some(IsLocal::False),
-                    Some(a_const::Val::Sval(s)) => match parse_bool(&s.sval) {
-                        Some(true) => None,
-                        Some(false) => Some(IsLocal::False),
-                        None => Some(IsLocal::Expression),
-                    },
-                    _ => Some(IsLocal::Expression),
+                    Some(a_const::Val::Sval(s)) => Some(s.sval.as_str()),
+                    _ => None,
                 },
-                Some(NodeEnum::ParamRef(_)) => Some(IsLocal::Parameter),
+                _ => None,
+            };
+            !setting.is_some_and(|name| scoped.iter().any(|p| p.eq_ignore_ascii_case(name)))
+        })
+        .filter_map(|call| match without_casts(set_config_arg(call, "is_local", 2)) {
+            Some(NodeEnum::AConst(c)) => match &c.val {
+                Some(a_const::Val::Boolval(b)) => (!b.boolval).then_some(IsLocal::False),
+                Some(a_const::Val::Sval(s)) => match parse_bool(&s.sval) {
+                    Some(true) => None,
+                    Some(false) => Some(IsLocal::False),
+                    None => Some(IsLocal::Expression),
+                },
                 _ => Some(IsLocal::Expression),
-            }
+            },
+            Some(NodeEnum::ParamRef(_)) => Some(IsLocal::Parameter),
+            _ => Some(IsLocal::Expression),
         })
         .max()
 }
 
-/// set_config's third argument, `is_local`: by name, or third by position.
-/// Postgres puts positional arguments before named ones.
-fn is_local_arg(call: &FuncCall) -> Option<&NodeEnum> {
+/// A set_config argument by name, or by position (0-based). Postgres puts
+/// positional arguments before named ones.
+fn set_config_arg<'a>(call: &'a FuncCall, name: &str, position: usize) -> Option<&'a NodeEnum> {
     let named = call.args.iter().find_map(|a| match a.node.as_ref()? {
-        NodeEnum::NamedArgExpr(n) if n.name == "is_local" => n.arg.as_ref()?.node.as_ref(),
+        NodeEnum::NamedArgExpr(n) if n.name == name => n.arg.as_ref()?.node.as_ref(),
         _ => None,
     });
     named.or_else(|| {
@@ -529,8 +733,16 @@ fn is_local_arg(call: &FuncCall) -> Option<&NodeEnum> {
             .iter()
             .filter_map(|a| a.node.as_ref())
             .take_while(|n| !matches!(n, NodeEnum::NamedArgExpr(_)))
-            .nth(2)
+            .nth(position)
     })
+}
+
+/// The expression under any `::type` casts.
+fn without_casts(mut node: Option<&NodeEnum>) -> Option<&NodeEnum> {
+    while let Some(NodeEnum::TypeCast(cast)) = node {
+        node = cast.arg.as_ref().and_then(|a| a.node.as_ref());
+    }
+    node
 }
 
 /// A string as Postgres reads it as a boolean (`parse_bool` in bool.c): any prefix
@@ -807,13 +1019,115 @@ mod tests {
         assert!(rules("CREATE FUNCTION f() RETURNS int LANGUAGE plpgsql AS $$ BEGIN RETURN 1; END $$").is_empty());
         assert!(rules("CREATE FUNCTION f() RETURNS int LANGUAGE c AS 'mylib', 'f'").is_empty());
 
-        // A body the PL/pgSQL parser rejects counts as not parsed.
-        let report = scan(&[query("DO $$ BEGIN undeclared := 1; END $$", 1)]);
-        assert_eq!((report.findings.len(), report.unparsed), (0, 1));
+        // A body that can't be parsed even after the retry is word-scanned and counted
+        // apart from SQL parse failures.
+        let report = scan(&[query("DO $$ BEGIN undeclared := pg_advisory_lock(1); END $$", 1)]);
+        assert_eq!((report.unparsed, report.uninspected), (0, 1));
+        assert_eq!(report.findings.len(), 1);
+        assert_eq!(report.findings[0].rule, "session-advisory-lock");
+        assert_eq!(report.findings[0].severity, Severity::Warn);
+        assert!(
+            report.findings[0].detail.contains("could not be fully parsed"),
+            "{}",
+            report.findings[0].detail
+        );
         // With other statements in the same string.
         assert_eq!(
             rules("SET work_mem = '1MB'; DO $$ BEGIN LISTEN jobs; END $$"),
             vec!["listen", "session-set"]
+        );
+    }
+
+    #[test]
+    fn parses_trigger_functions_and_type_references() {
+        let report = |sql: &str| {
+            let report = scan(&[query(sql, 1)]);
+            assert_eq!((report.unparsed, report.uninspected), (0, 0), "{sql}");
+            let mut rules: Vec<_> = report.findings.iter().map(|f| f.rule).collect();
+            rules.sort();
+            rules
+        };
+        // The PL/pgSQL parser alone rejects all three; the retry reads them.
+        let empty: Vec<&str> = vec![];
+        assert_eq!(
+            report(
+                "CREATE FUNCTION trg() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN NEW.updated_at := now(); RETURN NEW; END $$"
+            ),
+            empty
+        );
+        assert_eq!(
+            report(
+                "CREATE FUNCTION typ(x t.id%TYPE) RETURNS int LANGUAGE plpgsql AS $$ DECLARE v t%ROWTYPE; \
+                 BEGIN SELECT * INTO v FROM t WHERE id = x; RETURN v.id; END $$"
+            ),
+            empty
+        );
+        assert_eq!(
+            report(
+                "CREATE FUNCTION evt() RETURNS event_trigger LANGUAGE plpgsql AS $$ BEGIN RAISE NOTICE '%', tg_tag; END $$"
+            ),
+            empty
+        );
+        // Findings inside them still count.
+        assert_eq!(
+            report(
+                "CREATE FUNCTION audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN \
+                 PERFORM set_config('audit.user', NEW.owner, false); \
+                 IF TG_OP = 'DELETE' THEN RETURN OLD; END IF; RETURN NEW; END; $$"
+            ),
+            vec!["session-set-config"]
+        );
+        assert_eq!(
+            report(
+                "CREATE FUNCTION f(job jobs.id%TYPE, OUT ok boolean) LANGUAGE plpgsql AS $$ \
+                 DECLARE r jobs%ROWTYPE; BEGIN ok := pg_try_advisory_lock(job); RETURN; END $$"
+            ),
+            vec!["session-advisory-lock"]
+        );
+        assert_eq!(
+            report("DO $$ DECLARE r pg_class%ROWTYPE; BEGIN LISTEN jobs; END $$"),
+            vec!["listen"]
+        );
+    }
+
+    #[test]
+    fn function_set_clause_scopes_its_parameters() {
+        // Postgres restores search_path when the function returns.
+        assert!(
+            rules(
+                "CREATE FUNCTION f() RETURNS void LANGUAGE plpgsql SET search_path = app AS $$ \
+             BEGIN SET search_path = app, public; PERFORM set_config('search_path', 'x', false); END $$"
+            )
+            .is_empty()
+        );
+        assert!(rules(
+            "CREATE FUNCTION f() RETURNS void LANGUAGE sql SET work_mem FROM CURRENT AS $$ SELECT set_config('work_mem', '1GB', false) $$"
+        )
+        .is_empty());
+        // Other parameters still count.
+        assert_eq!(
+            rules(
+                "CREATE FUNCTION f() RETURNS void LANGUAGE plpgsql SET search_path = app AS $$ \
+                 BEGIN SET work_mem = '1GB'; END $$"
+            ),
+            vec!["session-set"]
+        );
+    }
+
+    #[test]
+    fn procedures_are_called_procedures() {
+        let findings = scan(&[query(
+            "CREATE PROCEDURE app.lock_all() LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_advisory_lock(1); END $$",
+            1,
+        )])
+        .findings;
+        assert_eq!(findings.len(), 1);
+        assert!(
+            findings[0]
+                .detail
+                .starts_with("In procedure lock_all(), each time it is called: "),
+            "{}",
+            findings[0].detail
         );
     }
 
