@@ -2,7 +2,9 @@ name = "set-role-reset-after-pinned-disconnect"
 description = "A client that held an advisory lock and ran SET ROLE must not pass its role to the next client."
 refs = ["https://github.com/pgdogdev/pgdog/issues/1341"]
 requires = ["createrole"]
-# Membership lets a user without superuser SET ROLE to it.
+# SET ROLE needs membership with the SET option unless you are superuser. Since
+# Postgres 16 a CREATEROLE user gets only ADMIN on a role it creates
+# (createrole_self_grant is empty by default), so grant it explicitly.
 setup = ["DROP ROLE IF EXISTS pp_role", "CREATE ROLE pp_role", "GRANT pp_role TO CURRENT_USER"]
 teardown = ["DROP ROLE IF EXISTS pp_role"]
 

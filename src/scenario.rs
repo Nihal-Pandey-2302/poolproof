@@ -328,8 +328,13 @@ mod tests {
                 .requires
                 .iter()
                 .any(|r| matches!(r, Requirement::Createrole | Requirement::Superuser));
-            if text.to_lowercase().contains("create role") {
-                assert!(declared, "{name} creates a role but doesn't require createrole");
+            let text = text.to_lowercase();
+            let grants = text.contains("grant ") && text.contains(" to ");
+            let roles = ["pp_role", "create role", "alter role", "drop role", "create user"]
+                .iter()
+                .any(|s| text.contains(s));
+            if roles || grants {
+                assert!(declared, "{name} manages roles but doesn't require createrole");
             }
         }
     }
