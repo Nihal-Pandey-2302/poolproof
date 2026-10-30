@@ -9,4 +9,5 @@ RUN cargo build --locked --bin pp-proxy ${JOBS:+--jobs $JOBS}
 
 FROM debian:bookworm-slim
 COPY --from=build /src/target/debug/pp-proxy /usr/local/bin/pp-proxy
+USER 65534
 ENTRYPOINT ["pp-proxy"]
