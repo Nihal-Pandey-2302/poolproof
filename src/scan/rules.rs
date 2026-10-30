@@ -302,16 +302,56 @@ fn set_config_is_local(calls: &[&FuncCall]) -> Option<IsLocal> {
     calls
         .iter()
         .filter(|call| function_name(call) == Some("set_config"))
-        .filter_map(|call| match call.args.get(2).and_then(|a| a.node.as_ref()) {
-            Some(NodeEnum::AConst(c)) => match &c.val {
-                Some(a_const::Val::Boolval(b)) if b.boolval => None,
-                Some(a_const::Val::Boolval(_)) => Some(IsLocal::False),
+        .filter_map(|call| {
+            let mut arg = is_local_arg(call);
+            while let Some(NodeEnum::TypeCast(cast)) = arg {
+                arg = cast.arg.as_ref().and_then(|a| a.node.as_ref());
+            }
+            match arg {
+                Some(NodeEnum::AConst(c)) => match &c.val {
+                    Some(a_const::Val::Boolval(b)) => (!b.boolval).then_some(IsLocal::False),
+                    Some(a_const::Val::Sval(s)) => match parse_bool(&s.sval) {
+                        Some(true) => None,
+                        Some(false) => Some(IsLocal::False),
+                        None => Some(IsLocal::Expression),
+                    },
+                    _ => Some(IsLocal::Expression),
+                },
+                Some(NodeEnum::ParamRef(_)) => Some(IsLocal::Parameter),
                 _ => Some(IsLocal::Expression),
-            },
-            Some(NodeEnum::ParamRef(_)) => Some(IsLocal::Parameter),
-            _ => Some(IsLocal::Expression),
+            }
         })
         .max()
+}
+
+/// set_config's third argument, `is_local`: by name, or third by position.
+/// Postgres puts positional arguments before named ones.
+fn is_local_arg(call: &FuncCall) -> Option<&NodeEnum> {
+    let named = call.args.iter().find_map(|a| match a.node.as_ref()? {
+        NodeEnum::NamedArgExpr(n) if n.name == "is_local" => n.arg.as_ref()?.node.as_ref(),
+        _ => None,
+    });
+    named.or_else(|| {
+        call.args
+            .iter()
+            .filter_map(|a| a.node.as_ref())
+            .take_while(|n| !matches!(n, NodeEnum::NamedArgExpr(_)))
+            .nth(2)
+    })
+}
+
+/// A string as Postgres reads it as a boolean (`parse_bool` in bool.c): any prefix
+/// of true/false/yes/no, on, off (at least "of"), 1, 0, case-insensitive, trimmed.
+fn parse_bool(s: &str) -> Option<bool> {
+    let s = s.trim().to_ascii_lowercase();
+    let prefix_of = |word: &str, min: usize| s.len() >= min && word.starts_with(s.as_str());
+    if prefix_of("true", 1) || prefix_of("yes", 1) || s == "on" || s == "1" {
+        Some(true)
+    } else if prefix_of("false", 1) || prefix_of("no", 1) || prefix_of("off", 2) || s == "0" {
+        Some(false)
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]
@@ -468,6 +508,32 @@ mod tests {
             rules("SELECT pg_advisory_lock(1), pg_advisory_lock(2)"),
             vec!["session-advisory-lock"]
         );
+    }
+
+    #[test]
+    fn set_config_is_local_as_postgres_reads_it() {
+        let rule = |sql: &str| rules(sql).contains(&"session-set-config");
+        // Casts and string literals Postgres coerces to boolean.
+        assert!(rule("SELECT set_config('a', 'b', false::boolean)"));
+        assert!(!rule("SELECT set_config('a', 'b', true::bool)"));
+        for s in ["false", "f", "FALSE", "off", "of", "no", "n", "0", " false "] {
+            assert!(rule(&format!("SELECT set_config('a', 'b', '{s}')")), "{s}");
+            assert!(rule(&format!("SELECT set_config('a', 'b', '{s}'::bool)")), "{s}");
+        }
+        for s in ["true", "t", "tr", "on", "yes", "y", "1", "TRUE"] {
+            assert!(!rule(&format!("SELECT set_config('a', 'b', '{s}')")), "{s}");
+        }
+        // Not a boolean Postgres accepts: the call fails, but we can't say how.
+        assert!(rule("SELECT set_config('a', 'b', 'o')"));
+        // Named arguments, in any order.
+        assert!(!rule("SELECT set_config('a', 'b', is_local => true)"));
+        assert!(!rule(
+            "SELECT set_config(is_local => true, new_value => 'b', setting_name => 'a')"
+        ));
+        assert!(rule(
+            "SELECT set_config(is_local => false, setting_name => 'a', new_value => 'b')"
+        ));
+        assert!(rule("SELECT set_config('a', new_value => 'b', is_local => $1)"));
     }
 
     #[test]

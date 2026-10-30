@@ -151,3 +151,37 @@ sql = 'DECLARE jobs_cur CURSOR FOR SELECT id, pg_advisory_lock(id) FROM jobs WHE
 form = "pgss"
 expect = ["session-advisory-lock"]
 note = "the lock inside DECLARE counts too"
+
+[[query]]
+sql = "SELECT set_config('app.user_id', $1, 'false')"
+form = "log"
+expect = ["session-set-config"]
+note = "string literal Postgres reads as boolean false"
+
+[[query]]
+sql = "SELECT set_config('app.user_id', $1, 'on')"
+form = "log"
+expect = []
+note = "string literal Postgres reads as boolean true"
+
+[[query]]
+sql = "SELECT set_config('app.user_id', $1, false::boolean)"
+form = "log"
+expect = ["session-set-config"]
+
+[[query]]
+sql = 'SELECT set_config($1, $2, $3::boolean)'
+form = "pgss"
+expect = ["session-set-config"]
+note = "a cast parameter is still a parameter: check the value"
+
+[[query]]
+sql = "SELECT set_config(is_local => true, setting_name => 'app.user_id', new_value => $1)"
+form = "log"
+expect = []
+note = "named arguments in any order"
+
+[[query]]
+sql = "SELECT set_config('app.user_id', new_value => $1, is_local => false)"
+form = "log"
+expect = ["session-set-config"]
