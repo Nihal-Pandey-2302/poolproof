@@ -393,7 +393,8 @@ mod tests {
     }
 
     /// C4: once a client on Postgres is closed, its backend has exited, on every close
-    /// path. 200 runs each, as a regression test for the race fixed in 36578eb.
+    /// path. 200 runs each by default (POOLPROOF_C4_ITERATIONS to change it), as a
+    /// regression test for the race fixed in 36578eb.
     #[tokio::test]
     #[ignore = "needs POOLPROOF_TEST_PG"]
     async fn closed_sessions_are_gone_before_the_next_step() {
@@ -416,7 +417,8 @@ mod tests {
         let left_open = canary(&format!("[[step]]\nclient = 'a'\nsimple = \"{lock}; {temp}\"\n"));
         let raw_left_open = canary(&format!("[[step]]\nclient = 'a'\nsend = [\"query {lock}; {temp}\"]\n"));
         let check = canary(CHECK_GONE);
-        for run in 0..200 {
+        let runs = std::env::var("POOLPROOF_C4_ITERATIONS").map_or(200, |n| n.parse().unwrap());
+        for run in 0..runs {
             assert_gone(&run_steps(&disconnect, &pg, &pg, &t).await.unwrap(), 3, run);
             assert_gone(&run_steps(&raw, &pg, &pg, &t).await.unwrap(), 3, run);
             // Closed at the end of the run, not by a step.
