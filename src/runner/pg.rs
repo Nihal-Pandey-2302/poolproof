@@ -8,6 +8,7 @@ use tokio::time::timeout;
 use tokio_postgres::{AsyncMessage, Client, NoTls, SimpleQueryMessage, Statement};
 
 use super::{Outcome, Timeouts};
+use crate::scenario::Requirement;
 use crate::targets::Endpoint;
 
 /// NOTIFY messages received on a connection, as (channel, payload) rows.
@@ -124,6 +125,53 @@ pub(super) fn row_value(row: &tokio_postgres::Row, idx: usize) -> Option<String>
     }
 }
 
+/// What the `direct` user may do, for skipping scenarios that need more.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Privileges {
+    pub superuser: bool,
+    pub createrole: bool,
+    pub pg_signal_backend: bool,
+}
+
+impl Privileges {
+    /// The first requirement these privileges don't meet, as a SKIP reason.
+    pub fn missing(&self, requires: &[Requirement]) -> Option<String> {
+        let unmet = requires.iter().find(|r| {
+            !self.superuser
+                && match r {
+                    Requirement::Superuser => true,
+                    Requirement::Createrole => !self.createrole,
+                    Requirement::PgSignalBackend => !self.pg_signal_backend,
+                }
+        })?;
+        Some(format!("needs {unmet} on direct"))
+    }
+}
+
+/// The privileges of the user `direct` connects as.
+pub async fn privileges(direct: &Endpoint, t: &Timeouts) -> Result<Privileges> {
+    let (client, driver, _) = connect(direct, t).await?;
+    let sql = "SELECT rolsuper, rolcreaterole, pg_has_role(current_user, 'pg_signal_backend', 'MEMBER') \
+               FROM pg_roles WHERE rolname = current_user";
+    let res = timeout(t.step, client.simple_query(sql)).await;
+    drop(client);
+    let _ = timeout(t.step, driver).await;
+    let row = res
+        .context("privilege check timed out")??
+        .into_iter()
+        .find_map(|m| match m {
+            SimpleQueryMessage::Row(row) => Some(row),
+            _ => None,
+        })
+        .context("current user not in pg_roles")?;
+    let flag = |i: usize| row.get(i) == Some("t");
+    Ok(Privileges {
+        superuser: flag(0),
+        createrole: flag(1),
+        pg_signal_backend: flag(2),
+    })
+}
+
 /// The server's version number, e.g. `17.11`.
 pub async fn server_version(endpoint: &Endpoint, t: &Timeouts) -> Result<String> {
     let (client, driver, _) = connect(endpoint, t).await?;
@@ -164,5 +212,40 @@ pub(super) async fn wait_ready(endpoint: &Endpoint, t: &Timeouts) -> Result<()> 
             return Err(err.context(format!("pooler not ready {:?} after reset", t.ready)));
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_privileges() {
+        let none = Privileges {
+            superuser: false,
+            createrole: false,
+            pg_signal_backend: false,
+        };
+        let createrole = Privileges {
+            createrole: true,
+            ..none
+        };
+        let superuser = Privileges {
+            superuser: true,
+            ..none
+        };
+        let all = [
+            Requirement::Createrole,
+            Requirement::PgSignalBackend,
+            Requirement::Superuser,
+        ];
+        assert_eq!(none.missing(&[]), None);
+        assert_eq!(none.missing(&all).as_deref(), Some("needs createrole on direct"));
+        assert_eq!(
+            createrole.missing(&all).as_deref(),
+            Some("needs pg_signal_backend on direct")
+        );
+        assert_eq!(createrole.missing(&[Requirement::Createrole]), None);
+        assert_eq!(superuser.missing(&all), None);
     }
 }

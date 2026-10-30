@@ -14,7 +14,7 @@ pub mod suite;
 
 pub use check::{Checked, DIRECT_UNREACHABLE, POOLER_UNREACHABLE, check, preflight};
 pub use compare::{FailKind, Mismatch, Verdict};
-pub use pg::server_version;
+pub use pg::{Privileges, privileges, server_version};
 
 /// How long the harness waits for each kind of thing. `Default` holds the values
 /// every run used before these were configurable.

@@ -1,7 +1,9 @@
 name = "set-role-reset-after-pinned-disconnect"
 description = "A client that held an advisory lock and ran SET ROLE must not pass its role to the next client."
 refs = ["https://github.com/pgdogdev/pgdog/issues/1341"]
-setup = ["DROP ROLE IF EXISTS pp_role", "CREATE ROLE pp_role"]
+requires = ["createrole"]
+# Membership lets a user without superuser SET ROLE to it.
+setup = ["DROP ROLE IF EXISTS pp_role", "CREATE ROLE pp_role", "GRANT pp_role TO CURRENT_USER"]
 teardown = ["DROP ROLE IF EXISTS pp_role"]
 
 # The advisory lock pins the server connection, so the pooler cleans it up on disconnect.

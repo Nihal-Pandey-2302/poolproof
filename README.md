@@ -225,6 +225,8 @@ five times and fails if any run fails. Use `repeat` when the outcome depends on 
 inside the pooler, as with pipelines: reports then show how many runs failed, and CI
 doesn't treat a change in those verdicts as a regression, because the worst case can differ
 between machines.
+`requires` lists privileges the `direct` user needs (`createrole`, `superuser`,
+`pg_signal_backend`); on a target without them the scenario is skipped, with the reason.
 
 `poolproof run -v --filter <name>` prints every step's result on Postgres and through the
 pooler. Use it on a new scenario: a PASS only means something if Postgres did what you
