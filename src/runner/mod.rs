@@ -1,0 +1,83 @@
+//! Runs scenarios: steps on real connections, checks against the Postgres
+//! baseline, and the loop over targets.
+
+use std::time::Duration;
+
+use serde::{Deserialize, Serialize};
+
+mod check;
+mod compare;
+mod pg;
+pub mod raw;
+mod steps;
+pub mod suite;
+
+pub use check::{Checked, check};
+pub use compare::{FailKind, Mismatch, Verdict};
+pub use pg::server_version;
+
+const STEP_TIMEOUT: Duration = Duration::from_secs(10);
+/// For `send` steps without a Sync: how long the server must be quiet before the
+/// replies are considered complete.
+const RAW_QUIET: Duration = Duration::from_millis(500);
+/// How long a `notifications` step waits for the first NOTIFY to arrive.
+const NOTIFY_WAIT: Duration = Duration::from_secs(1);
+/// How long to wait for the pooler to answer again after a reset.
+const READY_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// What a client observed for one step.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "lowercase")]
+pub enum Outcome {
+    Ok {
+        rows: Vec<Vec<Option<String>>>,
+        /// Affected-row counts from CommandComplete, one per statement.
+        tags: Vec<u64>,
+    },
+    Error {
+        code: String,
+        message: String,
+    },
+    /// The client dropped the connection before the reply came.
+    Abandoned,
+    /// Every reply to a `send` step, one line each.
+    Messages {
+        messages: Vec<String>,
+    },
+}
+
+impl Outcome {
+    fn empty() -> Self {
+        Outcome::Ok {
+            rows: vec![],
+            tags: vec![],
+        }
+    }
+
+    fn error(code: &str, message: impl Into<String>) -> Self {
+        Outcome::Error {
+            code: code.to_string(),
+            message: message.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for Outcome {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Outcome::Ok { rows, tags } => {
+                let rows: Vec<String> = rows
+                    .iter()
+                    .map(|r| {
+                        let cols: Vec<&str> = r.iter().map(|c| c.as_deref().unwrap_or("NULL")).collect();
+                        format!("({})", cols.join(", "))
+                    })
+                    .collect();
+                write!(f, "ok rows=[{}] tags={tags:?}", rows.join(" "))
+            }
+            Outcome::Error { code, message } => write!(f, "error {code}: {message}"),
+            Outcome::Abandoned => write!(f, "abandoned"),
+            Outcome::Messages { messages } => write!(f, "{}", messages.join(", ")),
+        }
+    }
+}
