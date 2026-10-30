@@ -36,3 +36,12 @@ updates:
       - dependency-name: "*pgbouncer"
       - dependency-name: "*pgdog"
       - dependency-name: "*supavisor"
+
+  # The self-test proxy image (tools/pp-proxy/Dockerfile).
+  - package-ecosystem: docker
+    directory: /tools/pp-proxy
+    schedule:
+      interval: weekly
+    groups:
+      proxy-images:
+        patterns: ["*"]
