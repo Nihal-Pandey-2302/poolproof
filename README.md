@@ -229,6 +229,9 @@ between machines.
 `poolproof run -v --filter <name>` prints every step's result on Postgres and through the
 pooler. Use it on a new scenario: a PASS only means something if Postgres did what you
 expected.
+`poolproof run --check-scenarios --filter <name>` runs its Postgres side twice and gives
+ERROR if the results differ, e.g. because a step returns a random value, a time or a pid.
+Use `compare = "status"` or `"ignore"` on such steps.
 
 The best scenarios come from real bug reports. If your pooler bit you, a scenario with a
 link to the issue is the most useful contribution.
