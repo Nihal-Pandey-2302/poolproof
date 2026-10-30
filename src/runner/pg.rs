@@ -64,8 +64,9 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send> Io for T {}
 /// socket_close that pq_init registers. socket_close sends TLS close_notify
 /// (secure_close) and leaves the socket to the kernel, which closes it when the
 /// process exits. Both come after shmem_exit; checked in the PostgreSQL 13 to 18
-/// sources. Over TLS this sits under the TLS layer, so close_notify or EOF, whichever
-/// comes first, ends the wait.
+/// sources. Over TLS this sits under the TLS layer: close_notify arrives as ordinary
+/// bytes here, so the wait ends at EOF. (`send` clients read above TLS, so for them
+/// close_notify or EOF, whichever comes first, ends it.)
 struct DrainOnShutdown<S> {
     inner: S,
     drain: bool,
