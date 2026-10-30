@@ -338,7 +338,10 @@ footer { color: var(--muted); font-size: 12px; max-width: 1400px; margin: 0 auto
 
   // #scenario/target/postgres opens that cell, so a finding can be linked directly.
   function openFromHash() {
-    const [sn, tn, pg] = location.hash.slice(1).split("/").map(decodeURIComponent);
+    let parts;
+    try { parts = location.hash.slice(1).split("/").map(decodeURIComponent); }
+    catch { return; }  // a malformed % escape: ignore the link
+    const [sn, tn, pg] = parts;
     const s = scenarios.find(x => x.name === sn);
     const c = cols.find(x => x.t.name === tn && (!pg || x.pg === pg));
     const x = s && c && results.get(c.key + "/" + s.name);

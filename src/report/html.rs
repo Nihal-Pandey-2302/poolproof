@@ -9,7 +9,7 @@ const TEMPLATE: &str = include_str!("report.html");
 /// A self-contained HTML page: the reports are embedded, so it works offline and
 /// can be shared as one file or published as a site.
 pub fn html(reports: &[Report]) -> Result<String> {
-    // `<` only appears inside JSON strings, where < means the same thing, so
+    // `<` only appears inside JSON strings, where \u003c means the same thing, so
     // nothing in the data can close the <script> element.
     let data = serde_json::to_string(reports)?.replace('<', "\\u003c");
     Ok(TEMPLATE
@@ -19,7 +19,10 @@ pub fn html(reports: &[Report]) -> Result<String> {
 
 /// A Content-Security-Policy that allows nothing but the page's own inline script and
 /// style, by hash. A results file is data from whoever ran it; if anything in it ever
-/// got rendered as markup, it still couldn't run script or load anything.
+/// got rendered as markup, it still couldn't run script or load anything. No images,
+/// fonts or connections at all (default-src 'none'); add a directive if the page ever
+/// needs one. frame-ancestors can't be set from a meta tag, so the page claims no
+/// clickjacking protection.
 fn csp_meta() -> Result<String> {
     let script = sha256(inline(TEMPLATE, "<script>", "</script>")?);
     let style = sha256(inline(TEMPLATE, "<style>", "</style>")?);
