@@ -9,11 +9,12 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 
-# A newer commit on the same branch (main too) cancels the older run: only the latest
-# result matters for merging and for the Pages deploy.
+# On a PR, a newer commit cancels the older run: only the latest result matters for
+# merging. Runs on main are never cancelled, so every main commit gets the suite, the
+# results comparison and its Pages build; they queue instead.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Jobs get read access only; a job that needs more says so itself.
 permissions:
@@ -64,7 +65,8 @@ jobs:
   # Every scenario against every pooler, once per Postgres version.
   suite:
     needs: test
-    # Not on draft PRs: it takes 30-40 runner minutes. Pages depends on it, so it skips too.
+    # Not on draft PRs: it takes 30-40 runner minutes. Pages depends on it, so it skips
+    # too, and so do the Postgres-backed #[ignore] tests that run in this job.
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     strategy:
