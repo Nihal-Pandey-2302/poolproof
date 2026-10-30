@@ -1,0 +1,13 @@
+[general]
+host = "0.0.0.0"
+port = 6432
+default_pool_size = 1
+min_pool_size = 0
+pooler_mode = "transaction"
+# Enables LISTEN/NOTIFY support (off by default).
+pub_sub_channel_size = 4096
+
+[[databases]]
+name = "app"
+host = "postgres"
+port = 5432

@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
 use tokio_postgres::{AsyncMessage, Client, NoTls, SimpleQueryMessage, Statement};
@@ -17,7 +17,7 @@ const NOTIFY_WAIT: Duration = Duration::from_secs(1);
 const READY_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// What a client observed for one step.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "lowercase")]
 pub enum Outcome {
     Ok {
@@ -315,6 +315,21 @@ async fn run_direct(url: &str, statements: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// The server's version number, e.g. `17.11`.
+pub async fn server_version(url: &str) -> Result<String> {
+    let (client, driver, _) = connect(url).await?;
+    let res = timeout(STEP_TIMEOUT, client.simple_query("SHOW server_version")).await;
+    drop(client);
+    let _ = timeout(STEP_TIMEOUT, driver).await;
+    let version = res.context("SHOW server_version timed out")??.into_iter().find_map(|m| match m {
+        SimpleQueryMessage::Row(row) => row.get(0).map(str::to_string),
+        _ => None,
+    });
+    // "17.11 (Debian 17.11-1.pgdg13+2)" -> "17.11"
+    let version = version.context("no server_version")?;
+    Ok(version.split_whitespace().next().unwrap_or_default().to_string())
+}
+
 /// Retry `SELECT 1` through the pooler until it answers. A reset kills the pooler's
 /// server connections, and it needs a moment to notice and open new ones.
 async fn wait_ready(url: &str) -> Result<()> {
@@ -340,15 +355,49 @@ async fn wait_ready(url: &str) -> Result<()> {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Mismatch {
     pub step: usize,
     pub action: String,
+    pub kind: FailKind,
     pub expected: Outcome,
     pub actual: Outcome,
 }
 
-#[derive(Debug, Serialize)]
+/// How a failure shows up to the application. Silent failures are the dangerous ones:
+/// the client gets a result and no hint that it's wrong.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FailKind {
+    /// The pooler returned a result, but not the one Postgres returned.
+    Silent,
+    /// The pooler returned an error where Postgres didn't, or a different one.
+    Error,
+    /// The pooler didn't answer within the step timeout.
+    Hang,
+}
+
+impl FailKind {
+    fn of(actual: &Outcome) -> Self {
+        match actual {
+            Outcome::Error { code, .. } if code == "TIMEOUT" => FailKind::Hang,
+            Outcome::Error { .. } => FailKind::Error,
+            Outcome::Ok { .. } | Outcome::Abandoned => FailKind::Silent,
+        }
+    }
+}
+
+impl std::fmt::Display for FailKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            FailKind::Silent => "silent",
+            FailKind::Error => "error",
+            FailKind::Hang => "hang",
+        })
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "result", rename_all = "lowercase")]
 pub enum Verdict {
     Pass,
@@ -390,6 +439,7 @@ pub async fn check(scenario: &Scenario, pooled: &str, direct: &str, reset: &[Str
         (!expected[i].matches(&actual[i], step.compare)).then(|| Mismatch {
             step: i + 1,
             action: step.describe(),
+            kind: FailKind::of(&actual[i]),
             expected: expected[i].clone(),
             actual: actual[i].clone(),
         })
@@ -411,6 +461,13 @@ mod tests {
         let b = Outcome::error("42P01", "relation x does not exist");
         assert!(a.matches(&b, Compare::Full));
         assert!(!a.matches(&Outcome::empty(), Compare::Status));
+    }
+
+    #[test]
+    fn fail_kind_follows_pooler_outcome() {
+        assert_eq!(FailKind::of(&Outcome::empty()), FailKind::Silent);
+        assert_eq!(FailKind::of(&Outcome::error("XX000", "not allowed")), FailKind::Error);
+        assert_eq!(FailKind::of(&Outcome::error("TIMEOUT", "no reply")), FailKind::Hang);
     }
 
     #[test]

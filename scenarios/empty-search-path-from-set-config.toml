@@ -1,0 +1,17 @@
+name = "empty-search-path-from-set-config"
+description = "An empty search_path set with set_config() must survive another client changing it."
+# pg_dump does this first thing. Postgres 18 reports search_path to the pooler, so
+# poolers that track it have to restore the empty value correctly.
+refs = ["https://github.com/pgbouncer/pgbouncer/issues/1663"]
+
+[[step]]
+client = "a"
+simple = "SELECT set_config('search_path', '', false)"
+
+[[step]]
+client = "b"
+simple = "SET search_path = public"
+
+[[step]]
+client = "a"
+simple = "SHOW search_path"

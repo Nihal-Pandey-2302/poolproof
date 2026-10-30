@@ -1,3 +1,4 @@
+mod report;
 mod runner;
 mod scan;
 mod scenario;
@@ -7,7 +8,7 @@ use std::process::ExitCode;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use runner::Verdict;
 use scenario::PoolMode;
@@ -63,6 +64,14 @@ enum Command {
         #[arg(long)]
         strict: bool,
     },
+    /// Render saved `run --format json` reports, e.g. one per Postgres version, as
+    /// one table.
+    Report {
+        #[arg(required = true)]
+        files: Vec<PathBuf>,
+        #[arg(long, value_enum, default_value_t = ReportFormat::Markdown)]
+        format: ReportFormat,
+    },
     /// List bundled scenarios.
     List {
         /// Scenario directory. Defaults to the scenarios built into poolproof.
@@ -80,11 +89,20 @@ enum ScanFormat {
 }
 
 #[derive(Clone, Copy, ValueEnum)]
+enum ReportFormat {
+    Markdown,
+    /// One self-contained page with a filterable grid and step-by-step details.
+    Html,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
 enum RunFormat {
     Text,
     Json,
     /// A scenario x target table plus failure details, for a README or CI summary.
     Markdown,
+    /// One self-contained page with a filterable grid and step-by-step details.
+    Html,
 }
 
 #[derive(Deserialize)]
@@ -103,19 +121,19 @@ struct Target {
     /// Connection URL for the Postgres server behind it.
     direct: String,
     mode: PoolMode,
+    /// What is being tested, for grouping in reports: e.g. `pgbouncer`, `1.26.1`, and a
+    /// config label like `default` or `strict`.
+    #[serde(default)]
+    product: Option<String>,
+    #[serde(default)]
+    version: Option<String>,
+    #[serde(default)]
+    config: Option<String>,
     /// Statements run on `direct` before every run to drop state leaked on the
     /// pooler's server connections, usually by terminating them. Without it,
     /// one scenario's leak can change the next one's result.
     #[serde(default)]
     reset: Vec<String>,
-}
-
-#[derive(Serialize)]
-struct ResultRow<'a> {
-    target: &'a str,
-    scenario: &'a str,
-    #[serde(flatten)]
-    verdict: Verdict,
 }
 
 #[tokio::main]
@@ -134,7 +152,18 @@ async fn run(cli: Cli) -> Result<ExitCode> {
         Command::Run { targets, pooler, direct, mode, scenarios, filter, reverse, verbose, format } => {
             let targets = match (pooler, direct) {
                 (Some(pooler), Some(direct)) => {
-                    Targets { targets: vec![Target { name: "pooler".into(), pooler, direct, mode, reset: vec![] }] }
+                    Targets {
+                    targets: vec![Target {
+                        name: "pooler".into(),
+                        pooler,
+                        direct,
+                        mode,
+                        product: None,
+                        version: None,
+                        config: None,
+                        reset: vec![],
+                    }],
+                }
                 }
                 _ => {
                     let text = std::fs::read_to_string(&targets)
@@ -148,7 +177,16 @@ async fn run(cli: Cli) -> Result<ExitCode> {
             }
 
             let mut results = Vec::new();
+            let mut target_infos = Vec::new();
             for target in &targets.targets {
+                target_infos.push(report::TargetInfo {
+                    name: target.name.clone(),
+                    product: target.product.clone(),
+                    version: target.version.clone(),
+                    config: target.config.clone(),
+                    mode: target.mode,
+                    postgres: runner::server_version(&target.direct).await.ok(),
+                });
                 if target.reset.is_empty() {
                     eprintln!(
                         "warning: target '{}' has no reset; leaked state can carry over between scenarios",
@@ -177,20 +215,46 @@ async fn run(cli: Cli) -> Result<ExitCode> {
                             }
                         }
                     }
-                    results.push(ResultRow { target: &target.name, scenario: &s.name, verdict });
+                    let steps =
+                        steps.into_iter().map(|(postgres, pooler)| report::StepOutcomes { postgres, pooler }).collect();
+                    results.push(report::ResultRow {
+                        target: target.name.clone(),
+                        scenario: s.name.clone(),
+                        verdict,
+                        steps,
+                    });
                 }
             }
 
             let count = |f: fn(&Verdict) -> bool| results.iter().filter(|r| f(&r.verdict)).count();
             let failed = count(|v| matches!(v, Verdict::Fail { .. }));
             let errors = count(|v| matches!(v, Verdict::Error { .. }));
-            match format {
-                RunFormat::Json => println!("{}", serde_json::to_string_pretty(&results)?),
-                RunFormat::Markdown => print!("{}", markdown(&targets.targets, &scenarios, &results)),
-                RunFormat::Text => {
-                    let passed = count(|v| matches!(v, Verdict::Pass));
-                    let skipped = count(|v| matches!(v, Verdict::Skip { .. }));
-                    println!("\n{passed} passed, {failed} failed, {errors} errors, {skipped} skipped");
+            if matches!(format, RunFormat::Text) {
+                let passed = count(|v| matches!(v, Verdict::Pass));
+                let skipped = count(|v| matches!(v, Verdict::Skip { .. }));
+                println!("\n{passed} passed, {failed} failed, {errors} errors, {skipped} skipped");
+            } else {
+                let scenarios = scenarios
+                    .iter()
+                    .filter(|s| results.iter().any(|r| r.scenario == s.name))
+                    .map(|s| report::ScenarioInfo {
+                        name: s.name.clone(),
+                        description: s.description.clone(),
+                        refs: s.refs.clone(),
+                        steps: s.steps.iter().map(|step| step.describe()).collect(),
+                    })
+                    .collect();
+                let report = report::Report {
+                    poolproof: env!("CARGO_PKG_VERSION").to_string(),
+                    targets: target_infos,
+                    scenarios,
+                    results,
+                };
+                match format {
+                    RunFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
+                    RunFormat::Markdown => print!("{}", report::markdown(&[report])),
+                    RunFormat::Html => print!("{}", report::html(&[report])?),
+                    RunFormat::Text => unreachable!(),
                 }
             }
             Ok(if failed + errors > 0 { ExitCode::FAILURE } else { ExitCode::SUCCESS })
@@ -208,6 +272,14 @@ async fn run(cli: Cli) -> Result<ExitCode> {
                 .iter()
                 .any(|f| strict || f.severity == scan::Severity::Breaks);
             Ok(if failing { ExitCode::FAILURE } else { ExitCode::SUCCESS })
+        }
+        Command::Report { files, format } => {
+            let reports = files.iter().map(|f| report::Report::load(f)).collect::<Result<Vec<_>>>()?;
+            match format {
+                ReportFormat::Markdown => print!("{}", report::markdown(&reports)),
+                ReportFormat::Html => print!("{}", report::html(&reports)?),
+            }
+            Ok(ExitCode::SUCCESS)
         }
         Command::List { scenarios } => {
             for s in load_scenarios(scenarios.as_deref())? {
@@ -231,7 +303,7 @@ fn print_verdict(target: &str, s: &scenario::Scenario, verdict: &Verdict) {
         Verdict::Skip { reason } => println!("SKIP  {target:<24} {} ({reason})", s.name),
         Verdict::Error { reason } => println!("ERROR {target:<24} {} ({reason})", s.name),
         Verdict::Fail { mismatch } => {
-            println!("FAIL  {target:<24} {}", s.name);
+            println!("FAIL  {target:<24} {} ({})", s.name, mismatch.kind);
             println!("      {}", s.description);
             println!("      step {}: {}", mismatch.step, mismatch.action);
             println!("      postgres: {}", mismatch.expected);
@@ -241,64 +313,6 @@ fn print_verdict(target: &str, s: &scenario::Scenario, verdict: &Verdict) {
             }
         }
     }
-}
-
-fn markdown(targets: &[Target], scenarios: &[scenario::Scenario], results: &[ResultRow]) -> String {
-    use std::fmt::Write;
-
-    let verdict = |t: &str, s: &str| results.iter().find(|r| r.target == t && r.scenario == s).map(|r| &r.verdict);
-    let ran: Vec<&scenario::Scenario> =
-        scenarios.iter().filter(|s| results.iter().any(|r| r.scenario == s.name)).collect();
-
-    let mut out = String::from("# poolproof results\n\n");
-    out.push_str("Each scenario runs against plain Postgres, then through the pooler. FAIL means the\n");
-    out.push_str("pooler gave a different result than Postgres. Not every FAIL is a bug: some are\n");
-    out.push_str("documented limits of the pooling mode. Links point to the report each scenario came from.\n\n");
-    let _ = write!(out, "| Scenario |");
-    for t in targets {
-        let _ = write!(out, " {} ({}) |", t.name, t.mode);
-    }
-    let _ = write!(out, "\n|---|{}\n", "---|".repeat(targets.len()));
-    for s in &ran {
-        let _ = write!(out, "| `{}` |", s.name);
-        for t in targets {
-            let cell = match verdict(&t.name, &s.name) {
-                Some(Verdict::Pass) => "pass",
-                Some(Verdict::Fail { .. }) => "**FAIL**",
-                Some(Verdict::Error { .. }) => "ERROR",
-                Some(Verdict::Skip { .. }) => "skip",
-                None => "",
-            };
-            let _ = write!(out, " {cell} |");
-        }
-        out.push('\n');
-    }
-
-    let mut details = String::new();
-    for s in &ran {
-        for t in targets {
-            match verdict(&t.name, &s.name) {
-                Some(Verdict::Fail { mismatch: m }) => {
-                    let _ = write!(details, "\n### {} / {}\n\n{}\n\n", t.name, s.name, s.description);
-                    let _ = writeln!(details, "- step {}: `{}`", m.step, m.action);
-                    let _ = writeln!(details, "- postgres: `{}`", m.expected);
-                    let _ = writeln!(details, "- pooler: `{}`", m.actual);
-                    for r in &s.refs {
-                        let _ = writeln!(details, "- from {r}");
-                    }
-                }
-                Some(Verdict::Error { reason }) => {
-                    let _ = write!(details, "\n### {} / {}: ERROR\n\n{reason}\n", t.name, s.name);
-                }
-                _ => {}
-            }
-        }
-    }
-    if !details.is_empty() {
-        out.push_str("\n## Differences\n");
-        out.push_str(&details);
-    }
-    out
 }
 
 fn sarif(report: &scan::Report, input: &std::path::Path) -> serde_json::Value {

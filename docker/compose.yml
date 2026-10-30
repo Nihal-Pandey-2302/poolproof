@@ -1,11 +1,64 @@
-# Local test bed: one Postgres, each pooler in front of it with a pool of ONE
-# server connection. A single shared server connection makes state leaks
-# between clients show up every time instead of by chance.
+# Test bed: one Postgres with several pooler versions in front of it. Every pooler
+# has a pool of ONE server connection, so state leaks between clients show up every
+# time instead of by chance. POSTGRES_IMAGE picks the server (CI runs 17 and 18).
 name: poolproof
+
+x-pgbouncer: &pgbouncer
+  volumes:
+    - ./pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+    - ./pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+  depends_on:
+    postgres:
+      condition: service_healthy
+
+x-pgdog: &pgdog
+  volumes:
+    - ./pgdog/pgdog.toml:/pgdog/pgdog.toml:ro
+    - ./pgdog/users.toml:/pgdog/users.toml:ro
+  depends_on:
+    postgres:
+      condition: service_healthy
+
+x-supavisor: &supavisor
+  command: sh -c "/app/bin/migrate && /app/bin/server"
+  # The entrypoint raises the open files limit to 100000 and exits if it can't.
+  ulimits:
+    nofile: 100000
+  depends_on:
+    postgres:
+      condition: service_healthy
+    supavisor-meta:
+      condition: service_healthy
+
+x-supavisor-env: &supavisor-env
+  PORT: "4000"
+  PROXY_PORT_SESSION: "5452"
+  PROXY_PORT_TRANSACTION: "6543"
+  CLUSTER_POSTGRES: "true"
+  # Dev-only secrets, as in Supavisor's own docker-compose.yml.
+  SECRET_KEY_BASE: "12345678901234567890121234567890123456789012345678903212345678901234567890123456789032123456789012345678901234567890323456789032"
+  VAULT_ENC_KEY: "12345678901234567890123456789032"
+  API_JWT_SECRET: dev
+  METRICS_JWT_SECRET: dev
+  REGION: local
+  ERL_AFLAGS: -proto_dist inet_tcp
+
+# One-shot: creates tenants (pool size 1, transaction mode) through the API.
+# Clients connect as `postgres.<tenant>`.
+x-supavisor-tenants: &supavisor-tenants
+  image: curlimages/curl:8.11.1
+  entrypoint: ["/add-tenant.sh"]
+  volumes:
+    - ./supavisor/add-tenant.sh:/add-tenant.sh:ro
+    - ./supavisor/tenants:/tenants:ro
+  healthcheck:
+    test: ["CMD", "test", "-f", "/tmp/done"]
+    interval: 1s
+    retries: 180
 
 services:
   postgres:
-    image: postgres:17.11
+    image: ${POSTGRES_IMAGE:-postgres:17.11}
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -17,81 +70,75 @@ services:
       interval: 1s
       retries: 30
 
-  pgbouncer:
+  pgbouncer-1.24.1:
+    <<: *pgbouncer
+    image: edoburu/pgbouncer:v1.24.1-p1
+    ports: ["56441:6432"]
+  pgbouncer-1.25.2:
+    <<: *pgbouncer
+    image: edoburu/pgbouncer:v1.25.2-p0
+    ports: ["56442:6432"]
+  pgbouncer-1.26.1:
+    <<: *pgbouncer
     image: edoburu/pgbouncer:v1.26.1-p0
-    volumes:
-      - ./pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
-      - ./pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
-    ports:
-      - "56432:6432"
-    depends_on:
-      postgres:
-        condition: service_healthy
+    ports: ["56443:6432"]
 
-  pgdog:
+  pgdog-0.1.50:
+    <<: *pgdog
+    image: ghcr.io/pgdogdev/pgdog:v0.1.50
+    ports: ["56451:6432"]
+  pgdog-0.1.56:
+    <<: *pgdog
+    image: ghcr.io/pgdogdev/pgdog:v0.1.56
+    ports: ["56452:6432"]
+  pgdog-0.1.62:
+    <<: *pgdog
+    image: ghcr.io/pgdogdev/pgdog:v0.1.62
+    ports: ["56453:6432"]
+  pgdog-0.1.62-pubsub:
+    <<: *pgdog
     image: ghcr.io/pgdogdev/pgdog:v0.1.62
     volumes:
-      - ./pgdog/pgdog.toml:/pgdog/pgdog.toml:ro
+      - ./pgdog/pgdog-pubsub.toml:/pgdog/pgdog.toml:ro
       - ./pgdog/users.toml:/pgdog/users.toml:ro
-    ports:
-      - "56433:6432"
-    depends_on:
-      postgres:
-        condition: service_healthy
+    ports: ["56454:6432"]
 
-  # Supavisor keeps tenants in its own metadata database, separate from `app`.
   supavisor-meta:
     image: postgres:17.11
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: supavisor
     volumes:
-      - ./supavisor/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./supavisor/init.sh:/docker-entrypoint-initdb.d/init.sh:ro
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "supavisor"]
+      test: ["CMD", "psql", "-U", "postgres", "-d", "supavisor_2_10", "-c", "SELECT 1"]
       interval: 1s
       retries: 30
 
-  supavisor:
+  supavisor-2.9.13:
+    <<: *supavisor
     image: supabase/supavisor:2.9.13
-    command: sh -c "/app/bin/migrate && /app/bin/server"
-    # The entrypoint raises the open files limit to 100000 and exits if it can't.
-    ulimits:
-      nofile: 100000
     environment:
-      PORT: "4000"
-      PROXY_PORT_SESSION: "5452"
-      PROXY_PORT_TRANSACTION: "6543"
-      DATABASE_URL: ecto://postgres:postgres@supavisor-meta:5432/supavisor
-      CLUSTER_POSTGRES: "true"
-      # Dev-only secrets, as in Supavisor's own docker-compose.yml.
-      SECRET_KEY_BASE: "12345678901234567890121234567890123456789012345678903212345678901234567890123456789032123456789012345678901234567890323456789032"
-      VAULT_ENC_KEY: "12345678901234567890123456789032"
-      API_JWT_SECRET: dev
-      METRICS_JWT_SECRET: dev
-      REGION: local
-      ERL_AFLAGS: -proto_dist inet_tcp
-    ports:
-      - "56434:6543"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      supavisor-meta:
-        condition: service_healthy
+      <<: *supavisor-env
+      DATABASE_URL: ecto://postgres:postgres@supavisor-meta:5432/supavisor_2_9
+    ports: ["56461:6543"]
+  supavisor-2.9.13-tenants:
+    <<: *supavisor-tenants
+    environment:
+      SUPAVISOR: supavisor-2.9.13:4000
+      TENANTS: pp:default.json
+    depends_on: [supavisor-2.9.13]
 
-  # One-shot: creates the `pp` tenant (pool size 1, transaction mode). Clients connect
-  # as `postgres.pp`.
-  supavisor-tenant:
-    image: curlimages/curl:8.11.1
-    entrypoint: ["/add-tenant.sh"]
-    volumes:
-      - ./supavisor/add-tenant.sh:/add-tenant.sh:ro
-      - ./supavisor/tenant.json:/tenant.json:ro
-    healthcheck:
-      test: ["CMD", "test", "-f", "/tmp/done"]
-      interval: 1s
-      retries: 120
-    depends_on:
-      - supavisor
-
+  supavisor-2.10.0-rc.1:
+    <<: *supavisor
+    image: supabase/supavisor:2.10.0-rc.1
+    environment:
+      <<: *supavisor-env
+      DATABASE_URL: ecto://postgres:postgres@supavisor-meta:5432/supavisor_2_10
+    ports: ["56462:6543"]
+  supavisor-2.10.0-rc.1-tenants:
+    <<: *supavisor-tenants
+    environment:
+      SUPAVISOR: supavisor-2.10.0-rc.1:4000
+      TENANTS: pp:default.json ppstrict:strict.json
+    depends_on: [supavisor-2.10.0-rc.1]

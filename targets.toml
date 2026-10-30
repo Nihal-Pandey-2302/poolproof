@@ -1,4 +1,4 @@
-# Targets for the local docker test bed (docker compose -f docker/compose.yml up -d).
+# Targets for the docker test bed (docker compose -f docker/compose.yml up -d --wait).
 # Point these at your own pooler to test your setup.
 #
 # `reset` runs on `direct` before every run. Here it terminates every other session
@@ -6,23 +6,102 @@
 # on a database nothing else is connected to.
 
 [[target]]
-name = "pgbouncer-1.26-txn"
-pooler = "postgres://postgres:postgres@127.0.0.1:56432/app"
+name = "pgbouncer-1.24.1"
+product = "pgbouncer"
+version = "1.24.1"
+config = "default"
+pooler = "postgres://postgres:postgres@127.0.0.1:56441/app"
 direct = "postgres://postgres:postgres@127.0.0.1:55432/app"
 mode = "transaction"
 reset = ["SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'"]
 
 [[target]]
-name = "pgdog-0.1.62-txn"
-pooler = "postgres://postgres:postgres@127.0.0.1:56433/app"
+name = "pgbouncer-1.25.2"
+product = "pgbouncer"
+version = "1.25.2"
+config = "default"
+pooler = "postgres://postgres:postgres@127.0.0.1:56442/app"
 direct = "postgres://postgres:postgres@127.0.0.1:55432/app"
 mode = "transaction"
 reset = ["SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'"]
 
 [[target]]
-name = "supavisor-2.9.13-txn"
+name = "pgbouncer-1.26.1"
+product = "pgbouncer"
+version = "1.26.1"
+config = "default"
+pooler = "postgres://postgres:postgres@127.0.0.1:56443/app"
+direct = "postgres://postgres:postgres@127.0.0.1:55432/app"
+mode = "transaction"
+reset = ["SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'"]
+
+[[target]]
+name = "pgdog-0.1.50"
+product = "pgdog"
+version = "0.1.50"
+config = "default"
+pooler = "postgres://postgres:postgres@127.0.0.1:56451/app"
+direct = "postgres://postgres:postgres@127.0.0.1:55432/app"
+mode = "transaction"
+reset = ["SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'"]
+
+[[target]]
+name = "pgdog-0.1.56"
+product = "pgdog"
+version = "0.1.56"
+config = "default"
+pooler = "postgres://postgres:postgres@127.0.0.1:56452/app"
+direct = "postgres://postgres:postgres@127.0.0.1:55432/app"
+mode = "transaction"
+reset = ["SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'"]
+
+[[target]]
+name = "pgdog-0.1.62"
+product = "pgdog"
+version = "0.1.62"
+config = "default"
+pooler = "postgres://postgres:postgres@127.0.0.1:56453/app"
+direct = "postgres://postgres:postgres@127.0.0.1:55432/app"
+mode = "transaction"
+reset = ["SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'"]
+
+[[target]]
+name = "pgdog-0.1.62-pubsub"
+product = "pgdog"
+version = "0.1.62"
+config = "pubsub"
+pooler = "postgres://postgres:postgres@127.0.0.1:56454/app"
+direct = "postgres://postgres:postgres@127.0.0.1:55432/app"
+mode = "transaction"
+reset = ["SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'"]
+
 # Supavisor finds the tenant from the user name: <user>.<tenant>.
-pooler = "postgres://postgres.pp:postgres@127.0.0.1:56434/app"
+[[target]]
+name = "supavisor-2.9.13"
+product = "supavisor"
+version = "2.9.13"
+config = "default"
+pooler = "postgres://postgres.pp:postgres@127.0.0.1:56461/app"
+direct = "postgres://postgres:postgres@127.0.0.1:55432/app"
+mode = "transaction"
+reset = ["SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'"]
+
+[[target]]
+name = "supavisor-2.10.0-rc.1"
+product = "supavisor"
+version = "2.10.0-rc.1"
+config = "default"
+pooler = "postgres://postgres.pp:postgres@127.0.0.1:56462/app"
+direct = "postgres://postgres:postgres@127.0.0.1:55432/app"
+mode = "transaction"
+reset = ["SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'"]
+
+[[target]]
+name = "supavisor-2.10.0-rc.1-strict"
+product = "supavisor"
+version = "2.10.0-rc.1"
+config = "strict"
+pooler = "postgres://postgres.ppstrict:postgres@127.0.0.1:56462/app"
 direct = "postgres://postgres:postgres@127.0.0.1:55432/app"
 mode = "transaction"
 reset = ["SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'"]

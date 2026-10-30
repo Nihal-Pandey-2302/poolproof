@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>poolproof results</title>
+<style>
+:root {
+  --bg: #f7f7f5; --panel: #ffffff; --text: #1c1c1a; --muted: #6b6b66; --line: #e3e3de;
+  --pass: #e7f3ea; --pass-ink: #2f6b3c;
+  --silent: #d93025; --silent-ink: #ffffff;
+  --error: #f5c451; --error-ink: #4a3500;
+  --hang: #8e6bd1; --hang-ink: #ffffff;
+  --skip: #ececea; --skip-ink: #8a8a85;
+  --accent: #2557d6; --hl: #fff4d6;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #141413; --panel: #1d1d1b; --text: #ecece8; --muted: #9a9a94; --line: #33332f;
+    --pass: #1f3324; --pass-ink: #8fd19e;
+    --silent: #e5483d; --error: #d9a93a; --error-ink: #1d1500;
+    --hang: #9b7ce0; --skip: #2a2a27; --skip-ink: #77776f;
+    --accent: #7ea2ff; --hl: #3a3220;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+code, .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12.5px; }
+a { color: var(--accent); }
+header { padding: 28px 16px 8px; max-width: 1400px; margin: 0 auto; }
+h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: -0.01em; }
+.lede { color: var(--muted); margin: 0 0 16px; max-width: 760px; }
+.stats { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
+.stat { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; min-width: 120px; }
+.stat b { display: block; font-size: 20px; }
+.stat span { color: var(--muted); font-size: 12px; }
+.controls { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin-bottom: 10px; }
+.controls label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg button { border: 0; background: var(--panel); color: var(--text); padding: 5px 10px; cursor: pointer; font: inherit; }
+.seg button[aria-pressed="true"] { background: var(--text); color: var(--bg); }
+input[type=search] { font: inherit; padding: 5px 10px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--panel); color: var(--text); min-width: 200px; }
+.legend { display: flex; flex-wrap: wrap; gap: 12px; color: var(--muted); font-size: 12px; margin-bottom: 12px; }
+.legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -2px; margin-right: 4px; }
+main { max-width: 1400px; margin: 0 auto; padding: 0 16px 40px; }
+.scroll { overflow: auto; width: fit-content; max-width: 100%; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; max-height: 78vh; }
+table { border-collapse: separate; border-spacing: 0; }
+th, td { border-bottom: 1px solid var(--line); }
+thead th { position: sticky; background: var(--panel); z-index: 2; font-weight: 600; font-size: 12px; }
+thead tr:first-child th { top: 0; }
+thead tr:nth-child(2) th { top: 29px; }
+thead th.product { text-align: center; padding: 6px 8px; border-left: 1px solid var(--line); }
+thead th.col { padding: 4px 4px 8px; vertical-align: bottom; color: var(--muted); font-weight: 500; }
+thead th.col div { writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap; margin: 0 auto; }
+thead th.col.first { border-left: 1px solid var(--line); }
+th.corner, td.name { position: sticky; left: 0; background: var(--panel); z-index: 1; }
+th.corner { z-index: 3; text-align: left; padding: 8px 12px; }
+td.name { padding: 8px 12px; min-width: 300px; max-width: 360px; }
+td.name .mono { font-weight: 600; }
+td.name .desc { color: var(--muted); font-size: 12px; }
+.notes { margin-top: 3px; display: flex; flex-wrap: wrap; gap: 4px; }
+.note { font-size: 11px; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+.note.broke { border-color: var(--silent); color: var(--silent); }
+.note.fixed { border-color: var(--pass-ink); color: var(--pass-ink); }
+td.cell { padding: 3px; text-align: center; }
+td.cell.first { border-left: 1px solid var(--line); }
+.chip { width: 30px; height: 26px; border-radius: 6px; border: 0; cursor: pointer; font: 600 13px system-ui, sans-serif; }
+.chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.pass { background: var(--pass); color: var(--pass-ink); }
+.silent { background: var(--silent); color: var(--silent-ink); }
+.error { background: var(--error); color: var(--error-ink); }
+.hang { background: var(--hang); color: var(--hang-ink); }
+.skip, .none { background: var(--skip); color: var(--skip-ink); }
+tfoot td { position: sticky; bottom: 0; background: var(--panel); font-size: 12px; color: var(--muted); text-align: center; padding: 6px 2px; }
+tfoot td.name { text-align: left; }
+tfoot b { color: var(--silent); }
+dialog { border: 1px solid var(--line); border-radius: 14px; padding: 0; width: min(920px, calc(100vw - 32px));
+  background: var(--panel); color: var(--text); }
+dialog::backdrop { background: rgba(0,0,0,.45); }
+.dlg-head { padding: 16px 20px 10px; border-bottom: 1px solid var(--line); display: flex; gap: 12px; align-items: start; }
+.dlg-head h2 { margin: 0; font-size: 16px; }
+.dlg-head p { margin: 4px 0 0; color: var(--muted); }
+.dlg-body { padding: 14px 20px 20px; max-height: 70vh; overflow: auto; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+.close { margin-left: auto; border: 0; background: none; color: var(--muted); font-size: 22px; cursor: pointer; line-height: 1; }
+.steps { width: 100%; border-collapse: collapse; margin-top: 10px; }
+.steps th, .steps td { text-align: left; padding: 6px 8px; vertical-align: top; border-bottom: 1px solid var(--line); }
+.steps th { font-size: 12px; color: var(--muted); font-weight: 500; }
+.steps tr.diff td { background: var(--hl); }
+.steps tr.after td { opacity: .55; }
+.steps td.out { word-break: break-word; }
+footer { color: var(--muted); font-size: 12px; max-width: 1400px; margin: 0 auto; padding: 0 16px 30px; }
+.empty { padding: 30px; color: var(--muted); }
+@media (max-width: 600px) {
+  td.name { min-width: 170px; max-width: 200px; padding: 6px 8px; }
+  td.name .desc { display: none; }
+  .stat { min-width: 0; flex: 1 1 40%; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>poolproof results</h1>
+  <p class="lede">Each scenario runs against plain Postgres, then through the pooler. A cell fails when the pooler's
+    result differs from Postgres. <b>Silent</b> failures are the dangerous kind: the application gets a wrong
+    result and no error. Click a cell for the full trace.</p>
+  <div class="stats" id="stats"></div>
+  <div class="controls">
+    <span class="seg" id="pg" role="group" aria-label="Postgres version"></span>
+    <span id="products"></span>
+    <label><input type="checkbox" id="diffonly"> Only scenarios with failures</label>
+    <input type="search" id="q" placeholder="Filter scenarios" aria-label="Filter scenarios">
+  </div>
+  <div class="legend">
+    <span><i class="pass"></i>pass</span>
+    <span><i class="silent"></i>silent: wrong result, no error</span>
+    <span><i class="error"></i>error: pooler refused</span>
+    <span><i class="hang"></i>hang: no reply</span>
+    <span><i class="skip"></i>skipped / not run</span>
+  </div>
+</header>
+<main><div class="scroll" id="grid"></div></main>
+<footer id="foot"></footer>
+<dialog id="dlg" aria-labelledby="dlg-title"></dialog>
+
+<script id="data" type="application/json">/*POOLPROOF_DATA*/</script>
+<script>
+(() => {
+  const reports = JSON.parse(document.getElementById("data").textContent);
+  const el = (tag, attrs = {}, ...kids) => {
+    const e = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) {
+      if (k === "class") e.className = v; else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+      else e.setAttribute(k, v);
+    }
+    for (const kid of kids.flat()) if (kid != null) e.append(kid);
+    return e;
+  };
+
+  // One column per target per report. Results are looked up by report and target.
+  const cols = [];
+  reports.forEach((r, ri) => r.targets.forEach(t => cols.push({
+    ri, t, key: ri + "/" + t.name,
+    product: t.product || t.name, pg: t.postgres || "?",
+    label: [t.version || t.name, t.config && t.config !== "default" ? t.config : null].filter(Boolean).join(" "),
+  })));
+  const results = new Map();
+  reports.forEach((r, ri) => r.results.forEach(x => results.set(ri + "/" + x.target + "/" + x.scenario, x)));
+  const scenarios = [...new Map(reports.flatMap(r => r.scenarios).map(s => [s.name, s])).values()]
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const pgs = [...new Set(cols.map(c => c.pg))].sort(cmpVersion);
+  const brand = { pgbouncer: "PgBouncer", pgdog: "PgDog", supavisor: "Supavisor", pgcat: "PgCat", odyssey: "Odyssey" };
+  const productName = p => brand[p] || p;
+  const products = [...new Set(cols.map(c => c.product))];
+
+  function cmpVersion(a, b) {
+    const pa = String(a).split(/[.-]/), pb = String(b).split(/[.-]/);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+      const x = pa[i], y = pb[i];
+      if (x === undefined) return 1;   // 2.10.0 sorts after 2.10.0-rc.1
+      if (y === undefined) return -1;
+      const nx = +x, ny = +y;
+      if (!isNaN(nx) && !isNaN(ny)) { if (nx !== ny) return nx - ny; }
+      else if (x !== y) return x < y ? -1 : 1;
+    }
+    return 0;
+  }
+  const state = (x) => !x ? "none" : x.result === "fail" ? x.mismatch.kind : x.result;
+  const symbol = { pass: "✓", silent: "✕", error: "!", hang: "⏱", skip: "–", none: "·", error_run: "?" };
+  const word = { pass: "pass", silent: "silent failure", error: "pooler error", hang: "no reply", skip: "skipped", none: "not run" };
+
+  // Where a scenario's result changes between consecutive versions of one product,
+  // for the same config and Postgres version.
+  function versionNotes(s) {
+    const notes = [];
+    const groups = new Map();
+    for (const c of cols) {
+      if (!c.t.version) continue;
+      const k = c.product + "|" + (c.t.config || "") + "|" + c.pg;
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(c);
+    }
+    const seen = new Set();
+    for (const group of groups.values()) {
+      group.sort((a, b) => cmpVersion(a.t.version, b.t.version));
+      for (let i = 1; i < group.length; i++) {
+        const before = state(results.get(group[i - 1].key + "/" + s.name));
+        const after = state(results.get(group[i].key + "/" + s.name));
+        const ok = v => v === "pass", bad = v => ["silent", "error", "hang"].includes(v);
+        let text = null, cls = null;
+        const who = productName(group[i].product);
+        if (ok(before) && bad(after)) { text = `${who}: broke in ${group[i].t.version}`; cls = "broke"; }
+        if (bad(before) && ok(after)) { text = `${who}: fixed in ${group[i].t.version}`; cls = "fixed"; }
+        if (text && !seen.has(text)) { seen.add(text); notes.push(el("span", { class: "note " + cls }, text)); }
+      }
+    }
+    return notes;
+  }
+
+  // Controls
+  let pgSel = pgs.length > 1 ? pgs[pgs.length - 1] : "all";
+  const pgBox = document.getElementById("pg");
+  const pgOptions = pgs.length > 1 ? [...pgs, "all"] : [];
+  for (const v of pgOptions) {
+    pgBox.append(el("button", { type: "button", "aria-pressed": String(v === pgSel), onclick: () => {
+      pgSel = v; for (const b of pgBox.children) b.setAttribute("aria-pressed", String(b.dataset.v === v)); render();
+    }, "data-v": v }, v === "all" ? "All Postgres" : "Postgres " + v));
+  }
+  if (!pgOptions.length) pgBox.remove();
+  const productOn = new Set(products);
+  const pbox = document.getElementById("products");
+  for (const p of products) {
+    const cb = el("input", { type: "checkbox", checked: "", onchange: e => { e.target.checked ? productOn.add(p) : productOn.delete(p); render(); } });
+    pbox.append(el("label", {}, cb, productName(p)), " ");
+  }
+  document.getElementById("diffonly").addEventListener("change", render);
+  document.getElementById("q").addEventListener("input", render);
+
+  function render() {
+    const visible = cols.filter(c => productOn.has(c.product) && (pgSel === "all" || c.pg === pgSel));
+    const q = document.getElementById("q").value.trim().toLowerCase();
+    const diffOnly = document.getElementById("diffonly").checked;
+    const rows = scenarios.filter(s => (!q || (s.name + " " + s.description).toLowerCase().includes(q)) &&
+      (!diffOnly || visible.some(c => ["silent", "error", "hang"].includes(state(results.get(c.key + "/" + s.name))))));
+
+    // Stats for what is on screen.
+    const all = visible.flatMap(c => rows.map(s => state(results.get(c.key + "/" + s.name))));
+    const count = k => all.filter(v => v === k).length;
+    const stats = document.getElementById("stats");
+    stats.replaceChildren(
+      el("div", { class: "stat" }, el("b", {}, String(rows.length)), el("span", {}, "scenarios")),
+      el("div", { class: "stat" }, el("b", {}, String(visible.length)), el("span", {}, "pooler configurations")),
+      el("div", { class: "stat" }, el("b", { style: "color:var(--silent)" }, String(count("silent"))), el("span", {}, "silent failures")),
+      el("div", { class: "stat" }, el("b", {}, String(count("error") + count("hang"))), el("span", {}, "errors and hangs")),
+      el("div", { class: "stat" }, el("b", {}, String(count("pass"))), el("span", {}, "passes")),
+    );
+
+    const grid = document.getElementById("grid");
+    if (!visible.length || !rows.length) { grid.replaceChildren(el("div", { class: "empty" }, "Nothing matches these filters.")); return; }
+
+    // Two header rows: product, then version / config / Postgres.
+    const head1 = el("tr", {}, el("th", { class: "corner", rowspan: "2" }, "Scenario"));
+    const head2 = el("tr");
+    let prev = null;
+    visible.forEach((c, i) => {
+      const first = c.product !== prev;
+      if (first) head1.append(el("th", { class: "product", colspan: String(visible.filter(x => x.product === c.product).length) }, productName(c.product)));
+      prev = c.product;
+      c.first = first;
+      const pgLabel = pgSel === "all" && pgs.length > 1 ? " · pg " + c.pg : "";
+      head2.append(el("th", { class: "col" + (first ? " first" : ""), title: c.t.name + " on Postgres " + c.pg }, el("div", {}, c.label + pgLabel)));
+    });
+
+    const body = el("tbody");
+    for (const s of rows) {
+      const tr = el("tr", {}, el("td", { class: "name" },
+        el("div", { class: "mono" }, s.name), el("div", { class: "desc" }, s.description),
+        el("div", { class: "notes" }, versionNotes(s))));
+      for (const c of visible) {
+        const x = results.get(c.key + "/" + s.name);
+        let st = state(x);
+        const cls = x && x.result === "error" ? "skip" : st;
+        const sym = x && x.result === "error" ? symbol.error_run : symbol[st];
+        const label = `${s.name} on ${c.t.name}, Postgres ${c.pg}: ${x && x.result === "error" ? "could not run" : word[st]}`;
+        tr.append(el("td", { class: "cell" + (c.first ? " first" : "") },
+          el("button", { class: "chip " + cls, title: label, "aria-label": label, onclick: () => x && show(s, c, x) }, sym)));
+      }
+      body.append(tr);
+    }
+    const foot = el("tr", {}, el("td", { class: "name" }, "Silent failures"));
+    for (const c of visible) {
+      const n = rows.filter(s => state(results.get(c.key + "/" + s.name)) === "silent").length;
+      foot.append(el("td", {}, n ? el("b", {}, String(n)) : "0"));
+    }
+    grid.replaceChildren(el("table", {}, el("thead", {}, head1, head2), body, el("tfoot", {}, foot)));
+  }
+
+  function outcome(o) {
+    if (!o) return "";
+    if (o.status === "abandoned") return "abandoned (connection dropped)";
+    if (o.status === "error") return `error ${o.code}: ${o.message}`;
+    const rows = o.rows.map(r => "(" + r.map(v => v === null ? "NULL" : JSON.stringify(v)).join(", ") + ")").join(" ");
+    return `ok${rows ? " " + rows : ""}${o.tags.length ? "  tags " + o.tags.join(",") : ""}`;
+  }
+
+  const dlg = document.getElementById("dlg");
+  function show(s, c, x) {
+    const st = state(x);
+    const failStep = x.result === "fail" ? x.mismatch.step : null;
+    const head = el("div", { class: "dlg-head" },
+      el("div", {},
+        el("h2", { id: "dlg-title" }, el("span", { class: "mono" }, s.name)),
+        el("p", {}, `${c.t.name} · Postgres ${c.pg} · `,
+          el("span", { class: "badge " + (x.result === "error" ? "skip" : st) }, x.result === "error" ? "could not run" : word[st]))),
+      el("button", { class: "close", "aria-label": "Close", onclick: () => dlg.close() }, "×"));
+    const body = el("div", { class: "dlg-body" }, el("p", {}, s.description));
+    if (s.refs.length) body.append(el("p", {}, "From: ", s.refs.flatMap((r, i) => [i ? ", " : null, el("a", { href: r, target: "_blank", rel: "noopener" }, r.replace("https://github.com/", ""))])));
+    if (x.result === "error") body.append(el("p", { class: "mono" }, x.reason));
+    if (x.result === "skip") body.append(el("p", {}, x.reason));
+    if (x.steps.length) {
+      const t = el("table", { class: "steps" }, el("thead", {}, el("tr", {}, el("th", {}, "#"), el("th", {}, "Step"), el("th", {}, "Postgres"), el("th", {}, "Through the pooler"))));
+      const tb = el("tbody");
+      s.steps.forEach((step, i) => {
+        const o = x.steps[i] || {};
+        const cls = failStep === i + 1 ? "diff" : failStep && i + 1 > failStep ? "after" : "";
+        tb.append(el("tr", { class: cls }, el("td", {}, String(i + 1)), el("td", { class: "mono" }, step),
+          el("td", { class: "mono out" }, outcome(o.postgres)), el("td", { class: "mono out" }, outcome(o.pooler))));
+      });
+      t.append(tb);
+      body.append(t);
+      if (failStep) body.append(el("p", { class: "desc", style: "color:var(--muted);font-size:12px" }, `The first difference is at step ${failStep}. Later steps are shown dimmed; they ran on state that already differed.`));
+    }
+    dlg.replaceChildren(head, body);
+    if (!dlg.open) dlg.showModal();
+    history.replaceState(null, "", "#" + [s.name, c.t.name, c.pg].map(encodeURIComponent).join("/"));
+  }
+  dlg.addEventListener("click", e => { if (e.target === dlg) dlg.close(); });
+  dlg.addEventListener("close", () => history.replaceState(null, "", location.pathname + location.search));
+
+  // #scenario/target/postgres opens that cell, so a finding can be linked directly.
+  function openFromHash() {
+    const [sn, tn, pg] = location.hash.slice(1).split("/").map(decodeURIComponent);
+    const s = scenarios.find(x => x.name === sn);
+    const c = cols.find(x => x.t.name === tn && (!pg || x.pg === pg));
+    const x = s && c && results.get(c.key + "/" + s.name);
+    if (x) show(s, c, x);
+  }
+
+  const versions = [...new Set(reports.map(r => r.poolproof))].join(", ");
+  document.getElementById("foot").append("Generated by poolproof ", versions, ". Postgres ", pgs.join(", "), ". ",
+    el("a", { href: "https://github.com/Nihal-Pandey-2302/poolproof" }, "Source and scenarios"), ".");
+  render();
+  openFromHash();
+  addEventListener("hashchange", openFromHash);
+})();
+</script>
+</body>
+</html>

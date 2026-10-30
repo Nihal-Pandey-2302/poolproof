@@ -1,0 +1,21 @@
+{
+  "tenant": {
+    "db_host": "postgres",
+    "db_port": 5432,
+    "db_database": "app",
+    "ip_version": "auto",
+    "enforce_ssl": false,
+    "require_user": true,
+    "default_pool_size": 1,
+    "users": [
+      {
+        "db_user": "postgres",
+        "db_password": "postgres",
+        "pool_size": 1,
+        "mode_type": "transaction",
+        "is_manager": true
+      }
+    ],
+    "txn_mode_leak_action": "error"
+  }
+}

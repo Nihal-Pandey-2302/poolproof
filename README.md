@@ -26,44 +26,50 @@ cargo install --git https://github.com/Nihal-Pandey-2302/poolproof
 Or download a binary for Linux or macOS (x86_64 and arm64) from the releases page. The
 scenarios are built into the binary.
 
-## Example
+## Results
 
-[RESULTS.md](RESULTS.md) has the full table for PgBouncer, PgDog and Supavisor, regenerated
-by CI.
+**[Results site](https://nihal-pandey-2302.github.io/poolproof/)**: every scenario against
+PgBouncer 1.24 to 1.26, PgDog 0.1.50 to 0.1.62 and Supavisor 2.9 and 2.10, on Postgres 17
+and 18, with the full step-by-step trace for each cell. It also marks the version where a
+behavior broke or got fixed. [RESULTS.md](RESULTS.md) has the same data as a table. CI
+regenerates both.
+
+A failure is one of three kinds:
+
+- **silent**: the pooler returned a result, but not the one Postgres returned. The
+  application gets wrong data and no error. These are the dangerous ones.
+- **error**: the pooler refused with an error where Postgres didn't. Loud, so you notice.
+- **hang**: no reply within 10 seconds.
 
 ```
-$ poolproof run
-FAIL  pgdog-0.1.62-txn         multi-statement-begin
+$ poolproof run --filter multi-statement
+FAIL  pgdog-0.1.62             multi-statement-begin (silent)
       A simple query that starts with BEGIN must run every statement in the string.
       step 1: [app] simple: BEGIN; INSERT INTO pp_multi VALUES (1); COMMIT
       postgres: ok rows=[] tags=[0, 1, 0]
       pooler:   ok rows=[] tags=[0]
       from https://github.com/pgdogdev/pgdog/issues/1849
-PASS  pgdog-0.1.62-txn         set-isolated-between-clients
-FAIL  pgbouncer-1.26-txn       set-isolated-between-clients
-      A plain SET from one client must not change the setting another client sees.
-      step 3: [a] simple: SHOW work_mem
-      postgres: ok rows=[(7MB)] tags=[0]
-      pooler:   ok rows=[(9MB)] tags=[0]
 ```
 
 ```
 $ poolproof scan queries.csv
-BREAKS  session-advisory-lock  calls=48211    SELECT pg_advisory_lock($1)
+BREAKS  session-advisory-lock       calls=48211    SELECT pg_advisory_lock($1)
         pg_advisory_lock() holds the lock for the whole session. ...
-WARN    session-set            calls=1022     SET search_path TO app
+WARN    session-set                 calls=1022     SET search_path TO app
         SET/RESET of `search_path` outside SET LOCAL lasts for the session. ...
 ```
 
 ## Try it locally
 
 ```sh
-docker compose -f docker/compose.yml up -d --wait   # Postgres 17 + PgBouncer, PgDog, Supavisor
+docker compose -f docker/compose.yml up -d --wait   # Postgres + 10 pooler configurations
 cargo run -- run
 ```
 
 Each pooler in the test bed has a pool of one server connection, so leaks between clients
-happen every time instead of by luck.
+happen every time instead of by luck. `POSTGRES_IMAGE=postgres:18.4` picks the server
+version. `scripts/update-results.sh` rebuilds `results/` and `RESULTS.md` for Postgres 17
+and 18 from a fresh test bed.
 
 To test your own pooler, point poolproof at it and at the Postgres server behind it:
 
@@ -85,6 +91,10 @@ mode = "transaction"
 # one's result. This terminates every other session on the database.
 reset = ["SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'"]
 ```
+
+To share the outcome with your team, `--format html` writes one self-contained page with
+the grid and every step's trace. `--format json` saves the raw results;
+`poolproof report a.json b.json --format html` (or `markdown`) combines saved runs.
 
 Scenarios create and drop their own objects (prefixed `pp_`), so use a scratch database.
 That matters even more with `reset`, which kills every session on it. Without `reset`,
