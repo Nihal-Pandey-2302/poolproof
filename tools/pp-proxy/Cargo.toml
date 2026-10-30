@@ -1,0 +1,17 @@
+[package]
+name = "pp-proxy"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Self-test targets for poolproof: a passthrough proxy and a proxy with switchable faults"
+
+# Not part of the poolproof package or workspace.
+[workspace]
+
+[dependencies]
+bytes = "1.12.1"
+postgres-protocol = "0.6.12"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "time", "net", "io-util", "sync"] }
+toml = "1.1.8"
