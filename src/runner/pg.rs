@@ -348,8 +348,8 @@ pub(super) async fn wait_ready(endpoint: &Endpoint, t: &Timeouts) -> Result<bool
                 }
                 match res {
                     Ok(Settle::Stable) => return Ok(true),
-                    Ok(Settle::Unstable) if skip_settle => return Ok(false),
-                    Ok(Settle::Unstable) => {
+                    Ok(Settle::Unstable) => return Ok(false),
+                    Ok(Settle::Rotating) => {
                         eprintln!("note: pooler {endpoint} rotates server connections; settle skipped from now on");
                         ROTATING
                             .lock()
@@ -375,16 +375,19 @@ pub(super) async fn wait_ready(endpoint: &Endpoint, t: &Timeouts) -> Result<bool
     }
 }
 
-/// Poolers (by endpoint) whose backend pid never settled; see `settle`. A pooler that
-/// stopped answering the probes once lands here too: settling is best effort.
+/// Poolers (by endpoint) that answered from SETTLE_PROBES different backends without
+/// settling; see `settle`. A pooler that was only slow isn't added: Supavisor 2.10
+/// sometimes needs more than SETTLE_MAX to replace its server connection.
 static ROTATING: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 enum Settle {
     /// The same backend answered SETTLE_PROBES times in a row.
     Stable,
-    /// Different backends kept answering (a pool with several server connections), or
-    /// the time ran out.
+    /// The time ran out before the pid settled.
     Unstable,
+    /// At least SETTLE_PROBES different backends answered and none settled: a pool
+    /// with several server connections, not worth settling again.
+    Rotating,
     /// A probe failed: the server connection went away under us.
     Broken,
 }
@@ -403,6 +406,7 @@ async fn settle(client: &Client, t: &Timeouts) -> Settle {
     let deadline = tokio::time::Instant::now() + SETTLE_MAX;
     let mut last = None;
     let mut same = 0;
+    let mut seen = std::collections::HashSet::new();
     while tokio::time::Instant::now() < deadline {
         // Each probe ends by the overall deadline too, so settling never takes longer.
         // TODO(#26): t.housekeeping once Timeouts has it.
@@ -419,10 +423,15 @@ async fn settle(client: &Client, t: &Timeouts) -> Settle {
         if same >= SETTLE_PROBES {
             return Settle::Stable;
         }
+        seen.extend(pid.clone());
         last = pid;
         tokio::time::sleep(SETTLE_GAP).await;
     }
-    Settle::Unstable
+    if seen.len() >= SETTLE_PROBES {
+        Settle::Rotating
+    } else {
+        Settle::Unstable
+    }
 }
 
 #[cfg(test)]
@@ -440,7 +449,7 @@ mod tests {
 
     /// A pooler stand-in: accepts any login, answers SELECT 1, and answers
     /// `SELECT pg_backend_pid()` as `pid(n)` says, counting over all connections.
-    async fn pooler_with_pids(pid: fn(usize) -> Pid) -> Endpoint {
+    async fn pooler_with_pids(name: &str, pid: fn(usize) -> Pid) -> Endpoint {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         fn message(tag: u8, body: &[u8]) -> Vec<u8> {
             [&[tag][..], &(body.len() as u32 + 4).to_be_bytes(), body].concat()
@@ -499,18 +508,19 @@ mod tests {
                 });
             }
         });
-        Endpoint::parse(&format!("postgres://u@127.0.0.1:{port}/db?sslmode=disable")).unwrap()
+        // A dbname per test: ports can repeat across tests, and the skip list is by endpoint.
+        Endpoint::parse(&format!("postgres://u@127.0.0.1:{port}/{name}?sslmode=disable")).unwrap()
     }
 
     #[tokio::test]
     async fn ready_waits_until_the_same_backend_answers() {
         let t = Timeouts::default();
         // The pooler swaps its server connection twice, then keeps one.
-        let settling = pooler_with_pids(|n| Pid::Is(n.min(3)));
+        let settling = pooler_with_pids("settling", |n| Pid::Is(n.min(3)));
         assert!(wait_ready(&settling.await, &t).await.unwrap());
         // A new backend every time, as with a larger pool: give up, but don't fail,
         // and don't try again for this pooler.
-        let rotating = pooler_with_pids(Pid::Is).await;
+        let rotating = pooler_with_pids("rotating", Pid::Is).await;
         let started = tokio::time::Instant::now();
         assert!(!wait_ready(&rotating, &t).await.unwrap());
         assert!(started.elapsed() >= SETTLE_MAX);
@@ -524,7 +534,7 @@ mod tests {
 
     #[tokio::test]
     async fn settling_never_takes_longer_than_its_limit() {
-        let hangs = pooler_with_pids(|n| if n == 1 { Pid::Is(1) } else { Pid::Hang }).await;
+        let hangs = pooler_with_pids("hangs", |n| if n == 1 { Pid::Is(1) } else { Pid::Hang }).await;
         let started = tokio::time::Instant::now();
         assert!(!wait_ready(&hangs, &Timeouts::default()).await.unwrap());
         assert!(
@@ -532,13 +542,15 @@ mod tests {
             "{:?}",
             started.elapsed()
         );
+        // Only slow, not rotating: it gets another chance next time.
+        assert!(!ROTATING.lock().unwrap().contains(&hangs.to_string()));
     }
 
     #[tokio::test]
     async fn a_connection_dropped_while_settling_is_retried() {
         // The second pid query loses the connection (Supavisor swapping its backend);
         // the next connection settles.
-        let swaps = pooler_with_pids(|n| if n == 2 { Pid::Close } else { Pid::Is(7) }).await;
+        let swaps = pooler_with_pids("swaps", |n| if n == 2 { Pid::Close } else { Pid::Is(7) }).await;
         assert!(wait_ready(&swaps, &Timeouts::default()).await.unwrap());
     }
 
