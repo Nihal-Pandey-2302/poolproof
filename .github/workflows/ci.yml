@@ -70,13 +70,31 @@ jobs:
             .
             tools/pp-proxy
 
-      - name: Start Postgres and the self-test proxies
-        run: docker compose -f docker/compose.yml --profile selftest up -d --wait --wait-timeout 300 postgres pp-proxy
+      - name: Start Postgres
+        run: docker compose -f docker/compose.yml up -d --wait --wait-timeout 300 postgres
+
+      - name: Build
+        run: |
+          cargo build
+          (cd tools/pp-proxy && cargo build --locked)
+
+      # Built here rather than in Docker: no Rust image pull, and rust-cache applies.
+      # Same listeners as the pp-proxy service in docker/compose.yml, on the host ports.
+      - name: Start the self-test proxies
+        env:
+          PROXY_UPSTREAM: 127.0.0.1:55432
+          PROXY_USER: postgres
+          PROXY_PASSWORD: postgres
+          PROXY_DATABASE: app
+          PROXY_LISTEN: 56471=none,56472=drop-pipelined,56473=swallow-error,56474=no-copydone,56475=wrong-tag,56476=shared-server
+        run: |
+          nohup tools/pp-proxy/target/debug/pp-proxy > pp-proxy.log 2>&1 &
+          for _ in $(seq 50); do (exec 3<>/dev/tcp/127.0.0.1/56476) 2>/dev/null && exit 0; sleep 0.1; done
+          cat pp-proxy.log
+          exit 1
 
       - name: Run the self-test
         run: |
-          cargo build
-          (cd tools/pp-proxy && cargo build --locked --bin pp-selftest-check)
           # Exit 1 means some scenario failed, which is expected here; 2 means poolproof broke.
           set +e
           ./target/debug/poolproof run --targets selftest/targets.toml --format json > selftest.json
@@ -91,9 +109,9 @@ jobs:
           name: selftest
           path: selftest.json
 
-      - name: Proxy logs
+      - name: Proxy log
         if: failure()
-        run: docker compose -f docker/compose.yml --profile selftest logs pp-proxy
+        run: cat pp-proxy.log
 
   # Advisories, licenses, banned crates and sources (deny.toml).
   deny:
