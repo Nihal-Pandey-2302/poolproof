@@ -11,9 +11,24 @@ use super::raw::{ExchangeOpts, RawConn};
 use super::{Outcome, Timeouts};
 use crate::scenario::{Action, Scenario};
 
+/// Every client connects either straight to Postgres or through the pooler, never
+/// both, so all of a client's steps must agree on `direct`.
+fn check_clients(scenario: &Scenario) -> Result<()> {
+    let mut direct: HashMap<&str, bool> = HashMap::new();
+    for step in &scenario.steps {
+        if *direct.entry(&step.client).or_insert(step.direct) != step.direct {
+            bail!("client '{}' mixes direct and pooled steps", step.client);
+        }
+    }
+    Ok(())
+}
+
 /// Run a scenario's steps. `pooled` is where normal clients connect; `direct` is
 /// plain Postgres. For the baseline run both are the same URL.
 pub async fn run_steps(scenario: &Scenario, pooled: &str, direct: &str, t: &Timeouts) -> Result<Vec<Outcome>> {
+    check_clients(scenario)?;
+    // In the baseline every client is on Postgres.
+    let on_postgres = |step_direct: bool| step_direct || pooled == direct;
     let mut conns: HashMap<&str, Conn> = HashMap::new();
     let mut outcomes = Vec::with_capacity(scenario.steps.len());
 
@@ -59,9 +74,8 @@ pub async fn run_steps(scenario: &Scenario, pooled: &str, direct: &str, t: &Time
                 Action::Disconnect => {
                     if let Some(conn) = raw.remove(step.client.as_str()) {
                         let pid = conn.pid;
-                        let was_direct = conn.url == direct;
                         conn.terminate().await;
-                        if let (true, Some(pid)) = (was_direct, pid) {
+                        if let (true, Some(pid)) = (on_postgres(step.direct), pid) {
                             wait_backend_gone(direct, pid, t).await;
                         }
                     }
@@ -89,7 +103,6 @@ pub async fn run_steps(scenario: &Scenario, pooled: &str, direct: &str, t: &Time
                         Conn {
                             client: Arc::new(client),
                             driver,
-                            direct: step.direct,
                             statements: HashMap::new(),
                             pending: None,
                             notices,
@@ -106,9 +119,6 @@ pub async fn run_steps(scenario: &Scenario, pooled: &str, direct: &str, t: &Time
         let Some(conn) = conns.get_mut(step.client.as_str()) else {
             bail!("client '{}' is not connected", step.client);
         };
-        if conn.direct != step.direct {
-            bail!("client '{}' mixes direct and pooled steps", step.client);
-        }
         if let Some(ms) = step.delay_ms {
             tokio::time::sleep(Duration::from_millis(ms)).await;
         }
@@ -226,4 +236,40 @@ pub async fn run_steps(scenario: &Scenario, pooled: &str, direct: &str, t: &Time
         conn.terminate().await;
     }
     Ok(outcomes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bundled_scenarios_keep_clients_on_one_side() {
+        for scenario in crate::scenario::bundled().unwrap() {
+            check_clients(&scenario).unwrap_or_else(|e| panic!("{}: {e}", scenario.name));
+        }
+    }
+
+    #[tokio::test]
+    async fn send_client_cannot_mix_direct_and_pooled() {
+        let scenario: Scenario = toml::from_str(
+            r#"
+            name = "mixed"
+            description = ""
+            [[step]]
+            client = "a"
+            send = ["sync"]
+            [[step]]
+            client = "a"
+            direct = true
+            send = ["sync"]
+            "#,
+        )
+        .unwrap();
+        // Rejected before connecting, so the unreachable URLs are never used.
+        let url = "postgres://u@127.0.0.1:1/db";
+        let err = run_steps(&scenario, url, "postgres://u@127.0.0.1:2/db", &Timeouts::default())
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("mixes direct and pooled"), "{err}");
+    }
 }

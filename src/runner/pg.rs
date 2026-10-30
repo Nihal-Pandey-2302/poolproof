@@ -15,7 +15,6 @@ pub(super) type Notices = Arc<Mutex<Vec<Vec<Option<String>>>>>;
 pub(super) struct Conn {
     pub(super) client: Arc<Client>,
     pub(super) driver: JoinHandle<()>,
-    pub(super) direct: bool,
     pub(super) statements: HashMap<String, Statement>,
     /// The query started by a `background` step, if not yet waited for.
     pub(super) pending: Option<JoinHandle<Outcome>>,

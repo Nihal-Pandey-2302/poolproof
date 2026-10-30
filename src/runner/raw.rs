@@ -172,7 +172,6 @@ enum Next {
 pub struct RawConn {
     stream: TcpStream,
     buf: BytesMut,
-    pub url: String,
     /// From BackendKeyData: the backend pid, or the pooler's stand-in for it.
     pub pid: Option<i32>,
 }
@@ -195,7 +194,6 @@ impl RawConn {
         let mut conn = RawConn {
             stream,
             buf: BytesMut::new(),
-            url: url.to_string(),
             pid: None,
         };
         let mut out = BytesMut::new();
