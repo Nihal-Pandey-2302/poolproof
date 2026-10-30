@@ -9,8 +9,9 @@ readme = "README.md"
 rust-version = "1.88"
 keywords = ["postgres", "pgbouncer", "connection-pool", "testing", "pooler"]
 categories = ["command-line-utilities", "database", "development-tools::testing"]
-# The test bed and CI files are for this repo, not for `cargo install`.
-exclude = [".github/", "docker/", "results/", "scripts/", "RESULTS.md", "targets.toml"]
+# The test bed and CI files are for this repo, not for `cargo install`. results/ stays:
+# `scan --pooler` reads it.
+exclude = [".github/", "docker/", "scripts/", "RESULTS.md", "targets.toml"]
 
 [dependencies]
 anyhow = "1.0.104"

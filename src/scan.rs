@@ -25,6 +25,32 @@ pub struct Finding {
     pub calls: u64,
     /// Line in the input where the query first appears.
     pub line: usize,
+    /// poolproof scenarios that test this pattern, so `--pooler` can show what a
+    /// given pooler actually does with it.
+    pub scenarios: Vec<&'static str>,
+    /// What those scenarios showed on the pooler given with `--pooler`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub on_pooler: Option<PoolerCheck>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PoolerCheck {
+    pub target: String,
+    pub postgres: Option<String>,
+    pub status: PoolerStatus,
+    /// Each related scenario and its result there: pass, silent, error, hang.
+    pub scenarios: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PoolerStatus {
+    /// A related scenario fails silently: wrong results, no error.
+    Breaks,
+    /// The pooler refuses the pattern with an error (or hangs), so it fails loudly.
+    Rejected,
+    /// The pooler passes every related scenario.
+    Ok,
 }
 
 /// A query from the input, with how often it ran and where it first appears.
@@ -33,6 +59,22 @@ pub struct Query {
     pub text: String,
     pub calls: u64,
     pub line: usize,
+}
+
+/// Scenarios that exercise each rule. `session-set` is refined by parameter below.
+fn scenarios_for(rule: &str) -> Vec<&'static str> {
+    match rule {
+        "session-advisory-lock" => vec!["advisory-lock-released-on-disconnect"],
+        "session-set-config" => vec!["empty-search-path-from-set-config", "set-isolated-between-clients"],
+        "session-set" => vec!["set-isolated-between-clients", "set-does-not-leak-after-disconnect"],
+        "listen" => vec!["listen-notify-delivered"],
+        "temp-table" => vec!["temp-table-isolated-between-clients"],
+        "with-hold-cursor" => vec!["cursor-isolated-between-clients"],
+        "sql-prepare" => vec!["sql-prepare-isolated-between-clients"],
+        "discard" => vec!["discard-all-resets-settings"],
+        "multi-statement-transaction" => vec!["multi-statement-begin"],
+        _ => vec![],
+    }
 }
 
 /// Every rule with a one-line summary, for SARIF output.
@@ -173,8 +215,21 @@ pub fn scan(queries: &[Query]) -> Report {
             unparsed += 1;
             continue;
         };
+        let first = findings.len();
+        // Per session-set finding: scenarios specific to the parameter, if any.
+        let mut set_scenarios: Vec<Option<Vec<&'static str>>> = Vec::new();
         let mut push = |rule, severity, detail: String| {
-            findings.push(Finding { rule, severity, detail, query: query.to_string(), calls: *calls, line: *line });
+            let scenarios = scenarios_for(rule);
+            findings.push(Finding {
+                rule,
+                severity,
+                detail,
+                query: query.to_string(),
+                calls: *calls,
+                line: *line,
+                scenarios,
+                on_pooler: None,
+            });
         };
 
         let starts_transaction = parsed.protobuf.stmts.first().is_some_and(|raw| {
@@ -236,6 +291,14 @@ pub fn scan(queries: &[Query]) -> Report {
                                  to whoever gets the server connection next."
                             ),
                         );
+                        let refined = match target {
+                            "role" | "session_authorization" => {
+                                Some(vec!["set-role-isolated-between-clients", "set-role-reset-after-pinned-disconnect"])
+                            }
+                            "search_path" => Some(vec!["search-path-isolated-between-clients"]),
+                            _ => None,
+                        };
+                        set_scenarios.push(refined);
                     }
                 }
                 NodeEnum::ListenStmt(listen) => push(
@@ -324,6 +387,12 @@ pub fn scan(queries: &[Query]) -> Report {
                 _ => {}
             }
         }
+        let sets = findings[first..].iter_mut().filter(|f| f.rule == "session-set");
+        for (finding, scenarios) in sets.zip(set_scenarios) {
+            if let Some(scenarios) = scenarios {
+                finding.scenarios = scenarios;
+            }
+        }
     }
 
     findings.sort_by(|a, b| b.severity.cmp(&a.severity).then(b.calls.cmp(&a.calls)));
@@ -401,6 +470,22 @@ mod tests {
         assert_eq!(report.findings.len(), 1);
         assert_eq!(report.findings[0].calls, 5);
         assert_eq!(report.findings[0].line, 1);
+    }
+
+    #[test]
+    fn findings_point_to_scenarios() {
+        let scenarios = |sql: &str| scan(&[query(sql, 1)]).findings[0].scenarios.clone();
+        assert_eq!(scenarios("SET work_mem = '1MB'"), vec!["set-isolated-between-clients", "set-does-not-leak-after-disconnect"]);
+        assert_eq!(scenarios("SET search_path TO app"), vec!["search-path-isolated-between-clients"]);
+        assert_eq!(scenarios("SET ROLE r"), vec!["set-role-isolated-between-clients", "set-role-reset-after-pinned-disconnect"]);
+        assert_eq!(scenarios("LISTEN a"), vec!["listen-notify-delivered"]);
+        // Every scenario a rule points to must exist.
+        let names: Vec<String> = crate::scenario::bundled().unwrap().into_iter().map(|s| s.name).collect();
+        for (rule, _) in RULES {
+            for s in scenarios_for(rule) {
+                assert!(names.iter().any(|n| n == s), "{rule} points to missing scenario {s}");
+            }
+        }
     }
 
     #[test]

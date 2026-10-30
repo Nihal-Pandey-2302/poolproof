@@ -63,6 +63,17 @@ enum Command {
         /// Exit non-zero on warnings too, not just on queries that break.
         #[arg(long)]
         strict: bool,
+        /// Check each finding against what this pooler actually does, using poolproof's
+        /// own results (e.g. `pgbouncer-1.26.1`), or a target in --results.
+        #[arg(long)]
+        pooler: Option<String>,
+        /// With --pooler: the Postgres version to use results for. Defaults to the newest.
+        #[arg(long, requires = "pooler")]
+        postgres: Option<String>,
+        /// With --pooler: a saved `run --format json` report to use instead of the
+        /// built-in results, e.g. from a run against your own setup.
+        #[arg(long, requires = "pooler")]
+        results: Option<PathBuf>,
     },
     /// Render saved `run --format json` reports, e.g. one per Postgres version, as
     /// one table.
@@ -259,18 +270,37 @@ async fn run(cli: Cli) -> Result<ExitCode> {
             }
             Ok(if failed + errors > 0 { ExitCode::FAILURE } else { ExitCode::SUCCESS })
         }
-        Command::Scan { input, format, strict } => {
+        Command::Scan { input, format, strict, pooler, postgres, results } => {
             let queries = scan::load_queries(&input)?;
-            let report = scan::scan(&queries);
+            let mut report = scan::scan(&queries);
+            if let Some(pooler) = &pooler {
+                let reports = match &results {
+                    Some(path) => vec![report::Report::load(path)?],
+                    None => report::bundled()?,
+                };
+                let (results, target) = report::find_target(&reports, pooler, postgres.as_deref())?;
+                for finding in &mut report.findings {
+                    finding.on_pooler = report::check_finding(results, target, &finding.scenarios);
+                }
+                // Proven problems first. Findings without results keep their place after them.
+                let rank = |f: &scan::Finding| match f.on_pooler.as_ref().map(|c| c.status) {
+                    Some(scan::PoolerStatus::Breaks) => 0,
+                    Some(scan::PoolerStatus::Rejected) => 1,
+                    None => 2,
+                    Some(scan::PoolerStatus::Ok) => 3,
+                };
+                report.findings.sort_by_key(rank);
+            }
             match format {
                 ScanFormat::Json => println!("{}", serde_json::to_string_pretty(&report.findings)?),
                 ScanFormat::Sarif => println!("{}", serde_json::to_string_pretty(&sarif(&report, &input))?),
                 ScanFormat::Text => print_scan(&report),
             }
-            let failing = report
-                .findings
-                .iter()
-                .any(|f| strict || f.severity == scan::Severity::Breaks);
+            // With --pooler, a finding fails only if the pooler was shown to mishandle it.
+            let failing = report.findings.iter().any(|f| match &f.on_pooler {
+                Some(check) => check.status != scan::PoolerStatus::Ok,
+                None => strict || f.severity == scan::Severity::Breaks,
+            });
             Ok(if failing { ExitCode::FAILURE } else { ExitCode::SUCCESS })
         }
         Command::Report { files, format } => {
@@ -325,14 +355,16 @@ fn sarif(report: &scan::Report, input: &std::path::Path) -> serde_json::Value {
         .findings
         .iter()
         .map(|f| {
-            let level = match f.severity {
-                scan::Severity::Breaks => "error",
-                scan::Severity::Warn => "warning",
+            let level = match (&f.on_pooler, f.severity) {
+                (Some(check), _) if check.status == scan::PoolerStatus::Ok => "note",
+                (Some(_), _) | (None, scan::Severity::Breaks) => "error",
+                (None, scan::Severity::Warn) => "warning",
             };
+            let pooler = f.on_pooler.as_ref().map(|c| format!(" Checked {}.", pooler_summary(c))).unwrap_or_default();
             json!({
                 "ruleId": f.rule,
                 "level": level,
-                "message": {"text": format!("{} Calls: {}.", f.detail, f.calls)},
+                "message": {"text": format!("{} Calls: {}.{pooler}", f.detail, f.calls)},
                 "locations": [{
                     "physicalLocation": {
                         "artifactLocation": {"uri": uri},
@@ -357,19 +389,64 @@ fn sarif(report: &scan::Report, input: &std::path::Path) -> serde_json::Value {
     })
 }
 
+/// "On pgbouncer-1.26.1: set-isolated-between-clients fails silently, ..."
+fn pooler_summary(check: &scan::PoolerCheck) -> String {
+    let parts: Vec<String> = check
+        .scenarios
+        .iter()
+        .map(|(scenario, result)| {
+            let what = match result.as_str() {
+                "pass" => "passes",
+                "silent" => "fails silently",
+                "error" => "fails with an error",
+                "hang" => "hangs",
+                other => other,
+            };
+            format!("{scenario} {what}")
+        })
+        .collect();
+    format!("on {}: {}", check.target, parts.join(", "))
+}
+
 fn print_scan(report: &scan::Report) {
     for f in &report.findings {
-        let label = match f.severity {
-            scan::Severity::Breaks => "BREAKS",
-            scan::Severity::Warn => "WARN",
+        let label = match (&f.on_pooler, f.severity) {
+            (Some(check), _) => match check.status {
+                scan::PoolerStatus::Breaks => "BREAKS",
+                scan::PoolerStatus::Rejected => "REJECTED",
+                scan::PoolerStatus::Ok => "OK",
+            },
+            (None, scan::Severity::Breaks) => "BREAKS",
+            (None, scan::Severity::Warn) => "WARN",
         };
         let query: String = f.query.split_whitespace().collect::<Vec<_>>().join(" ");
         let query = match (0..=100).rev().find(|&i| query.is_char_boundary(i)) {
             Some(end) if query.len() > 100 => format!("{}...", &query[..end]),
             _ => query,
         };
-        println!("{label:<7} {:<27} calls={:<8} {query}", f.rule, f.calls);
-        println!("        {}", f.detail);
+        println!("{label:<8} {:<27} calls={:<8} {query}", f.rule, f.calls);
+        if let Some(check) = &f.on_pooler {
+            println!("         {}", pooler_summary(check));
+        }
+        // How to fix it, unless the pooler was shown to handle it.
+        if f.on_pooler.as_ref().is_none_or(|c| c.status != scan::PoolerStatus::Ok) {
+            println!("         {}", f.detail);
+        }
+    }
+    if let Some(check) = report.findings.iter().find_map(|f| f.on_pooler.as_ref()) {
+        let pg = check.postgres.as_deref().unwrap_or("?");
+        let count = |status| report.findings.iter().filter(|f| f.on_pooler.as_ref().is_some_and(|c| c.status == status)).count();
+        println!(
+            "\n{} queries scanned, {} findings. On {} (Postgres {pg}): {} break silently, {} rejected, {} handled.",
+            report.queries,
+            report.findings.len(),
+            check.target,
+            count(scan::PoolerStatus::Breaks),
+            count(scan::PoolerStatus::Rejected),
+            count(scan::PoolerStatus::Ok),
+        );
+        println!("See a scenario step by step: poolproof run -v --filter <scenario>");
+        return;
     }
     let breaks = report.findings.iter().filter(|f| f.severity == scan::Severity::Breaks).count();
     println!(

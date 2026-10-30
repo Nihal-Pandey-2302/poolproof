@@ -115,8 +115,32 @@ From Postgres logs, with `log_statement = 'all'` or `log_min_duration_statement`
 (jsonlog). Logs keep multi-statement query strings whole; pg_stat_statements splits them,
 so some problems only show up in logs. A `.sql` file works too, e.g. your migrations.
 
-Exit code is 1 if anything would break under transaction pooling (`--strict` also fails on
-warnings), so it can run in CI. `--format json` gives machine-readable output and
+### Against your pooler
+
+Add `--pooler` and every finding is checked against what that pooler version actually did
+in poolproof's own runs (built into the binary, no setup needed):
+
+```
+$ poolproof scan postgresql.log --pooler pgdog-0.1.62
+BREAKS   multi-statement-transaction calls=1        BEGIN; INSERT INTO t VALUES (1); COMMIT
+         on pgdog-0.1.62: multi-statement-begin fails silently
+         This one query string starts with BEGIN, COMMIT or ROLLBACK and has more ...
+REJECTED listen                      calls=1        LISTEN jobs;
+         on pgdog-0.1.62: listen-notify-delivered fails with an error
+OK       session-set                 calls=1        SET search_path TO public;
+         on pgdog-0.1.62: search-path-isolated-between-clients passes
+
+9 queries scanned, 5 findings. On pgdog-0.1.62 (Postgres 18.4): 2 break silently, 1 rejected, 2 handled.
+```
+
+BREAKS means a related scenario fails silently on that pooler; REJECTED means the pooler
+returns an error, so the query would fail loudly in production; OK means it passes. With
+`--pooler`, only BREAKS and REJECTED fail the exit code. `--postgres 17.11` picks the
+Postgres version (default: newest), and `--results my-run.json` uses a run against your
+own setup instead. An unknown name lists the available ones.
+
+Without `--pooler`, the exit code is 1 if anything would break under transaction pooling
+(`--strict` also fails on warnings), so it can run in CI. `--format json` gives machine-readable output and
 `--format sarif` works with GitHub code scanning:
 
 ```yaml

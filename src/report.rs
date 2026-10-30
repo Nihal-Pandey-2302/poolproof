@@ -55,6 +55,17 @@ pub struct StepOutcomes {
     pub pooler: Outcome,
 }
 
+/// The results in `results/`, embedded at build time as (file name, contents).
+const BUNDLED: &[(&str, &str)] = include!(concat!(env!("OUT_DIR"), "/bundled_results.rs"));
+
+/// The results built into the binary: the test bed's run on each Postgres version.
+pub fn bundled() -> Result<Vec<Report>> {
+    BUNDLED
+        .iter()
+        .map(|(name, text)| serde_json::from_str(text).with_context(|| format!("parsing bundled {name}")))
+        .collect()
+}
+
 impl Report {
     pub fn load(path: &Path) -> Result<Self> {
         let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
@@ -64,6 +75,70 @@ impl Report {
     fn verdict(&self, target: &str, scenario: &str) -> Option<&Verdict> {
         self.results.iter().find(|r| r.target == target && r.scenario == scenario).map(|r| &r.verdict)
     }
+}
+
+/// Compares version strings like `17.11` or `2.10.0-rc.1` part by part.
+fn cmp_version(a: &str, b: &str) -> std::cmp::Ordering {
+    let parts = |v: &str| v.split(['.', '-']).map(|p| p.parse::<u64>().map_err(|_| p.to_string())).collect::<Vec<_>>();
+    parts(a).cmp(&parts(b))
+}
+
+/// The report and target for `--pooler NAME [--postgres VERSION]`; the newest
+/// Postgres version when none is given.
+pub fn find_target<'a>(
+    reports: &'a [Report],
+    name: &str,
+    postgres: Option<&str>,
+) -> Result<(&'a Report, &'a TargetInfo)> {
+    let mut found: Vec<(&Report, &TargetInfo)> = reports
+        .iter()
+        .flat_map(|r| r.targets.iter().map(move |t| (r, t)))
+        .filter(|(_, t)| t.name == name && postgres.is_none_or(|pg| t.postgres.as_deref() == Some(pg)))
+        .collect();
+    found.sort_by(|a, b| cmp_version(a.1.postgres.as_deref().unwrap_or(""), b.1.postgres.as_deref().unwrap_or("")));
+    if let Some(last) = found.pop() {
+        return Ok(last);
+    }
+    let mut names: Vec<String> = reports
+        .iter()
+        .flat_map(|r| &r.targets)
+        .map(|t| format!("{} (Postgres {})", t.name, t.postgres.as_deref().unwrap_or("?")))
+        .collect();
+    names.sort();
+    names.dedup();
+    anyhow::bail!("no results for pooler '{name}'. Available:\n  {}", names.join("\n  "))
+}
+
+/// What `target` did on the given scenarios, or None if none of them ran there.
+pub fn check_finding(report: &Report, target: &TargetInfo, scenarios: &[&str]) -> Option<crate::scan::PoolerCheck> {
+    use crate::scan::PoolerStatus;
+    let results: Vec<(String, String)> = scenarios
+        .iter()
+        .filter_map(|s| {
+            let verdict = report.verdict(&target.name, s)?;
+            let result = match verdict {
+                Verdict::Pass => "pass".to_string(),
+                Verdict::Fail { mismatch } => mismatch.kind.to_string(),
+                Verdict::Skip { .. } | Verdict::Error { .. } => return None,
+            };
+            Some((s.to_string(), result))
+        })
+        .collect();
+    let status = if results.is_empty() {
+        return None;
+    } else if results.iter().any(|(_, r)| r == "silent") {
+        PoolerStatus::Breaks
+    } else if results.iter().any(|(_, r)| r != "pass") {
+        PoolerStatus::Rejected
+    } else {
+        PoolerStatus::Ok
+    };
+    Some(crate::scan::PoolerCheck {
+        target: target.name.clone(),
+        postgres: target.postgres.clone(),
+        status,
+        scenarios: results,
+    })
 }
 
 /// One table column: a target in one report.
@@ -184,6 +259,33 @@ mod tests {
         assert!(!page.contains("/*POOLPROOF_DATA*/"));
         assert!(!page.contains("</script><b>"));
         assert!(page.contains("\\u003c/script>\\u003cb>"));
+    }
+
+    #[test]
+    fn finds_target_on_newest_postgres() {
+        let mut older = sample();
+        older.targets[0].postgres = Some("9.6".into());
+        let reports = [older, sample()];
+        let (_, t) = find_target(&reports, "p", None).unwrap();
+        assert_eq!(t.postgres.as_deref(), Some("17"));
+        let (_, t) = find_target(&reports, "p", Some("9.6")).unwrap();
+        assert_eq!(t.postgres.as_deref(), Some("9.6"));
+        assert!(find_target(&reports, "nope", None).is_err());
+    }
+
+    #[test]
+    fn checks_findings_against_results() {
+        use crate::scan::PoolerStatus;
+        let report = sample();
+        let target = &report.targets[0];
+        assert_eq!(check_finding(&report, target, &["s"]).unwrap().status, PoolerStatus::Ok);
+        assert!(check_finding(&report, target, &["not-run"]).is_none());
+    }
+
+    #[test]
+    fn bundled_results_parse() {
+        // Empty when results/ is missing, which is fine; when present it must parse.
+        bundled().unwrap();
     }
 
     #[test]
