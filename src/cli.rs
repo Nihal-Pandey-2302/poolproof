@@ -62,8 +62,8 @@ enum Command {
         /// differ between the two runs is an ERROR: it tests timing, not the pooler.
         #[arg(long)]
         check_scenarios: bool,
-        /// Which failures make the exit code 1. An ERROR (nothing to compare) counts
-        /// unless this is `none`.
+        /// Which FAILs make the exit code 1, by kind. An ERROR verdict (nothing
+        /// compared) counts unless this is `none`.
         #[arg(long, value_enum, default_value_t = FailOn::Any)]
         fail_on: FailOn,
     },
@@ -172,6 +172,14 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
             let failed = count(|v| matches!(v, Verdict::Fail { .. }));
             let errors = count(|v| matches!(v, Verdict::Error { .. }));
             let exit_failure = results.iter().any(|r| fail_on.fails(&r.verdict));
+            let ignored = results
+                .iter()
+                .filter(|r| matches!(r.verdict, Verdict::Fail { .. } | Verdict::Error { .. }))
+                .filter(|r| !fail_on.fails(&r.verdict))
+                .count();
+            if ignored > 0 {
+                eprintln!("note: {ignored} failed or errored results ignored by --fail-on {fail_on}");
+            }
             if matches!(format, RunFormat::Text) {
                 let passed = count(|v| matches!(v, Verdict::Pass));
                 let skipped = count(|v| matches!(v, Verdict::Skip { .. }));

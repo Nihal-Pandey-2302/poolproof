@@ -41,13 +41,14 @@ A failure is one of three kinds:
 - **error**: the pooler refused with an error where Postgres didn't. Loud, so you notice.
 - **hang**: no reply within 10 seconds, or replies that stop short of what Postgres sent.
 
-ERROR means there was nothing to compare: a target URL didn't answer before the run, a
+An ERROR verdict means nothing was compared: a target URL didn't answer before the run, a
 step on the Postgres side got no reply (timeout, connection failure), or setup, teardown
 or reset failed. It only stops that scenario, and `run` exits 1 as for a FAIL.
 
-`--fail-on` picks which failures make the exit code 1: `silent` (only silent ones),
-`error` (silent and error), `any` (the default, hangs too) or `none`. ERROR counts for all
-but `none`. A pooler with known hangs can still gate CI on wrong results.
+`--fail-on` picks which FAILs make the exit code 1, by kind: `silent` (only silent ones),
+`error` (silent and error), `any` (the default, hangs too) or `none`. An ERROR verdict
+(nothing compared) counts for all but `none`. A pooler with known hangs can still gate CI
+on wrong results. Results it ignores are counted on stderr.
 
 ```text
 $ poolproof run --filter multi-statement
@@ -106,7 +107,7 @@ To share the outcome with your team, `--format html` writes one self-contained p
 the grid and every step's trace. `--format json` saves the raw results;
 `poolproof report a.json b.json --format html` (or `markdown`) combines saved runs. In
 these formats, a progress line per result goes to stderr. Text output is colored on a
-terminal unless `NO_COLOR` is set.
+terminal unless `NO_COLOR` is set; `FORCE_COLOR` or `CLICOLOR_FORCE` colors it anywhere.
 
 Scenarios create and drop their own objects (prefixed `pp_`), so use a scratch database.
 That matters even more with `reset`, which kills every session on it. Without `reset`,

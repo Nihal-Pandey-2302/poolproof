@@ -113,11 +113,23 @@ pub enum FailOn {
     None,
     /// Silent failures only: wrong results with no error.
     Silent,
-    /// Silent failures and errors the pooler returned where Postgres didn't.
+    /// Silent FAILs and FAILs where the pooler returned an error Postgres didn't.
+    /// Not about ERROR verdicts, which count for every level but `none`.
     Error,
     /// Every failure, hangs included.
     #[default]
     Any,
+}
+
+impl std::fmt::Display for FailOn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            FailOn::None => "none",
+            FailOn::Silent => "silent",
+            FailOn::Error => "error",
+            FailOn::Any => "any",
+        })
+    }
 }
 
 impl FailOn {

@@ -12,10 +12,21 @@ pub struct Style {
     pub color: bool,
 }
 
-/// Color only on a terminal, and never when NO_COLOR is set (https://no-color.org).
+/// Color on a terminal, or anywhere with FORCE_COLOR or CLICOLOR_FORCE; never with
+/// NO_COLOR (https://no-color.org).
 pub fn color_enabled() -> bool {
-    let no_color = std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty());
-    !no_color && std::io::stdout().is_terminal()
+    let var = |name| std::env::var(name).ok();
+    color_from(
+        var("NO_COLOR"),
+        var("FORCE_COLOR").or(var("CLICOLOR_FORCE")),
+        std::io::stdout().is_terminal(),
+    )
+}
+
+fn color_from(no_color: Option<String>, force: Option<String>, terminal: bool) -> bool {
+    let set = |v: &Option<String>| v.as_deref().is_some_and(|v| !v.is_empty() && v != "0");
+    let no_color = no_color.is_some_and(|v| !v.is_empty());
+    !no_color && (set(&force) || terminal)
 }
 
 /// The verdict's label, padded to line up, in its color if `color`.
@@ -87,6 +98,18 @@ pub fn print_progress(done: usize, total: usize, target: &str, s: &scenario::Sce
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn no_color_beats_force_and_force_beats_no_terminal() {
+        let s = |v: &str| Some(v.to_string());
+        assert!(color_from(None, None, true));
+        assert!(!color_from(None, None, false));
+        assert!(!color_from(s("1"), None, true));
+        assert!(!color_from(s("1"), s("1"), true));
+        assert!(color_from(None, s("1"), false));
+        assert!(!color_from(None, s("0"), false));
+        assert!(color_from(s(""), None, true));
+    }
 
     #[test]
     fn labels_line_up_and_color_only_when_asked() {
