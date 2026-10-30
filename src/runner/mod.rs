@@ -15,7 +15,7 @@ pub(crate) mod tls;
 
 pub use check::{Checked, DIRECT_UNREACHABLE, POOLER_UNREACHABLE, check, preflight};
 pub use compare::{FailKind, Mismatch, Verdict};
-pub use pg::{Privileges, privileges, server_version};
+pub use pg::{Privileges, privileges, resolve_reset, server_version};
 pub use raw::RawMessage;
 
 /// How long the harness waits for each kind of thing. `Default` holds the values

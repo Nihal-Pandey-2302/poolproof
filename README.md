@@ -114,18 +114,36 @@ pooler = "postgres://user:${POOLER_PASSWORD}@pooler-host:6432/db"
 direct = "postgres://user@postgres-host:5432/db"   # password from PGPASSWORD or ~/.pgpass
 mode = "transaction"
 # Run on `direct` before every run so one scenario's leaked state can't change the next
-# one's result. This terminates every other session on the database.
-reset = ["SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'"]
+# one's result: "auto", "all", or a list of your own statements.
+reset = "auto"
 ```
+
+`reset` decides how much each run is isolated from the one before:
+
+- `"auto"` ends only the pooler's sessions: the ones from the address and user Postgres
+  sees the pooler connect as (asked once per target, through the pooler). It refuses to
+  run when it can't tell them apart from others: a pooler on a Unix socket, or on the
+  same address as poolproof. It assumes one pooler per Postgres: another pooler's leaked
+  locks stay, and so do sessions the pooler opens from a second address (clusters,
+  several nodes, a restart on a new IP). Other applications using the same pooler lose
+  their server connections, which the pooler then reopens.
+- `"all"` ends every other session on the database. Against a Postgres that isn't on
+  this machine it needs `run --yes`.
+- A list of statements runs as written.
+- Without `reset`, nothing is reset: leaks carry over between scenarios, and `run`
+  warns. With `--pooler` and `--direct`, `--reset auto` or `--reset all` picks one.
+
+Before the first scenario, `run` prints what the reset will touch, e.g.
+`reset: 'prod-like-pgbouncer': ends sessions of user app from 10.0.0.7 on database db at
+postgres-host:5432 (auto)`. The JSON report records which kind each target used.
 
 To share the outcome with your team, `--format html` writes one self-contained page with
 the grid and every step's trace. `--format json` saves the raw results;
 `poolproof report a.json b.json --format html` (or `markdown`) combines saved runs.
 
 Scenarios create and drop their own objects (prefixed `pp_`), so use a scratch database.
-That matters even more with `reset`, which kills every session on it. Without `reset`,
-leaks carry over between scenarios and `run` prints a warning. `--reverse` runs the
-scenarios in reverse order; verdicts should not change.
+That matters even more with `reset = "all"`, which kills every session on it.
+`--reverse` runs the scenarios in reverse order; verdicts should not change.
 
 ## Scanning your queries
 

@@ -2,20 +2,24 @@
 
 use anyhow::Result;
 
-use super::{DIRECT_UNREACHABLE, Privileges, Timeouts, Verdict, check, preflight, privileges, server_version};
+use super::{
+    DIRECT_UNREACHABLE, Privileges, Timeouts, Verdict, check, preflight, privileges, resolve_reset, server_version,
+};
 use crate::output::text::print_result;
 use crate::report::{ResultRow, StepOutcomes, TargetInfo};
 use crate::scenario::Scenario;
-use crate::targets::Target;
+use crate::targets::{Reset, Target};
 
 /// Runs every scenario on every target, in order. `text` prints each result as it
-/// comes in; `verbose` adds every step's outcomes to that.
+/// comes in; `verbose` adds every step's outcomes to that. `yes` allows reset = "all"
+/// against a Postgres that isn't on this machine.
 pub async fn run(
     targets: &[Target],
     scenarios: &[Scenario],
     filter: Option<&str>,
     text: bool,
     verbose: bool,
+    yes: bool,
 ) -> Result<(Vec<TargetInfo>, Vec<ResultRow>)> {
     // Not configurable yet; F2 adds the flags.
     let timeouts = Timeouts::default();
@@ -29,8 +33,9 @@ pub async fn run(
             config: target.config.clone(),
             mode: target.mode,
             postgres: server_version(&target.direct, &timeouts).await.ok(),
+            reset: Some(target.reset.kind().to_string()),
         });
-        if target.reset.is_empty() {
+        if matches!(target.reset, Reset::None) {
             eprintln!(
                 "warning: target '{}' has no reset; leaked state can carry over between scenarios",
                 target.name
@@ -46,6 +51,23 @@ pub async fn run(
         if let Some(reason) = &unreachable {
             eprintln!("error: target '{}': {reason}", target.name);
         }
+        // What reset will touch, said before it touches anything; a reset that can't
+        // be done safely makes the target an ERROR like an unreachable one.
+        let (reset, unreachable) = match &unreachable {
+            Some(_) => (vec![], unreachable),
+            None => match resolve_reset(target, yes, &timeouts).await {
+                Ok((statements, line)) => {
+                    if !line.is_empty() {
+                        eprintln!("{line}");
+                    }
+                    (statements, None)
+                }
+                Err(reason) => {
+                    eprintln!("error: target '{}': {reason}", target.name);
+                    (vec![], Some(reason))
+                }
+            },
+        };
         let privs = match unreachable {
             Some(_) => Err(String::new()),
             None => privileges(&target.direct, &timeouts)
@@ -55,8 +77,7 @@ pub async fn run(
         if let Ok(p) = &privs
             && !p.superuser
             && !p.pg_signal_backend
-            && target
-                .reset
+            && reset
                 .iter()
                 .any(|s| s.sql().to_lowercase().contains("pg_terminate_backend"))
         {
@@ -74,7 +95,7 @@ pub async fn run(
             let (verdict, steps, runs, failures) = match before_run(s, target, unreachable.as_deref(), &privs) {
                 Some(verdict) => (verdict, vec![], 0, 0),
                 None => {
-                    let checked = check(s, &target.pooler, &target.direct, &target.reset, &timeouts).await;
+                    let checked = check(s, &target.pooler, &target.direct, &reset, &timeouts).await;
                     (checked.verdict, checked.steps, checked.runs, checked.failures)
                 }
             };
@@ -135,6 +156,7 @@ mod tests {
             "postgres://u@127.0.0.1:1/db",
             "postgres://u@127.0.0.1:1/db",
             crate::scenario::PoolMode::Transaction,
+            Reset::None,
         )
         .unwrap()
         .targets

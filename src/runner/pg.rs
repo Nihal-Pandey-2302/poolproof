@@ -18,7 +18,7 @@ use tokio_postgres_rustls::MakeRustlsConnect;
 use super::tls::wants_client_certificate;
 use super::{Outcome, Timeouts};
 use crate::scenario::Requirement;
-use crate::targets::Endpoint;
+use crate::targets::{Endpoint, Reset, Statement as TargetStatement, Target};
 
 /// NOTIFY messages received on a connection, as (channel, payload) rows.
 pub(super) type Notices = Arc<Mutex<Vec<Vec<Option<String>>>>>;
@@ -315,6 +315,103 @@ pub async fn server_version(endpoint: &Endpoint, t: &Timeouts) -> Result<String>
     Ok(version.split_whitespace().next().unwrap_or_default().to_string())
 }
 
+/// The statement `reset = "all"` runs: end every other session on the database, and
+/// wait up to 5 s for each to exit.
+const RESET_ALL: &str = "SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity \
+    WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'";
+
+/// `reset = "auto"`: the same, for the sessions from one address and user only.
+fn reset_auto_sql(addr: &str, user: &str) -> String {
+    let literal = |s: &str| format!("'{}'", s.replace('\'', "''"));
+    format!(
+        "SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity WHERE datname = current_database() \
+         AND client_addr = {}::inet AND usename = {} AND pid <> pg_backend_pid() AND backend_type = 'client backend'",
+        literal(addr),
+        literal(user)
+    )
+}
+
+/// Whether a host is this machine: a Unix socket, `localhost` or a loopback address.
+fn is_local(config: &tokio_postgres::Config) -> bool {
+    match config.get_hosts().first() {
+        Some(Host::Tcp(host)) => {
+            host == "localhost" || host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback())
+        }
+        #[cfg(unix)]
+        Some(Host::Unix(_)) => true,
+        None => false,
+    }
+}
+
+/// One row of text values from a query, or an error.
+async fn query_row(endpoint: &Endpoint, sql: &str, t: &Timeouts) -> Result<Vec<Option<String>>> {
+    let (client, driver, _) = connect(endpoint, t).await?;
+    let res = timeout(t.step, client.simple_query(sql)).await;
+    drop(client);
+    let _ = timeout(t.step, driver).await;
+    res.context("timed out")??
+        .into_iter()
+        .find_map(|m| match m {
+            SimpleQueryMessage::Row(row) => Some((0..row.len()).map(|i| row.get(i).map(str::to_string)).collect()),
+            _ => None,
+        })
+        .context("no row")
+}
+
+/// Turns a target's `reset` into the statements to run before each run, plus the line
+/// that says what they touch (empty for no reset). The error is the target's ERROR
+/// reason. `yes` allows `all` against a Postgres that isn't on this machine.
+pub async fn resolve_reset(target: &Target, yes: bool, t: &Timeouts) -> Result<(Vec<TargetStatement>, String), String> {
+    let config = target.direct.config();
+    let db = config.get_dbname().or(config.get_user()).unwrap_or_default();
+    let host = target.direct.host();
+    let name = &target.name;
+    match &target.reset {
+        Reset::None => Ok((vec![], String::new())),
+        Reset::Statements(statements) => Ok((
+            statements.clone(),
+            format!(
+                "reset: '{name}': runs {} statements on direct before each run (custom)",
+                statements.len()
+            ),
+        )),
+        Reset::All if !yes && !is_local(config) => Err(format!(
+            "reset = \"all\" ends every other session on database {db} at {host}; pass --yes to allow it"
+        )),
+        Reset::All => Ok((
+            vec![TargetStatement::plain(RESET_ALL)],
+            format!("reset: '{name}': ends every other session on database {db} at {host} (all)"),
+        )),
+        Reset::Auto => {
+            let refuse = |why: String| {
+                format!(
+                    "reset = \"auto\" can't tell the pooler's sessions apart: {why}; use reset = \"all\" or your own statements"
+                )
+            };
+            let pooler = query_row(&target.pooler, "SELECT host(inet_client_addr()), session_user", t)
+                .await
+                .map_err(|e| refuse(format!("asking through the pooler failed: {e:#}")))?;
+            let ours = query_row(&target.direct, "SELECT host(inet_client_addr())", t)
+                .await
+                .map_err(|e| refuse(format!("asking direct failed: {e:#}")))?;
+            let (Some(Some(addr)), Some(Some(user))) = (pooler.first(), pooler.get(1)) else {
+                return Err(refuse(
+                    "Postgres sees no client address for them (a Unix socket?)".into(),
+                ));
+            };
+            if ours.first() == Some(&Some(addr.clone())) {
+                return Err(refuse(format!(
+                    "the pooler connects from {addr}, the same address as poolproof"
+                )));
+            }
+            Ok((
+                vec![TargetStatement::plain(&reset_auto_sql(addr, user))],
+                format!("reset: '{name}': ends sessions of user {user} from {addr} on database {db} at {host} (auto)"),
+            ))
+        }
+    }
+}
+
 /// Retry `SELECT 1` through the pooler until it answers, then let it settle (see
 /// `settle`). A reset kills the pooler's server connections, and it needs a moment to
 /// notice and open new ones. Errors only if the pooler never answers; returns whether
@@ -510,6 +607,160 @@ mod tests {
         });
         // A dbname per test: ports can repeat across tests, and the skip list is by endpoint.
         Endpoint::parse(&format!("postgres://u@127.0.0.1:{port}/{name}?sslmode=disable")).unwrap()
+    }
+
+    /// A Postgres stand-in that answers each simple query with one row of text values
+    /// from `answer` (None = NULL).
+    async fn answering(answer: fn(&str) -> Vec<Option<&'static str>>) -> u16 {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        fn message(tag: u8, body: &[u8]) -> Vec<u8> {
+            [&[tag][..], &(body.len() as u32 + 4).to_be_bytes(), body].concat()
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            while let Ok((mut s, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let len = s.read_u32().await.unwrap() as usize;
+                    let mut startup = vec![0; len - 4];
+                    s.read_exact(&mut startup).await.unwrap();
+                    let ready = message(b'Z', b"I");
+                    let hello = [message(b'R', &[0; 4]), message(b'K', &[0; 8]), ready.clone()].concat();
+                    s.write_all(&hello).await.unwrap();
+                    while let Ok(tag) = s.read_u8().await {
+                        let len = s.read_u32().await.unwrap() as usize;
+                        let mut body = vec![0; len - 4];
+                        s.read_exact(&mut body).await.unwrap();
+                        if tag != b'Q' {
+                            return;
+                        }
+                        let values = answer(std::str::from_utf8(&body[..body.len() - 1]).unwrap());
+                        let mut desc = (values.len() as u16).to_be_bytes().to_vec();
+                        let mut data = (values.len() as u16).to_be_bytes().to_vec();
+                        for value in &values {
+                            desc.extend(b"c\0");
+                            desc.extend([0u8; 6]);
+                            desc.extend(25u32.to_be_bytes());
+                            desc.extend((-1i16).to_be_bytes());
+                            desc.extend((-1i32).to_be_bytes());
+                            desc.extend(0i16.to_be_bytes());
+                            match value {
+                                Some(v) => {
+                                    data.extend((v.len() as u32).to_be_bytes());
+                                    data.extend(v.as_bytes());
+                                }
+                                None => data.extend((-1i32).to_be_bytes()),
+                            }
+                        }
+                        let reply = [
+                            message(b'T', &desc),
+                            message(b'D', &data),
+                            message(b'C', b"SELECT 1\0"),
+                            ready.clone(),
+                        ]
+                        .concat();
+                        s.write_all(&reply).await.unwrap();
+                    }
+                });
+            }
+        });
+        port
+    }
+
+    fn target(port: u16, reset: Reset) -> Target {
+        let url = format!("postgres://u@127.0.0.1:{port}/app?sslmode=disable");
+        crate::targets::Targets::single(&url, &url, crate::scenario::PoolMode::Transaction, reset)
+            .unwrap()
+            .targets
+            .remove(0)
+    }
+
+    #[test]
+    fn auto_reset_quotes_what_it_was_told() {
+        let sql = reset_auto_sql("10.0.0.7", "o'neil");
+        assert!(sql.contains("client_addr = '10.0.0.7'::inet"), "{sql}");
+        assert!(sql.contains("usename = 'o''neil'"), "{sql}");
+    }
+
+    #[test]
+    fn local_hosts() {
+        let local = |url: &str| is_local(&url.parse::<tokio_postgres::Config>().unwrap());
+        assert!(local("postgres://u@localhost/db"));
+        assert!(local("postgres://u@127.0.0.2/db"));
+        assert!(local("postgres://u@[::1]/db"));
+        assert!(!local("postgres://u@db.example.com/db"));
+        assert!(!local("postgres://u@10.0.0.1/db"));
+        #[cfg(unix)]
+        assert!(local("host=/var/run/postgresql user=u"));
+    }
+
+    #[tokio::test]
+    async fn all_needs_yes_beyond_this_machine() {
+        let t = Timeouts::default();
+        let remote = {
+            let mut target = target(1, Reset::All);
+            target.direct = Endpoint::parse("postgres://u@db.example.com/app").unwrap();
+            target
+        };
+        let err = resolve_reset(&remote, false, &t).await.unwrap_err();
+        assert!(err.contains("pass --yes"), "{err}");
+        let (sql, line) = resolve_reset(&remote, true, &t).await.unwrap();
+        assert_eq!(sql[0].sql(), RESET_ALL);
+        assert!(
+            line.ends_with("ends every other session on database app at db.example.com:5432 (all)"),
+            "{line}"
+        );
+        // On this machine, no --yes needed.
+        assert!(resolve_reset(&target(1, Reset::All), false, &t).await.is_ok());
+        assert!(
+            resolve_reset(&target(1, Reset::None), false, &t)
+                .await
+                .unwrap()
+                .0
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn auto_finds_the_poolers_address_or_refuses() {
+        let t = Timeouts::default();
+        // Through the pooler Postgres sees 10.0.0.7; poolproof itself comes from 10.0.0.1.
+        let port = answering(|sql| {
+            if sql.contains("session_user") {
+                vec![Some("10.0.0.7"), Some("app")]
+            } else {
+                vec![Some("10.0.0.1")]
+            }
+        })
+        .await;
+        let (sql, line) = resolve_reset(&target(port, Reset::Auto), false, &t).await.unwrap();
+        assert_eq!(sql[0].sql(), reset_auto_sql("10.0.0.7", "app"));
+        assert!(
+            line.contains("ends sessions of user app from 10.0.0.7 on database app"),
+            "{line}"
+        );
+
+        let unix = answering(|sql| {
+            if sql.contains("session_user") {
+                vec![None, Some("app")]
+            } else {
+                vec![None]
+            }
+        })
+        .await;
+        let err = resolve_reset(&target(unix, Reset::Auto), false, &t).await.unwrap_err();
+        assert!(err.contains("no client address"), "{err}");
+
+        let same = answering(|sql| {
+            if sql.contains("session_user") {
+                vec![Some("10.0.0.1"), Some("app")]
+            } else {
+                vec![Some("10.0.0.1")]
+            }
+        })
+        .await;
+        let err = resolve_reset(&target(same, Reset::Auto), false, &t).await.unwrap_err();
+        assert!(err.contains("the same address as poolproof"), "{err}");
     }
 
     #[tokio::test]

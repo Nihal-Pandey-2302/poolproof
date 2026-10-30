@@ -8,7 +8,7 @@ use crate::output::sarif::sarif;
 use crate::output::scan::print_scan;
 use crate::runner::{self, Verdict};
 use crate::scenario::{self, PoolMode};
-use crate::targets::Targets;
+use crate::targets::{Reset, Targets};
 use crate::{report, scan};
 
 #[derive(Parser)]
@@ -37,6 +37,15 @@ enum Command {
         /// With --pooler: the pooler's mode.
         #[arg(long, value_enum, default_value_t = PoolMode::Transaction)]
         mode: PoolMode,
+        /// With --pooler: what to run on --direct before every run. `auto` ends only
+        /// the pooler's own sessions; `all` ends every other session on the database.
+        /// Without it, nothing is reset.
+        #[arg(long, value_enum, requires = "pooler")]
+        reset: Option<ResetArg>,
+        /// Allow reset = "all" against a Postgres that isn't on this machine. It gates
+        /// nothing else.
+        #[arg(long)]
+        yes: bool,
         /// Scenario directory. Defaults to the scenarios built into poolproof.
         #[arg(short, long)]
         scenarios: Option<PathBuf>,
@@ -117,6 +126,13 @@ enum RunFormat {
     Html,
 }
 
+/// `run --reset`.
+#[derive(Clone, Copy, clap::ValueEnum)]
+pub enum ResetArg {
+    Auto,
+    All,
+}
+
 pub async fn run(cli: Cli) -> Result<ExitCode> {
     match cli.command {
         Command::Run {
@@ -124,6 +140,8 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
             pooler,
             direct,
             mode,
+            reset,
+            yes,
             scenarios,
             filter,
             reverse,
@@ -131,7 +149,14 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
             format,
         } => {
             let targets = match (pooler, direct) {
-                (Some(pooler), Some(direct)) => Targets::single(&pooler, &direct, mode)?,
+                (Some(pooler), Some(direct)) => {
+                    let reset = match reset {
+                        None => Reset::None,
+                        Some(ResetArg::Auto) => Reset::Auto,
+                        Some(ResetArg::All) => Reset::All,
+                    };
+                    Targets::single(&pooler, &direct, mode, reset)?
+                }
                 _ => Targets::load(&targets)?,
             };
             let mut scenarios = load_scenarios(scenarios.as_deref())?;
@@ -141,7 +166,7 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
 
             let text = matches!(format, RunFormat::Text);
             let (target_infos, results) =
-                runner::suite::run(&targets.targets, &scenarios, filter.as_deref(), text, verbose).await?;
+                runner::suite::run(&targets.targets, &scenarios, filter.as_deref(), text, verbose, yes).await?;
 
             let count = |f: fn(&Verdict) -> bool| results.iter().filter(|r| f(&r.verdict)).count();
             let failed = count(|v| matches!(v, Verdict::Fail { .. }));
