@@ -8,12 +8,12 @@ use tokio_postgres::NoTls;
 
 use super::pg::{Conn, backend_pid, connect, db_error, row_value, simple_outcome, wait_backend_gone};
 use super::raw::RawConn;
-use super::{NOTIFY_WAIT, Outcome, RAW_QUIET, STEP_TIMEOUT};
+use super::{Outcome, Timeouts};
 use crate::scenario::{Action, Scenario};
 
 /// Run a scenario's steps. `pooled` is where normal clients connect; `direct` is
 /// plain Postgres. For the baseline run both are the same URL.
-pub async fn run_steps(scenario: &Scenario, pooled: &str, direct: &str) -> Result<Vec<Outcome>> {
+pub async fn run_steps(scenario: &Scenario, pooled: &str, direct: &str, t: &Timeouts) -> Result<Vec<Outcome>> {
     let mut conns: HashMap<&str, Conn> = HashMap::new();
     let mut outcomes = Vec::with_capacity(scenario.steps.len());
 
@@ -35,7 +35,7 @@ pub async fn run_steps(scenario: &Scenario, pooled: &str, direct: &str) -> Resul
                 Action::Send(messages) => {
                     if !raw.contains_key(step.client.as_str()) {
                         let url = if step.direct { direct } else { pooled };
-                        match RawConn::connect(url, STEP_TIMEOUT).await {
+                        match RawConn::connect(url, t.connect).await {
                             Ok(conn) => {
                                 raw.insert(&step.client, conn);
                             }
@@ -46,7 +46,7 @@ pub async fn run_steps(scenario: &Scenario, pooled: &str, direct: &str) -> Resul
                         }
                     }
                     let conn = raw.get_mut(step.client.as_str()).expect("just connected");
-                    match conn.exchange(&messages, STEP_TIMEOUT, RAW_QUIET).await {
+                    match conn.exchange(&messages, t.step, t.quiet).await {
                         Ok(messages) => Outcome::Messages { messages },
                         Err(e) => Outcome::error("CLIENT", format!("{e:#}")),
                     }
@@ -57,7 +57,7 @@ pub async fn run_steps(scenario: &Scenario, pooled: &str, direct: &str) -> Resul
                         let was_direct = conn.url == direct;
                         conn.terminate().await;
                         if let (true, Some(pid)) = (was_direct, pid) {
-                            wait_backend_gone(direct, pid).await;
+                            wait_backend_gone(direct, pid, t).await;
                         }
                     }
                     Outcome::empty()
@@ -72,10 +72,10 @@ pub async fn run_steps(scenario: &Scenario, pooled: &str, direct: &str) -> Resul
         }
         if !conns.contains_key(step.client.as_str()) {
             let url = if step.direct { direct } else { pooled };
-            match connect(url).await {
+            match connect(url, t).await {
                 Ok((client, driver, notices)) => {
                     let pid = if url == direct {
-                        backend_pid(&client).await
+                        backend_pid(&client, t).await
                     } else {
                         None
                     };
@@ -110,8 +110,8 @@ pub async fn run_steps(scenario: &Scenario, pooled: &str, direct: &str) -> Resul
 
         let outcome = match step.action()? {
             Action::Send(_) => unreachable!("send clients are handled above"),
-            Action::Simple(sql) => match timeout(STEP_TIMEOUT, conn.client.simple_query(sql)).await {
-                Err(_) => Outcome::error("TIMEOUT", format!("no reply within {STEP_TIMEOUT:?}")),
+            Action::Simple(sql) => match timeout(t.step, conn.client.simple_query(sql)).await {
+                Err(_) => Outcome::error("TIMEOUT", format!("no reply within {:?}", t.step)),
                 Ok(res) => simple_outcome(res),
             },
             Action::Abandon { sql, after } => {
@@ -129,8 +129,8 @@ pub async fn run_steps(scenario: &Scenario, pooled: &str, direct: &str) -> Resul
                 }
                 outcome
             }
-            Action::Prepare { sql, name } => match timeout(STEP_TIMEOUT, conn.client.prepare(sql)).await {
-                Err(_) => Outcome::error("TIMEOUT", format!("no reply within {STEP_TIMEOUT:?}")),
+            Action::Prepare { sql, name } => match timeout(t.step, conn.client.prepare(sql)).await {
+                Err(_) => Outcome::error("TIMEOUT", format!("no reply within {:?}", t.step)),
                 Ok(Err(e)) => db_error(&e),
                 Ok(Ok(statement)) => {
                     conn.statements.insert(name.to_string(), statement);
@@ -144,8 +144,8 @@ pub async fn run_steps(scenario: &Scenario, pooled: &str, direct: &str) -> Resul
                     outcomes.push(Outcome::error("NO_STATEMENT", format!("'{name}' was never prepared")));
                     continue;
                 };
-                match timeout(STEP_TIMEOUT, conn.client.query(statement, &[])).await {
-                    Err(_) => Outcome::error("TIMEOUT", format!("no reply within {STEP_TIMEOUT:?}")),
+                match timeout(t.step, conn.client.query(statement, &[])).await {
+                    Err(_) => Outcome::error("TIMEOUT", format!("no reply within {:?}", t.step)),
                     Ok(Err(e)) => db_error(&e),
                     Ok(Ok(rows)) => Outcome::Ok {
                         rows: rows
@@ -159,9 +159,9 @@ pub async fn run_steps(scenario: &Scenario, pooled: &str, direct: &str) -> Resul
             Action::Disconnect => {
                 if let Some(conn) = conns.remove(step.client.as_str()) {
                     let pid = conn.pid;
-                    conn.close().await;
+                    conn.close(t).await;
                     if let Some(pid) = pid {
-                        wait_backend_gone(direct, pid).await;
+                        wait_backend_gone(direct, pid, t).await;
                     }
                 }
                 Outcome::empty()
@@ -172,9 +172,10 @@ pub async fn run_steps(scenario: &Scenario, pooled: &str, direct: &str) -> Resul
                 }
                 let client = conn.client.clone();
                 let sql = sql.to_string();
+                let step_timeout = t.step;
                 conn.pending = Some(tokio::spawn(async move {
-                    match timeout(STEP_TIMEOUT, client.simple_query(&sql)).await {
-                        Err(_) => Outcome::error("TIMEOUT", format!("no reply within {STEP_TIMEOUT:?}")),
+                    match timeout(step_timeout, client.simple_query(&sql)).await {
+                        Err(_) => Outcome::error("TIMEOUT", format!("no reply within {step_timeout:?}")),
                         Ok(res) => simple_outcome(res),
                     }
                 }));
@@ -185,7 +186,7 @@ pub async fn run_steps(scenario: &Scenario, pooled: &str, direct: &str) -> Resul
                     bail!("client '{}' has no background query to wait for", step.client);
                 };
                 // The query has its own timeout; this one only guards against a stuck task.
-                match timeout(STEP_TIMEOUT * 2, pending).await {
+                match timeout(t.step * 2, pending).await {
                     Ok(Ok(outcome)) => outcome,
                     Ok(Err(e)) => Outcome::error("CLIENT", e.to_string()),
                     Err(_) => Outcome::error("TIMEOUT", "background query never finished"),
@@ -193,14 +194,14 @@ pub async fn run_steps(scenario: &Scenario, pooled: &str, direct: &str) -> Resul
             }
             Action::Cancel => {
                 let token = conn.client.cancel_token();
-                match timeout(STEP_TIMEOUT, token.cancel_query(NoTls)).await {
-                    Err(_) => Outcome::error("TIMEOUT", format!("no reply within {STEP_TIMEOUT:?}")),
+                match timeout(t.step, token.cancel_query(NoTls)).await {
+                    Err(_) => Outcome::error("TIMEOUT", format!("no reply within {:?}", t.step)),
                     Ok(Err(e)) => db_error(&e),
                     Ok(Ok(())) => Outcome::empty(),
                 }
             }
             Action::Notifications => {
-                let deadline = tokio::time::Instant::now() + NOTIFY_WAIT;
+                let deadline = tokio::time::Instant::now() + t.notify;
                 while conn.notices.lock().unwrap().is_empty() && tokio::time::Instant::now() < deadline {
                     tokio::time::sleep(Duration::from_millis(20)).await;
                 }
@@ -214,7 +215,7 @@ pub async fn run_steps(scenario: &Scenario, pooled: &str, direct: &str) -> Resul
     }
 
     for (_, conn) in conns.drain() {
-        conn.close().await;
+        conn.close(t).await;
     }
     for (_, conn) in raw.drain() {
         conn.terminate().await;
