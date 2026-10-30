@@ -139,3 +139,15 @@ note = "multi-statement without a transaction"
 sql = 'BEGIN; SELECT pg_advisory_xact_lock(1); UPDATE counters SET n = n + 1 WHERE id = 1; COMMIT'
 form = "log"
 expect = ["multi-statement-transaction"]
+
+[[query]]
+sql = 'PREPARE lock_job (bigint) AS SELECT pg_try_advisory_lock($1)'
+form = "log"
+expect = ["sql-prepare", "session-advisory-lock"]
+note = "the lock inside PREPARE counts too"
+
+[[query]]
+sql = 'DECLARE jobs_cur CURSOR FOR SELECT id, pg_advisory_lock(id) FROM jobs WHERE state = $1'
+form = "pgss"
+expect = ["session-advisory-lock"]
+note = "the lock inside DECLARE counts too"

@@ -1,6 +1,6 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use pg_query::protobuf::{OnCommitAction, VariableSetKind, a_const};
+use pg_query::protobuf::{FuncCall, OnCommitAction, VariableSetKind, a_const};
 use pg_query::{NodeEnum, NodeRef};
 
 use super::{Finding, Query, Report, Severity, scenarios_for};
@@ -65,22 +65,21 @@ pub fn scan(queries: &[Query]) -> Report {
             );
         }
 
-        for function in parsed.functions() {
-            let short = function.rsplit('.').next().unwrap_or(&function);
-            if SESSION_ADVISORY_LOCKS.contains(&short) {
-                push(
-                    "session-advisory-lock",
-                    Severity::Breaks,
-                    format!(
-                        "{short}() holds the lock for the whole session. Under transaction pooling \
-                         the server connection goes back to the pool still holding it. Use the \
-                         pg_advisory_xact_* variant."
-                    ),
-                );
-            }
+        let calls = function_calls(&parsed);
+        let names: BTreeSet<&str> = calls.iter().filter_map(|call| function_name(call)).collect();
+        for short in names.into_iter().filter(|n| SESSION_ADVISORY_LOCKS.contains(n)) {
+            push(
+                "session-advisory-lock",
+                Severity::Breaks,
+                format!(
+                    "{short}() holds the lock for the whole session. Under transaction pooling \
+                     the server connection goes back to the pool still holding it. Use the \
+                     pg_advisory_xact_* variant."
+                ),
+            );
         }
 
-        if let Some(is_local) = set_config_is_local(&parsed) {
+        if let Some(is_local) = set_config_is_local(&calls) {
             let detail = match is_local {
                 IsLocal::False => {
                     "set_config(..., false) changes the setting for the session, which other \
@@ -267,21 +266,42 @@ enum IsLocal {
     False,
 }
 
+/// Every function call in the query, including inside PREPARE and DECLARE CURSOR,
+/// which pg_query's own walk doesn't enter.
+fn function_calls(parsed: &pg_query::ParseResult) -> Vec<&FuncCall> {
+    let mut nodes = parsed.protobuf.nodes();
+    let mut calls = Vec::new();
+    while let Some((node, ..)) = nodes.pop() {
+        let inner = match node {
+            NodeRef::FuncCall(call) => {
+                calls.push(call);
+                None
+            }
+            NodeRef::PrepareStmt(prepare) => prepare.query.as_deref(),
+            NodeRef::DeclareCursorStmt(cursor) => cursor.query.as_deref(),
+            _ => None,
+        };
+        if let Some(inner) = inner.and_then(|n| n.node.as_ref()) {
+            nodes.extend(inner.nodes());
+        }
+    }
+    calls
+}
+
+/// The function's name without its schema.
+fn function_name(call: &FuncCall) -> Option<&str> {
+    match call.funcname.last()?.node.as_ref()? {
+        NodeEnum::String(s) => Some(&s.sval),
+        _ => None,
+    }
+}
+
 /// The most certain session-scoped `is_local` among the query's set_config calls,
 /// or None if every call passes literal true.
-fn set_config_is_local(parsed: &pg_query::ParseResult) -> Option<IsLocal> {
-    parsed
-        .protobuf
-        .nodes()
-        .into_iter()
-        .filter_map(|(node, ..)| match node {
-            NodeRef::FuncCall(call) => Some(call),
-            _ => None,
-        })
-        .filter(|call| {
-            let name = call.funcname.last().and_then(|n| n.node.as_ref());
-            matches!(name, Some(NodeEnum::String(s)) if s.sval == "set_config")
-        })
+fn set_config_is_local(calls: &[&FuncCall]) -> Option<IsLocal> {
+    calls
+        .iter()
+        .filter(|call| function_name(call) == Some("set_config"))
         .filter_map(|call| match call.args.get(2).and_then(|a| a.node.as_ref()) {
             Some(NodeEnum::AConst(c)) => match &c.val {
                 Some(a_const::Val::Boolval(b)) if b.boolval => None,
@@ -424,6 +444,30 @@ mod tests {
             ]
         );
         assert_eq!(rules("RESET SESSION AUTHORIZATION"), vec!["session-set"]);
+    }
+
+    #[test]
+    fn looks_inside_prepare_and_declare() {
+        let mut got = rules("PREPARE x AS SELECT pg_try_advisory_lock($1)");
+        got.sort();
+        assert_eq!(got, vec!["session-advisory-lock", "sql-prepare"]);
+        assert_eq!(
+            rules("PREPARE x AS SELECT set_config('a', $1, false)"),
+            vec!["session-set-config", "sql-prepare"]
+        );
+        assert_eq!(
+            rules("DECLARE c CURSOR FOR SELECT pg_advisory_lock(id) FROM jobs"),
+            vec!["session-advisory-lock"]
+        );
+        assert_eq!(
+            rules("EXPLAIN ANALYZE SELECT pg_advisory_lock(1)"),
+            vec!["session-advisory-lock"]
+        );
+        // One finding per function, however often it is called.
+        assert_eq!(
+            rules("SELECT pg_advisory_lock(1), pg_advisory_lock(2)"),
+            vec!["session-advisory-lock"]
+        );
     }
 
     #[test]
