@@ -40,3 +40,7 @@ rcgen = { version = "0.14.10", default-features = false, features = ["crypto", "
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.191"
+
+[lints.rust]
+# Set by cargo-fuzz for the targets in fuzz/.
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)"] }

@@ -1,0 +1,32 @@
+# Fuzz targets for cargo-fuzz (`cargo +nightly fuzz run <target>` from this directory).
+# Not part of the poolproof crate or CI. See README.md here.
+[package]
+name = "poolproof-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4.13"
+poolproof = { path = ".." }
+
+# Its own workspace, so the poolproof crate doesn't pick it up.
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "raw_replies"
+path = "fuzz_targets/raw_replies.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "send_messages"
+path = "fuzz_targets/send_messages.rs"
+test = false
+doc = false
+bench = false

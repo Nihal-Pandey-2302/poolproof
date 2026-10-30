@@ -508,6 +508,30 @@ fn summary(message: &Message, parameter_status: bool) -> Result<Option<String>> 
     Ok(Some(line))
 }
 
+#[cfg(fuzzing)]
+pub(super) fn fuzz_replies(data: &[u8]) {
+    let mut buf = BytesMut::from(data);
+    while check_header(&buf).is_ok() {
+        match Message::parse(&mut buf) {
+            Ok(Some(message)) => {
+                let _ = summary(&message, true);
+            }
+            _ => return,
+        }
+    }
+}
+
+#[cfg(fuzzing)]
+pub(super) fn fuzz_send_messages(text: &str) {
+    let mut buf = BytesMut::new();
+    for line in text.lines() {
+        if let Ok(message) = line.parse::<RawMessage>() {
+            let _ = message.write(&mut buf);
+            let _ = message.ends_cycle();
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
