@@ -2,7 +2,10 @@
 //! when to Sync and what to pipeline; pooler bugs often hide exactly there, so
 //! these steps write the frontend messages themselves and record every reply.
 
+use std::io;
+use std::pin::Pin;
 use std::str::FromStr;
+use std::task::{Context as TaskContext, Poll};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
@@ -13,10 +16,16 @@ use postgres_protocol::authentication::md5_hash;
 use postgres_protocol::authentication::sasl::{ChannelBinding, ScramSha256};
 use postgres_protocol::message::backend::Message;
 use postgres_protocol::message::frontend;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use rustls::pki_types::ServerName;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::TcpStream;
 use tokio::time::{Instant, timeout_at};
 use tokio_postgres::config::Host;
+use tokio_rustls::TlsConnector;
+use tokio_rustls::client::TlsStream;
+
+use super::tls::{SslMode, Tls};
+use crate::targets::Endpoint;
 
 /// One frontend message, written in a scenario as e.g. `parse s1 SELECT 1`.
 /// `-` stands for the unnamed statement or portal.
@@ -170,15 +179,84 @@ enum Next {
     Closed,
 }
 
+/// The connection under a `send` client: plain TCP, or TLS after an SSLRequest.
+enum RawStream {
+    Plain(TcpStream),
+    Tls(Box<TlsStream<TcpStream>>),
+}
+
+impl AsyncRead for RawStream {
+    fn poll_read(self: Pin<&mut Self>, cx: &mut TaskContext<'_>, buf: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
+        match self.get_mut() {
+            RawStream::Plain(s) => Pin::new(s).poll_read(cx, buf),
+            RawStream::Tls(s) => Pin::new(s.as_mut()).poll_read(cx, buf),
+        }
+    }
+}
+
+impl AsyncWrite for RawStream {
+    fn poll_write(self: Pin<&mut Self>, cx: &mut TaskContext<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+        match self.get_mut() {
+            RawStream::Plain(s) => Pin::new(s).poll_write(cx, buf),
+            RawStream::Tls(s) => Pin::new(s.as_mut()).poll_write(cx, buf),
+        }
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<io::Result<()>> {
+        match self.get_mut() {
+            RawStream::Plain(s) => Pin::new(s).poll_flush(cx),
+            RawStream::Tls(s) => Pin::new(s.as_mut()).poll_flush(cx),
+        }
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<io::Result<()>> {
+        match self.get_mut() {
+            RawStream::Plain(s) => Pin::new(s).poll_shutdown(cx),
+            RawStream::Tls(s) => Pin::new(s.as_mut()).poll_shutdown(cx),
+        }
+    }
+}
+
+/// Asks for TLS with an SSLRequest, as libpq does, and starts it if the server agrees.
+/// A server that declines gets plaintext only with `prefer`.
+async fn negotiate_tls(mut tcp: TcpStream, tls: &Tls, host: &str) -> Result<RawStream> {
+    let Some(config) = &tls.config else {
+        return Ok(RawStream::Plain(tcp));
+    };
+    let mut out = BytesMut::new();
+    frontend::ssl_request(&mut out);
+    tcp.write_all(&out).await?;
+    // Exactly one byte: anything the server sent after it must go through TLS, not be
+    // read as plaintext (CVE-2021-23214).
+    let mut answer = [0u8];
+    tcp.read_exact(&mut answer)
+        .await
+        .context("reading the SSLRequest answer")?;
+    match answer[0] {
+        b'S' => {
+            let name = ServerName::try_from(host.to_string()).context("server name for TLS")?;
+            let stream = TlsConnector::from(config.clone())
+                .connect(name, tcp)
+                .await
+                .context("TLS handshake")?;
+            Ok(RawStream::Tls(Box::new(stream)))
+        }
+        b'N' if tls.mode == SslMode::Prefer => Ok(RawStream::Plain(tcp)),
+        b'N' => bail!("the server does not support TLS (sslmode={})", tls.mode),
+        other => bail!("unexpected answer to SSLRequest: {:?}", other as char),
+    }
+}
+
 pub struct RawConn {
-    stream: TcpStream,
+    stream: RawStream,
     buf: BytesMut,
     /// From BackendKeyData: the backend pid, or the pooler's stand-in for it.
     pub pid: Option<i32>,
 }
 
 impl RawConn {
-    pub async fn connect(config: &tokio_postgres::Config, connect_timeout: Duration) -> Result<Self> {
+    pub async fn connect(endpoint: &Endpoint, connect_timeout: Duration) -> Result<Self> {
+        let config = endpoint.config();
         let host = match config.get_hosts().first() {
             Some(Host::Tcp(host)) => host.clone(),
             _ => bail!("send steps need a TCP host"),
@@ -190,7 +268,10 @@ impl RawConn {
 
         // One deadline for TCP connect and startup, as for tokio-postgres clients.
         let deadline = Instant::now() + connect_timeout;
-        let stream = timeout_at(deadline, TcpStream::connect((host.as_str(), port)))
+        let tcp = timeout_at(deadline, TcpStream::connect((host.as_str(), port)))
+            .await
+            .context("connect timed out")??;
+        let stream = timeout_at(deadline, negotiate_tls(tcp, endpoint.tls(), &host))
             .await
             .context("connect timed out")??;
         let mut conn = RawConn {

@@ -9,6 +9,7 @@ use serde::Deserialize;
 use tokio_postgres::Config;
 use tokio_postgres::config::Host;
 
+use crate::runner::tls::{RootCerts, SslMode, Tls, default_root};
 use crate::scenario::PoolMode;
 
 pub struct Targets {
@@ -203,10 +204,12 @@ fn backslash_escape(value: &str) -> String {
 }
 
 /// A server to connect to: the parsed URL, with a password from PGPASSWORD or the
-/// password file filled in when the URL has none. Displays without the password.
+/// password file filled in when the URL has none, and its TLS settings. Displays
+/// without the password.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Endpoint {
     config: Config,
+    tls: Tls,
 }
 
 impl Endpoint {
@@ -217,8 +220,20 @@ impl Endpoint {
     }
 
     fn resolve(url: &str, env: &dyn Fn(&str) -> Option<String>) -> Result<Self> {
+        let (url, sslmode, sslrootcert) = take_tls_params(url)?;
         // The parse error never includes the URL, so it can't leak a password.
-        let mut config = Config::from_str(url).context("invalid connection URL")?;
+        let mut config = Config::from_str(&url).context("invalid connection URL")?;
+        // libpq's default is prefer: TLS when the server offers it, without checks.
+        let mode = match sslmode.or_else(|| env("PGSSLMODE")) {
+            Some(mode) => SslMode::parse(&mode)?,
+            None => SslMode::Prefer,
+        };
+        let roots = sslrootcert.or_else(|| env("PGSSLROOTCERT")).map(|r| match r.as_str() {
+            "system" => RootCerts::System,
+            _ => RootCerts::File(r.into()),
+        });
+        config.ssl_mode(mode.driver_mode());
+        let tls = Tls::new(mode, roots, default_root(env))?;
         // An empty password counts as none, as in libpq.
         if config.get_password().is_none_or(<[u8]>::is_empty) {
             if let Some(password) = env("PGPASSWORD").filter(|p| !p.is_empty()) {
@@ -227,23 +242,138 @@ impl Endpoint {
                 config.password(password);
             }
         }
-        Ok(Endpoint { config })
+        Ok(Endpoint { config, tls })
     }
 
     pub fn config(&self) -> &Config {
         &self.config
     }
+
+    pub(crate) fn tls(&self) -> &Tls {
+        &self.tls
+    }
+}
+
+/// Takes `sslmode` and `sslrootcert` out of a connection string, from either form.
+/// tokio-postgres doesn't accept verify-ca, verify-full or sslrootcert, so poolproof
+/// handles them itself. Errors don't quote the string: it can hold a password.
+fn take_tls_params(url: &str) -> Result<(String, Option<String>, Option<String>)> {
+    let (mut sslmode, mut sslrootcert) = (None, None);
+    let mut take = |key: &str, value: String| match key {
+        "sslmode" => {
+            sslmode = Some(value);
+            true
+        }
+        "sslrootcert" => {
+            sslrootcert = Some(value);
+            true
+        }
+        _ => false,
+    };
+    let rest = if url.starts_with("postgres://") || url.starts_with("postgresql://") {
+        let Some((base, query)) = url.split_once('?') else {
+            return Ok((url.to_string(), None, None));
+        };
+        let kept: Vec<&str> = query
+            .split('&')
+            .filter(|pair| {
+                let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+                !take(&percent_decode(key), percent_decode(value))
+            })
+            .collect();
+        if kept.is_empty() {
+            base.to_string()
+        } else {
+            format!("{base}?{}", kept.join("&"))
+        }
+    } else {
+        let kept: Vec<String> = parse_key_values(url)?
+            .into_iter()
+            .filter(|(key, value)| !take(key, value.clone()))
+            .map(|(key, value)| format!("{key}='{}'", value.replace('\\', "\\\\").replace('\'', "\\'")))
+            .collect();
+        kept.join(" ")
+    };
+    Ok((rest, sslmode, sslrootcert))
+}
+
+/// `%XX` sequences to bytes; anything else is kept as it is.
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let hex = bytes
+            .get(i + 1..i + 3)
+            .and_then(|h| u8::from_str_radix(std::str::from_utf8(h).ok()?, 16).ok());
+        match (bytes[i], hex) {
+            (b'%', Some(b)) => {
+                out.push(b);
+                i += 3;
+            }
+            (b, _) => {
+                out.push(b);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// `key = value` pairs as libpq and tokio-postgres read them: values optionally in
+/// single quotes, `\` escaping the next character.
+fn parse_key_values(s: &str) -> Result<Vec<(String, String)>> {
+    let mut pairs = Vec::new();
+    let mut chars = s.chars().peekable();
+    loop {
+        while chars.next_if(|c| c.is_whitespace()).is_some() {}
+        if chars.peek().is_none() {
+            return Ok(pairs);
+        }
+        let mut key = String::new();
+        while let Some(c) = chars.next_if(|c| *c != '=' && !c.is_whitespace()) {
+            key.push(c);
+        }
+        while chars.next_if(|c| c.is_whitespace()).is_some() {}
+        if chars.next() != Some('=') {
+            bail!("invalid connection string: expected `=` after `{key}`");
+        }
+        while chars.next_if(|c| c.is_whitespace()).is_some() {}
+        let mut value = String::new();
+        if chars.next_if_eq(&'\'').is_some() {
+            loop {
+                match chars.next() {
+                    None => bail!("invalid connection string: unterminated quoted value"),
+                    Some('\'') => break,
+                    Some('\\') => value.extend(chars.next()),
+                    Some(c) => value.push(c),
+                }
+            }
+        } else {
+            while let Some(c) = chars.next_if(|c| !c.is_whitespace()) {
+                match c {
+                    '\\' => value.extend(chars.next()),
+                    c => value.push(c),
+                }
+            }
+        }
+        pairs.push((key, value));
+    }
 }
 
 impl fmt::Display for Endpoint {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&redact(&self.config))
+        f.write_str(&redact(&self.config))?;
+        if self.tls.mode != SslMode::Prefer {
+            write!(f, "?sslmode={}", self.tls.mode)?;
+        }
+        Ok(())
     }
 }
 
 impl fmt::Debug for Endpoint {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&redact(&self.config))
+        fmt::Display::fmt(self, f)
     }
 }
 
@@ -519,6 +649,48 @@ mod tests {
             Some("ab\\")
         );
         assert_eq!(pgpass_lookup("*:*:*:*:", ["h", "1", "d", "u"]), None);
+    }
+
+    #[test]
+    fn takes_tls_parameters_out() {
+        let (rest, mode, root) = take_tls_params(
+            "postgres://u:p@h/db?sslmode=verify-full&application_name=x&sslrootcert=%2Ftmp%2Fca%20x.pem",
+        )
+        .unwrap();
+        assert_eq!(rest, "postgres://u:p@h/db?application_name=x");
+        assert_eq!(mode.as_deref(), Some("verify-full"));
+        assert_eq!(root.as_deref(), Some("/tmp/ca x.pem"));
+        let (rest, ..) = take_tls_params("postgresql://u@h/db?sslmode=require").unwrap();
+        assert_eq!(rest, "postgresql://u@h/db");
+
+        let (rest, mode, root) =
+            take_tls_params("host=h sslmode = 'verify-ca' password='a b\\'c\\\\' sslrootcert=/x dbname=d").unwrap();
+        assert_eq!(mode.as_deref(), Some("verify-ca"));
+        assert_eq!(root.as_deref(), Some("/x"));
+        let config = Config::from_str(&rest).unwrap();
+        assert_eq!(config.get_password(), Some(&b"a b'c\\"[..]));
+        assert_eq!(config.get_dbname(), Some("d"));
+        assert!(take_tls_params("host=h password='open").is_err());
+    }
+
+    #[test]
+    fn sslmode_from_url_then_environment_then_prefer() {
+        let mode = |url: &str, vars: &[(&str, &str)]| Endpoint::resolve(url, &env_of(vars)).map(|e| e.tls().mode);
+        assert_eq!(mode("postgres://u@h/db", &[]).unwrap(), SslMode::Prefer);
+        assert_eq!(
+            mode("postgres://u@h/db", &[("PGSSLMODE", "disable")]).unwrap(),
+            SslMode::Disable
+        );
+        assert_eq!(
+            mode("postgres://u@h/db?sslmode=require", &[("PGSSLMODE", "disable")]).unwrap(),
+            SslMode::Require
+        );
+        assert!(mode("postgres://u@h/db?sslmode=allow", &[]).is_err());
+        // verify-full needs a root certificate, from the URL, PGSSLROOTCERT or ~/.postgresql.
+        assert!(mode("postgres://u@h/db?sslmode=verify-full", &[("HOME", "/nonexistent")]).is_err());
+        let shown = Endpoint::resolve("postgres://u:pw@h/db?sslmode=require", &env_of(&[])).unwrap();
+        assert!(shown.to_string().ends_with("/db?sslmode=require"), "{shown}");
+        assert!(!shown.to_string().contains("pw"), "{shown}");
     }
 
     #[test]

@@ -11,6 +11,7 @@ mod pg;
 pub mod raw;
 mod steps;
 pub mod suite;
+pub(crate) mod tls;
 
 pub use check::{Checked, DIRECT_UNREACHABLE, POOLER_UNREACHABLE, check, preflight};
 pub use compare::{FailKind, Mismatch, Verdict};
