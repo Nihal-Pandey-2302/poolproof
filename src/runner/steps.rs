@@ -448,7 +448,10 @@ mod tests {
         let left_open = canary(&format!("[[step]]\nclient = 'a'\nsimple = \"{lock}; {temp}\"\n"));
         let raw_left_open = canary(&format!("[[step]]\nclient = 'a'\nsend = [\"query {lock}; {temp}\"]\n"));
         let check = canary(CHECK_GONE);
-        let runs = std::env::var("POOLPROOF_C4_ITERATIONS").map_or(200, |n| n.parse().unwrap());
+        let runs = std::env::var("POOLPROOF_C4_ITERATIONS").map_or(200, |n| {
+            n.parse()
+                .unwrap_or_else(|_| panic!("POOLPROOF_C4_ITERATIONS must be a number"))
+        });
         for run in 0..runs {
             assert_gone(&run_steps(&disconnect, &pg, &pg, &t).await.unwrap(), 3, run);
             assert_gone(&run_steps(&raw, &pg, &pg, &t).await.unwrap(), 3, run);
