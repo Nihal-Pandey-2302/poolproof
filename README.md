@@ -39,7 +39,7 @@ A failure is one of three kinds:
 - **silent**: the pooler returned a result, but not the one Postgres returned. The
   application gets wrong data and no error. These are the dangerous ones.
 - **error**: the pooler refused with an error where Postgres didn't. Loud, so you notice.
-- **hang**: no reply within 10 seconds.
+- **hang**: no reply within 10 seconds, or replies that stop short of what Postgres sent.
 
 ERROR means there was nothing to compare: a target URL didn't answer before the run, the
 Postgres side of a step didn't get a real reply (connect failure, timeout, lost

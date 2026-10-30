@@ -79,7 +79,11 @@ impl FailKind {
                     Outcome::Messages { messages } => messages.as_slice(),
                     _ => &[],
                 };
-                if messages.iter().any(|l| l == "TIMEOUT") {
+                // Replies that stop short of what Postgres sent, with nothing wrong in
+                // them, are a hang too: after a Flush there's no ReadyForQuery to wait
+                // for, so the step ends when the server goes quiet instead of at TIMEOUT.
+                let cut_short = messages.len() < expected_lines.len() && expected_lines.starts_with(messages);
+                if cut_short || messages.iter().any(|l| l == "TIMEOUT") {
                     FailKind::Hang
                 } else if messages
                     .iter()
@@ -158,6 +162,19 @@ mod tests {
             FailKind::Error
         );
         assert_eq!(FailKind::of(&pg, &msgs(&["ParseComplete", "TIMEOUT"])), FailKind::Hang);
+        // Pooler swallowed the reply to a Flush: nothing, or less than Postgres sent.
+        let flushed = msgs(&["ParseComplete", "Error 42601"]);
+        assert_eq!(FailKind::of(&flushed, &msgs(&[])), FailKind::Hang);
+        assert_eq!(FailKind::of(&flushed, &msgs(&["ParseComplete"])), FailKind::Hang);
+        // Same length but different stays what it was.
+        assert_eq!(
+            FailKind::of(&flushed, &msgs(&["ParseComplete", "NoData"])),
+            FailKind::Silent
+        );
+        assert_eq!(
+            FailKind::of(&flushed, &msgs(&["ParseComplete", "Error 08P01"])),
+            FailKind::Error
+        );
     }
 
     #[test]
