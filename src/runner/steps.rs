@@ -14,8 +14,9 @@ use crate::targets::Endpoint;
 
 /// A connect that failed. A server that refused with a SQLSTATE (53300 too many
 /// connections, 57P03 starting up) gives that code, so it compares like any other
-/// outcome: a pooler exhausting Postgres's connections is the pooler's fault. Transport
-/// failures (refused, timed out, unknown host) are CONNECT.
+/// outcome on the pooler side: a pooler exhausting Postgres's connections is the
+/// pooler's fault. It is marked `connect`, so on the Postgres side it is a harness
+/// failure. Transport failures (refused, timed out, unknown host) are CONNECT.
 fn connect_failure(e: &anyhow::Error) -> Outcome {
     let refused = e.chain().find_map(|cause| {
         if let Some(e) = cause.downcast_ref::<tokio_postgres::Error>() {
@@ -28,7 +29,11 @@ fn connect_failure(e: &anyhow::Error) -> Outcome {
             .map(|e| (e.code.clone(), e.message.clone()))
     });
     match refused {
-        Some((code, message)) => Outcome::Error { code, message },
+        Some((code, message)) => Outcome::Error {
+            code,
+            message,
+            connect: true,
+        },
         None => Outcome::error("CONNECT", format!("{e:#}")),
     }
 }
@@ -326,6 +331,27 @@ mod tests {
                 "{outcome}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn postgres_refusing_connections_is_an_error_not_a_pass() {
+        let scenario: Scenario =
+            toml::from_str("name = 'r'\ndescription = ''\n[[step]]\nclient = 'a'\nsimple = 'SELECT 1'\n").unwrap();
+        let server = refusing_server("53300").await;
+        let checked = crate::runner::check(&scenario, &server, &server, &[], &Timeouts::default()).await;
+        assert!(
+            matches!(&checked.verdict, crate::runner::Verdict::Error { reason } if reason.contains("53300")),
+            "{:?}",
+            checked.verdict
+        );
+    }
+
+    #[test]
+    fn connect_flag_stays_out_of_stored_results() {
+        let plain = serde_json::to_string(&Outcome::error("42P01", "x")).unwrap();
+        assert!(!plain.contains("connect"), "{plain}");
+        let back: Outcome = serde_json::from_str(&plain).unwrap();
+        assert_eq!(back, Outcome::error("42P01", "x"));
     }
 
     #[tokio::test]

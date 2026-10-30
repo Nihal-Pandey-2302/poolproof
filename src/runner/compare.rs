@@ -63,7 +63,9 @@ const HARNESS_CODES: &[&str] = &["CONNECT", "TIMEOUT", "CLIENT", "CLOSED"];
 /// would otherwise "match" an unreachable pooler.
 pub(super) fn baseline_failure(expected: &[Outcome]) -> Option<String> {
     let failed = |o: &Outcome| match o {
-        Outcome::Error { code, .. } => HARNESS_CODES.contains(&code.as_str()),
+        // A connect Postgres refused (53300 when it's out of connections) would give the
+        // same code on both sides and pass without testing anything.
+        Outcome::Error { code, connect, .. } => *connect || HARNESS_CODES.contains(&code.as_str()),
         Outcome::Messages { messages } => messages.iter().any(|l| l == "TIMEOUT" || l == "CLOSED"),
         Outcome::Ok { .. } | Outcome::Abandoned => false,
     };
