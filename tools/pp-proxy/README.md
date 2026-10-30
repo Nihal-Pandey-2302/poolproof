@@ -21,4 +21,4 @@ One process, one listener per fault, all forwarding to one Postgres:
 `selftest/expected.toml` lists the verdict each target must get. Check a run with:
 
     poolproof run --targets selftest/targets.toml --format json > selftest.json
-    pp-selftest-check selftest/expected.toml selftest.json
+    pp-selftest-check selftest/expected.toml selftest.json scenarios

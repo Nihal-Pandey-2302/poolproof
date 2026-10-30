@@ -1,8 +1,10 @@
-//! pp-selftest-check EXPECTED.toml REPORT.json
+//! pp-selftest-check EXPECTED.toml REPORT.json SCENARIOS_DIR
 //!
 //! Compares a `poolproof run --format json` report of the self-test targets with the
-//! expected verdicts. Any other verdict, and any target or scenario the expected file
-//! doesn't cover, or a missing result for any target and scenario, exits 1.
+//! expected verdicts. Any other verdict, any target or scenario the expected file
+//! doesn't cover, or a missing result for any target and scenario in SCENARIOS_DIR,
+//! exits 1. The scenario list comes from the directory, not the report: a report from
+//! `run --filter` only lists the scenarios it ran.
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -60,7 +62,7 @@ fn got(r: &Value) -> (String, String) {
     }
 }
 
-fn check(expected: &Expected, report: &Value) -> Vec<String> {
+fn check(expected: &Expected, report: &Value, scenario_names: &BTreeSet<String>) -> Vec<String> {
     let mut problems = Vec::new();
     for (name, t) in &expected.targets {
         for want in std::iter::once(&t.default).chain(t.scenarios.values()) {
@@ -69,15 +71,9 @@ fn check(expected: &Expected, report: &Value) -> Vec<String> {
             }
         }
     }
-    let scenario_names: BTreeSet<&str> = report["scenarios"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|s| s["name"].as_str())
-        .collect();
     for (target, t) in &expected.targets {
         for s in t.scenarios.keys() {
-            if !scenario_names.contains(s.as_str()) {
+            if !scenario_names.contains(s) {
                 problems.push(format!("{target}: expected file names unknown scenario {s}"));
             }
         }
@@ -89,6 +85,12 @@ fn check(expected: &Expected, report: &Value) -> Vec<String> {
         let scenario = r["scenario"].as_str().unwrap_or("");
         seen.insert((target, ""));
         seen.insert((target, scenario));
+        if !scenario_names.contains(scenario) {
+            problems.push(format!(
+                "{target} / {scenario}: not a scenario in the scenarios directory"
+            ));
+            continue;
+        }
         let Some(t) = expected.targets.get(target) else {
             problems.push(format!("{target}: not in the expected file"));
             continue;
@@ -123,8 +125,8 @@ fn check(expected: &Expected, report: &Value) -> Vec<String> {
             problems.push(format!("{target}: no results in the report"));
             continue;
         }
-        for s in &scenario_names {
-            if !seen.contains(&(target.as_str(), *s)) {
+        for s in scenario_names {
+            if !seen.contains(&(target.as_str(), s.as_str())) {
                 problems.push(format!("{target} / {s}: no result in the report"));
             }
         }
@@ -132,11 +134,36 @@ fn check(expected: &Expected, report: &Value) -> Vec<String> {
     problems
 }
 
+/// The `name` of every scenario file in a directory.
+fn scenario_names(dir: &str) -> Result<BTreeSet<String>, String> {
+    let mut names = BTreeSet::new();
+    for entry in std::fs::read_dir(dir).map_err(|e| e.to_string())? {
+        let path = entry.map_err(|e| e.to_string())?.path();
+        if path.extension().is_some_and(|x| x == "toml") {
+            let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            let table: toml::Table = toml::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+            let name = table.get("name").and_then(|n| n.as_str());
+            names.insert(name.ok_or(format!("{}: no name", path.display()))?.to_string());
+        }
+    }
+    if names.is_empty() {
+        return Err("no scenario files".into());
+    }
+    Ok(names)
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let [expected, report] = args.as_slice() else {
-        eprintln!("usage: pp-selftest-check EXPECTED.toml REPORT.json");
+    let [expected, report, dir] = args.as_slice() else {
+        eprintln!("usage: pp-selftest-check EXPECTED.toml REPORT.json SCENARIOS_DIR");
         return ExitCode::from(2);
+    };
+    let scenarios = match scenario_names(dir) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("{dir}: {e}");
+            return ExitCode::from(2);
+        }
     };
     let expected: Expected = match std::fs::read_to_string(expected)
         .map_err(|e| e.to_string())
@@ -158,7 +185,7 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let problems = check(&expected, &report);
+    let problems = check(&expected, &report, &scenarios);
     for p in &problems {
         println!("{p}");
     }
@@ -185,6 +212,10 @@ mod tests {
         json!({ "scenarios": [{"name": "a"}, {"name": "b"}], "results": results })
     }
 
+    fn names() -> BTreeSet<String> {
+        ["a", "b"].map(String::from).into()
+    }
+
     const FILE: &str = r#"
         [targets.t]
         default = "pass"
@@ -201,7 +232,7 @@ mod tests {
             {"target": "down", "scenario": "a", "result": "error", "reason": "target unreachable: pooler: refused"},
             {"target": "down", "scenario": "b", "result": "error", "reason": "target unreachable: pooler: refused"},
         ]));
-        assert_eq!(check(&expected(FILE), &r), Vec::<String>::new());
+        assert_eq!(check(&expected(FILE), &r, &names()), Vec::<String>::new());
     }
 
     #[test]
@@ -213,7 +244,7 @@ mod tests {
             {"target": "down", "scenario": "b", "result": "error", "reason": "target unreachable: pooler: x"},
             {"target": "extra", "scenario": "a", "result": "pass"},
         ]));
-        let p = check(&expected(FILE), &r);
+        let p = check(&expected(FILE), &r, &names());
         assert_eq!(p.len(), 4, "{p:?}");
         assert!(p[0].starts_with("t / a: expected pass, got hang"));
     }
@@ -226,7 +257,32 @@ mod tests {
             {"target": "down", "scenario": "a", "result": "error", "reason": "target unreachable: pooler: x"},
             {"target": "down", "scenario": "b", "result": "error", "reason": "target unreachable: pooler: x"},
         ]));
-        assert_eq!(check(&expected(FILE), &r).len(), 1);
+        assert_eq!(check(&expected(FILE), &r, &names()).len(), 1);
+    }
+
+    #[test]
+    fn filtered_report_is_incomplete() {
+        // `run --filter a` lists only scenario a in the report itself.
+        let r = json!({ "scenarios": [{"name": "a"}], "results": [
+            {"target": "t", "scenario": "a", "result": "pass"},
+            {"target": "down", "scenario": "a", "result": "error", "reason": "target unreachable: pooler: x"},
+        ]});
+        let p = check(&expected(FILE), &r, &names());
+        assert_eq!(
+            p,
+            vec!["down / b: no result in the report", "t / b: no result in the report"]
+        );
+    }
+
+    #[test]
+    fn unknown_scenario_in_report() {
+        let r = report(json!([{"target": "t", "scenario": "zz", "result": "pass"}]));
+        let p = check(&expected(FILE), &r, &names());
+        assert!(
+            p.iter()
+                .any(|l| l == "t / zz: not a scenario in the scenarios directory"),
+            "{p:?}"
+        );
     }
 
     #[test]
@@ -235,7 +291,7 @@ mod tests {
             {"target": "t", "scenario": "a", "result": "pass"},
             {"target": "down", "scenario": "a", "result": "error", "reason": "target unreachable: pooler: x"},
         ]));
-        let p = check(&expected(FILE), &r);
+        let p = check(&expected(FILE), &r, &names());
         assert_eq!(
             p,
             vec!["down / b: no result in the report", "t / b: no result in the report"]
@@ -246,7 +302,7 @@ mod tests {
     fn unknown_names_in_expected_file() {
         let e = expected("[targets.t]\ndefault = \"pass\"\nnope = \"silent\"\nb = \"wrong\"\n");
         let r = report(json!([{"target": "t", "scenario": "a", "result": "pass"}]));
-        let p = check(&e, &r);
+        let p = check(&e, &r, &names());
         assert!(p.iter().any(|l| l.contains("unknown scenario nope")), "{p:?}");
         assert!(p.iter().any(|l| l.contains("unknown expected result")), "{p:?}");
     }
