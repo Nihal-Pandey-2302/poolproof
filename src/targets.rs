@@ -194,6 +194,8 @@ impl Target {
                     "all" => Reset::All,
                     _ => bail!("reset must be \"auto\", \"all\" or a list of statements"),
                 },
+                // An empty list resets nothing, and should warn like a missing one.
+                Some(ResetFile::Statements(statements)) if statements.is_empty() => Reset::None,
                 Some(ResetFile::Statements(statements)) => Reset::Statements(
                     statements
                         .iter()
@@ -680,6 +682,7 @@ mod tests {
             Target::from_file(file, &env_of(&[("X", "1")])).map(|t| t.reset)
         };
         assert!(matches!(reset("").unwrap(), Reset::None));
+        assert!(matches!(reset("reset = []").unwrap(), Reset::None));
         assert!(matches!(reset("reset = 'auto'").unwrap(), Reset::Auto));
         assert!(matches!(reset("reset = 'all'").unwrap(), Reset::All));
         let Reset::Statements(s) = reset("reset = ['SELECT ${X}', 'SELECT 2']").unwrap() else {
