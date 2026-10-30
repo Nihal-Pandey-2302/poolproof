@@ -5,6 +5,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Jobs get read access only; a job that needs more says so itself.
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -80,6 +84,7 @@ jobs:
     if: github.ref == 'refs/heads/main' && !github.event.repository.private
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       pages: write
       id-token: write
     environment:
