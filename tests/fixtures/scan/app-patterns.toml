@@ -185,3 +185,29 @@ note = "named arguments in any order"
 sql = "SELECT set_config('app.user_id', new_value => $1, is_local => false)"
 form = "log"
 expect = ["session-set-config"]
+
+[[query]]
+sql = 'CREATE VIEW active_locks AS SELECT pg_advisory_lock(5)'
+form = "sql"
+expect = []
+note = "creating a view runs nothing"
+
+[[query]]
+sql = '''CREATE FUNCTION app.take_job_lock(job bigint) RETURNS void LANGUAGE sql
+BEGIN ATOMIC
+  SELECT pg_advisory_lock(job);
+END'''
+form = "sql"
+expect = []
+note = "creating a function runs nothing; calling it is what takes the lock"
+
+[[query]]
+sql = 'CREATE RULE audit_insert AS ON INSERT TO orders DO ALSO SELECT pg_advisory_lock(1)'
+form = "sql"
+expect = []
+
+[[query]]
+sql = 'CREATE MATERIALIZED VIEW lock_snapshot AS SELECT pg_advisory_lock(1)'
+form = "sql"
+expect = ["session-advisory-lock"]
+note = "a materialized view runs its query when created"

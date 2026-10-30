@@ -266,23 +266,37 @@ enum IsLocal {
     False,
 }
 
-/// Every function call in the query, including inside PREPARE and DECLARE CURSOR,
-/// which pg_query's own walk doesn't enter.
+/// Every function call the query runs, including inside PREPARE and DECLARE CURSOR,
+/// which pg_query's own walk doesn't enter. Calls in views, functions and rules are
+/// left out: creating them runs nothing.
 fn function_calls(parsed: &pg_query::ParseResult) -> Vec<&FuncCall> {
-    let mut nodes = parsed.protobuf.nodes();
+    let mut statements: Vec<&NodeEnum> = parsed
+        .protobuf
+        .stmts
+        .iter()
+        .filter_map(|raw| raw.stmt.as_ref()?.node.as_ref())
+        .collect();
     let mut calls = Vec::new();
-    while let Some((node, ..)) = nodes.pop() {
-        let inner = match node {
-            NodeRef::FuncCall(call) => {
-                calls.push(call);
-                None
+    while let Some(statement) = statements.pop() {
+        match statement {
+            NodeEnum::ViewStmt(_) | NodeEnum::CreateFunctionStmt(_) | NodeEnum::RuleStmt(_) => continue,
+            NodeEnum::CreateSchemaStmt(schema) => {
+                statements.extend(schema.schema_elts.iter().filter_map(|e| e.node.as_ref()));
+                continue;
             }
-            NodeRef::PrepareStmt(prepare) => prepare.query.as_deref(),
-            NodeRef::DeclareCursorStmt(cursor) => cursor.query.as_deref(),
-            _ => None,
-        };
-        if let Some(inner) = inner.and_then(|n| n.node.as_ref()) {
-            nodes.extend(inner.nodes());
+            _ => {}
+        }
+        for (node, ..) in statement.nodes() {
+            let inner = match node {
+                NodeRef::FuncCall(call) => {
+                    calls.push(call);
+                    None
+                }
+                NodeRef::PrepareStmt(prepare) => prepare.query.as_deref(),
+                NodeRef::DeclareCursorStmt(cursor) => cursor.query.as_deref(),
+                _ => None,
+            };
+            statements.extend(inner.and_then(|n| n.node.as_ref()));
         }
     }
     calls
@@ -534,6 +548,28 @@ mod tests {
             "SELECT set_config(is_local => false, setting_name => 'a', new_value => 'b')"
         ));
         assert!(rule("SELECT set_config('a', new_value => 'b', is_local => $1)"));
+    }
+
+    #[test]
+    fn ignores_calls_in_stored_definitions() {
+        // Creating these runs nothing; the call happens later, wherever they are used.
+        assert!(rules("CREATE VIEW v AS SELECT pg_advisory_lock(5)").is_empty());
+        assert!(rules("CREATE OR REPLACE VIEW v AS SELECT set_config('a', 'b', false)").is_empty());
+        assert!(
+            rules("CREATE FUNCTION f() RETURNS bool LANGUAGE sql BEGIN ATOMIC SELECT pg_advisory_lock(1); END")
+                .is_empty()
+        );
+        assert!(rules("CREATE RULE r AS ON INSERT TO t DO ALSO SELECT pg_advisory_lock(1)").is_empty());
+        assert!(rules("CREATE SCHEMA s CREATE VIEW v AS SELECT pg_advisory_lock(1)").is_empty());
+        // These do run the query now.
+        assert_eq!(
+            rules("CREATE MATERIALIZED VIEW m AS SELECT pg_advisory_lock(1)"),
+            vec!["session-advisory-lock"]
+        );
+        assert_eq!(
+            rules("SELECT pg_advisory_lock(1); CREATE VIEW v AS SELECT 1"),
+            vec!["session-advisory-lock"]
+        );
     }
 
     #[test]
