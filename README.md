@@ -150,7 +150,8 @@ Without `--pooler`, the exit code is 1 if anything would break under transaction
     sarif_file: poolproof.sarif
 ```
 
-Rules today: session `SET`/`RESET` (including `SET ROLE`) and `set_config(..., false)`,
+Rules today: session `SET`/`RESET` (including `SET ROLE`) and `set_config(..., false)` (a parameter there, as pg_stat_statements
+shows it, gives a warning to check the value),
 session advisory locks, `LISTEN`, temp tables without `ON COMMIT DROP`, `WITH HOLD`
 cursors, SQL-level `PREPARE`, `DISCARD`, and query strings that start a transaction and
 run more statements in it.

@@ -40,7 +40,6 @@ expect = ["session-set-config"]
 sql = 'SELECT pg_catalog.set_config($1, $2, $3)'
 form = "pgss"
 expect = ["session-set-config"]
-pending = "C11"
 note = "same, pg_stat_statements (merged with unqualified set_config; keeps the first text seen)"
 
 [[query]]

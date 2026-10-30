@@ -4,7 +4,6 @@
 sql = 'SELECT set_config($1, $2, $3)'
 form = "pgss"
 expect = ["session-set-config"]
-pending = "C11"
 note = "ensure_timezone on connect (Django 4.2+): set_config('TimeZone', %s, false). pg_stat_statements turns false into $3"
 
 [[query]]

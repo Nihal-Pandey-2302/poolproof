@@ -46,7 +46,6 @@ note = "row-level security tenant id per request, session-scoped by mistake"
 sql = 'select set_config($1, $2, $3)'
 form = "pgss"
 expect = ["session-set-config"]
-pending = "C11"
 note = "same, pg_stat_statements"
 
 [[query]]

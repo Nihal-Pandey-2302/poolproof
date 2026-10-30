@@ -105,7 +105,6 @@ note = "applies at next login, not to the current session"
 sql = "WITH ctx AS (SELECT set_config('app.tenant_id', $1, true)) SELECT o.* FROM orders o, ctx WHERE o.archived = false"
 form = "log"
 expect = []
-pending = "C11"
 note = "false elsewhere in the query, set_config itself is transaction-scoped"
 
 [[query]]
