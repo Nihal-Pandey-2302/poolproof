@@ -55,23 +55,41 @@ impl FromStr for RawMessage {
         let message = match command {
             "parse" => {
                 let (n, sql) = rest.split_once(' ').context("usage: parse NAME SQL")?;
-                RawMessage::Parse { name: name(n), sql: sql.to_string() }
+                RawMessage::Parse {
+                    name: name(n),
+                    sql: sql.to_string(),
+                }
             }
             "bind" => match words.as_slice() {
-                [portal, statement] => RawMessage::Bind { portal: name(portal), statement: name(statement) },
+                [portal, statement] => RawMessage::Bind {
+                    portal: name(portal),
+                    statement: name(statement),
+                },
                 _ => bail!("usage: bind PORTAL STATEMENT"),
             },
             "describe" => match words.as_slice() {
-                [k, n] => RawMessage::Describe { portal: kind(k)?, name: name(n) },
+                [k, n] => RawMessage::Describe {
+                    portal: kind(k)?,
+                    name: name(n),
+                },
                 _ => bail!("usage: describe statement|portal NAME"),
             },
             "execute" => match words.as_slice() {
-                [portal] => RawMessage::Execute { portal: name(portal), max_rows: 0 },
-                [portal, rows] => RawMessage::Execute { portal: name(portal), max_rows: rows.parse()? },
+                [portal] => RawMessage::Execute {
+                    portal: name(portal),
+                    max_rows: 0,
+                },
+                [portal, rows] => RawMessage::Execute {
+                    portal: name(portal),
+                    max_rows: rows.parse()?,
+                },
                 _ => bail!("usage: execute PORTAL [MAX_ROWS]"),
             },
             "close" => match words.as_slice() {
-                [k, n] => RawMessage::Close { portal: kind(k)?, name: name(n) },
+                [k, n] => RawMessage::Close {
+                    portal: kind(k)?,
+                    name: name(n),
+                },
                 _ => bail!("usage: close statement|portal NAME"),
             },
             "sync" => RawMessage::Sync,
@@ -142,7 +160,12 @@ impl RawConn {
         let stream = timeout(connect_timeout, TcpStream::connect((host.as_str(), port)))
             .await
             .context("connect timed out")??;
-        let mut conn = RawConn { stream, buf: BytesMut::new(), url: url.to_string(), pid: None };
+        let mut conn = RawConn {
+            stream,
+            buf: BytesMut::new(),
+            url: url.to_string(),
+            pid: None,
+        };
         let mut out = BytesMut::new();
         frontend::startup_message([("user", user.as_str()), ("database", dbname.as_str())], &mut out)?;
         conn.send(&out).await?;
@@ -180,7 +203,10 @@ impl RawConn {
                     frontend::sasl_response(s.message(), &mut out)?;
                 }
                 Message::AuthenticationSaslFinal(body) => {
-                    scram.as_mut().context("SCRAM final before start")?.finish(body.data())?;
+                    scram
+                        .as_mut()
+                        .context("SCRAM final before start")?
+                        .finish(body.data())?;
                     continue;
                 }
                 Message::ErrorResponse(body) => bail!("startup failed: {}", error_summary(&body)),
@@ -212,7 +238,12 @@ impl RawConn {
     /// ReadyForQuery per Sync/Query/CopyDone. Without any of those (e.g. only Flush)
     /// it reads until the server has been quiet for `quiet`. Ends with TIMEOUT or
     /// CLOSED if the replies stop early.
-    pub async fn exchange(&mut self, messages: &[RawMessage], step_timeout: Duration, quiet: Duration) -> Result<Vec<String>> {
+    pub async fn exchange(
+        &mut self,
+        messages: &[RawMessage],
+        step_timeout: Duration,
+        quiet: Duration,
+    ) -> Result<Vec<String>> {
         let mut out = BytesMut::new();
         for m in messages {
             m.write(&mut out)?;
@@ -224,7 +255,11 @@ impl RawConn {
         let deadline = Instant::now() + step_timeout;
         let mut lines = Vec::new();
         while wait_for_quiet || cycles > 0 {
-            let until = if wait_for_quiet { (Instant::now() + quiet).min(deadline) } else { deadline };
+            let until = if wait_for_quiet {
+                (Instant::now() + quiet).min(deadline)
+            } else {
+                deadline
+            };
             let message = match self.next(until).await? {
                 Next::Message(m) => m,
                 // Quiet for long enough: everything that was coming has arrived.
@@ -298,7 +333,10 @@ fn summary(message: &Message) -> Result<Option<String>> {
         }
         // The code is stable across servers; the wording is not.
         Message::ErrorResponse(body) => {
-            format!("Error {}", error_summary(body).split_whitespace().next().unwrap_or_default())
+            format!(
+                "Error {}",
+                error_summary(body).split_whitespace().next().unwrap_or_default()
+            )
         }
         Message::ReadyForQuery(body) => format!("ReadyForQuery {}", body.status() as char),
         _ => return Ok(None),
@@ -313,12 +351,48 @@ mod tests {
     #[test]
     fn parses_messages() {
         let parse = |s: &str| s.parse::<RawMessage>().unwrap();
-        assert_eq!(parse("parse s1 SELECT 1, 2"), RawMessage::Parse { name: "s1".into(), sql: "SELECT 1, 2".into() });
-        assert_eq!(parse("parse - SELECT 1"), RawMessage::Parse { name: "".into(), sql: "SELECT 1".into() });
-        assert_eq!(parse("bind - s1"), RawMessage::Bind { portal: "".into(), statement: "s1".into() });
-        assert_eq!(parse("execute - 5"), RawMessage::Execute { portal: "".into(), max_rows: 5 });
-        assert_eq!(parse("describe statement s1"), RawMessage::Describe { portal: false, name: "s1".into() });
-        assert_eq!(parse("close portal p"), RawMessage::Close { portal: true, name: "p".into() });
+        assert_eq!(
+            parse("parse s1 SELECT 1, 2"),
+            RawMessage::Parse {
+                name: "s1".into(),
+                sql: "SELECT 1, 2".into()
+            }
+        );
+        assert_eq!(
+            parse("parse - SELECT 1"),
+            RawMessage::Parse {
+                name: "".into(),
+                sql: "SELECT 1".into()
+            }
+        );
+        assert_eq!(
+            parse("bind - s1"),
+            RawMessage::Bind {
+                portal: "".into(),
+                statement: "s1".into()
+            }
+        );
+        assert_eq!(
+            parse("execute - 5"),
+            RawMessage::Execute {
+                portal: "".into(),
+                max_rows: 5
+            }
+        );
+        assert_eq!(
+            parse("describe statement s1"),
+            RawMessage::Describe {
+                portal: false,
+                name: "s1".into()
+            }
+        );
+        assert_eq!(
+            parse("close portal p"),
+            RawMessage::Close {
+                portal: true,
+                name: "p".into()
+            }
+        );
         assert_eq!(parse("query SELECT 1"), RawMessage::Query("SELECT 1".into()));
         assert_eq!(parse("sync"), RawMessage::Sync);
         assert!("bind s1".parse::<RawMessage>().is_err());

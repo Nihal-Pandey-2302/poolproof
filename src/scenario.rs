@@ -152,14 +152,23 @@ impl Step {
         }
         if let Some(sql) = &self.simple {
             return Ok(match (self.abandon_after_ms, self.background) {
-                (Some(_), true) => bail!("step for client '{}' can't be both abandoned and background", self.client),
-                (Some(ms), false) => Action::Abandon { sql, after: Duration::from_millis(ms) },
+                (Some(_), true) => bail!(
+                    "step for client '{}' can't be both abandoned and background",
+                    self.client
+                ),
+                (Some(ms), false) => Action::Abandon {
+                    sql,
+                    after: Duration::from_millis(ms),
+                },
                 (None, true) => Action::Background(sql),
                 (None, false) => Action::Simple(sql),
             });
         }
         if self.abandon_after_ms.is_some() || self.background {
-            bail!("abandon_after_ms and background for client '{}' only work with simple", self.client);
+            bail!(
+                "abandon_after_ms and background for client '{}' only work with simple",
+                self.client
+            );
         }
         if let Some(sql) = &self.prepare {
             let Some(name) = &self.name else {
@@ -173,7 +182,10 @@ impl Step {
         if let Some(messages) = &self.send {
             let messages = messages
                 .iter()
-                .map(|m| m.parse().with_context(|| format!("in send for client '{}': `{m}`", self.client)))
+                .map(|m| {
+                    m.parse()
+                        .with_context(|| format!("in send for client '{}': `{m}`", self.client))
+                })
                 .collect::<Result<Vec<RawMessage>>>()?;
             return Ok(Action::Send(messages));
         }

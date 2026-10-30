@@ -87,7 +87,10 @@ pub const RULES: &[(&str, &str)] = &[
     ("with-hold-cursor", "WITH HOLD cursor"),
     ("sql-prepare", "SQL-level PREPARE"),
     ("discard", "DISCARD on a shared server connection"),
-    ("multi-statement-transaction", "Several statements in one query string that starts a transaction"),
+    (
+        "multi-statement-transaction",
+        "Several statements in one query string that starts a transaction",
+    ),
 ];
 
 pub struct Report {
@@ -131,7 +134,10 @@ fn load_csv(text: &str) -> Result<Vec<Query>> {
         let record = record?;
         out.push(Query {
             text: record.get(query_col).unwrap_or_default().to_string(),
-            calls: calls_col.and_then(|c| record.get(c)).and_then(|c| c.parse().ok()).unwrap_or(1),
+            calls: calls_col
+                .and_then(|c| record.get(c))
+                .and_then(|c| c.parse().ok())
+                .unwrap_or(1),
             line: record.position().map_or(0, |p| p.line() as usize),
         });
     }
@@ -148,7 +154,11 @@ fn load_sql(text: &str) -> Result<Vec<Query>> {
         .map(|s| {
             // The splitter returns slices of `text`, so the offset gives the line.
             let start = s.as_ptr() as usize - text.as_ptr() as usize + (s.len() - s.trim_start().len());
-            Query { text: s.trim().to_string(), calls: 1, line: text[..start].matches('\n').count() + 1 }
+            Query {
+                text: s.trim().to_string(),
+                calls: 1,
+                line: text[..start].matches('\n').count() + 1,
+            }
         })
         .collect())
 }
@@ -181,7 +191,11 @@ fn load_stderr_log(text: &str) -> Vec<Query> {
         let sql = line.split_once("LOG:  ").and_then(|(_, message)| logged_sql(message));
         open = sql.is_some();
         if let Some(sql) = sql {
-            out.push(Query { text: sql.to_string(), calls: 1, line: i + 1 });
+            out.push(Query {
+                text: sql.to_string(),
+                calls: 1,
+                line: i + 1,
+            });
         }
     }
     out
@@ -194,7 +208,11 @@ fn load_json_log(text: &str) -> Vec<Query> {
         .filter_map(|(i, line)| {
             let entry: serde_json::Value = serde_json::from_str(line).ok()?;
             let sql = logged_sql(entry.get("message")?.as_str()?)?;
-            Some(Query { text: sql.to_string(), calls: 1, line: i + 1 })
+            Some(Query {
+                text: sql.to_string(),
+                calls: 1,
+                line: i + 1,
+            })
         })
         .collect()
 }
@@ -233,7 +251,10 @@ pub fn scan(queries: &[Query]) -> Report {
         };
 
         let starts_transaction = parsed.protobuf.stmts.first().is_some_and(|raw| {
-            matches!(raw.stmt.as_ref().and_then(|s| s.node.as_ref()), Some(NodeEnum::TransactionStmt(_)))
+            matches!(
+                raw.stmt.as_ref().and_then(|s| s.node.as_ref()),
+                Some(NodeEnum::TransactionStmt(_))
+            )
         });
         if starts_transaction && parsed.protobuf.stmts.len() > 1 {
             push(
@@ -281,7 +302,11 @@ pub fn scan(queries: &[Query]) -> Report {
                     let transaction_scoped =
                         set.is_local || (kind == VariableSetKind::VarSetMulti && set.name == "TRANSACTION");
                     if !transaction_scoped {
-                        let target = if kind == VariableSetKind::VarResetAll { "ALL" } else { set.name.as_str() };
+                        let target = if kind == VariableSetKind::VarResetAll {
+                            "ALL"
+                        } else {
+                            set.name.as_str()
+                        };
                         push(
                             "session-set",
                             Severity::Warn,
@@ -292,9 +317,10 @@ pub fn scan(queries: &[Query]) -> Report {
                             ),
                         );
                         let refined = match target {
-                            "role" | "session_authorization" => {
-                                Some(vec!["set-role-isolated-between-clients", "set-role-reset-after-pinned-disconnect"])
-                            }
+                            "role" | "session_authorization" => Some(vec![
+                                "set-role-isolated-between-clients",
+                                "set-role-reset-after-pinned-disconnect",
+                            ]),
                             "search_path" => Some(vec!["search-path-isolated-between-clients"]),
                             _ => None,
                         };
@@ -338,8 +364,7 @@ pub fn scan(queries: &[Query]) -> Report {
                         push(
                             "temp-table",
                             Severity::Breaks,
-                            "CREATE TEMP TABLE ... AS / SELECT INTO TEMP creates a session-scoped table."
-                                .to_string(),
+                            "CREATE TEMP TABLE ... AS / SELECT INTO TEMP creates a session-scoped table.".to_string(),
                         );
                     }
                 }
@@ -396,7 +421,11 @@ pub fn scan(queries: &[Query]) -> Report {
     }
 
     findings.sort_by(|a, b| b.severity.cmp(&a.severity).then(b.calls.cmp(&a.calls)));
-    Report { findings, queries: merged.len(), unparsed }
+    Report {
+        findings,
+        queries: merged.len(),
+        unparsed,
+    }
 }
 
 /// True if the statement passes a literal `false` anywhere. Good enough to tell
@@ -427,7 +456,11 @@ mod tests {
     use super::*;
 
     fn query(text: &str, calls: u64) -> Query {
-        Query { text: text.to_string(), calls, line: 1 }
+        Query {
+            text: text.to_string(),
+            calls,
+            line: 1,
+        }
     }
 
     fn rules(sql: &str) -> Vec<&'static str> {
@@ -442,12 +475,21 @@ mod tests {
         assert_eq!(rules("LISTEN jobs"), vec!["listen"]);
         assert_eq!(rules("CREATE TEMP TABLE t (x int)"), vec!["temp-table"]);
         assert_eq!(rules("SELECT 1 INTO TEMP t"), vec!["temp-table"]);
-        assert_eq!(rules("DECLARE c CURSOR WITH HOLD FOR SELECT 1"), vec!["with-hold-cursor"]);
+        assert_eq!(
+            rules("DECLARE c CURSOR WITH HOLD FOR SELECT 1"),
+            vec!["with-hold-cursor"]
+        );
         assert_eq!(rules("PREPARE q AS SELECT 1"), vec!["sql-prepare"]);
-        assert_eq!(rules("SELECT set_config('app.user', '1', false)"), vec!["session-set-config"]);
+        assert_eq!(
+            rules("SELECT set_config('app.user', '1', false)"),
+            vec!["session-set-config"]
+        );
         assert_eq!(rules("SET ROLE app_reader"), vec!["session-set"]);
         assert_eq!(rules("DISCARD ALL"), vec!["discard"]);
-        assert_eq!(rules("BEGIN; INSERT INTO t VALUES (1); COMMIT"), vec!["multi-statement-transaction"]);
+        assert_eq!(
+            rules("BEGIN; INSERT INTO t VALUES (1); COMMIT"),
+            vec!["multi-statement-transaction"]
+        );
         assert_eq!(rules("ROLLBACK; SELECT 1"), vec!["multi-statement-transaction"]);
     }
 
@@ -466,7 +508,13 @@ mod tests {
 
     #[test]
     fn merges_duplicate_queries() {
-        let report = scan(&[query("LISTEN a", 2), Query { line: 7, ..query("LISTEN a", 3) }]);
+        let report = scan(&[
+            query("LISTEN a", 2),
+            Query {
+                line: 7,
+                ..query("LISTEN a", 3)
+            },
+        ]);
         assert_eq!(report.findings.len(), 1);
         assert_eq!(report.findings[0].calls, 5);
         assert_eq!(report.findings[0].line, 1);
@@ -475,12 +523,28 @@ mod tests {
     #[test]
     fn findings_point_to_scenarios() {
         let scenarios = |sql: &str| scan(&[query(sql, 1)]).findings[0].scenarios.clone();
-        assert_eq!(scenarios("SET work_mem = '1MB'"), vec!["set-isolated-between-clients", "set-does-not-leak-after-disconnect"]);
-        assert_eq!(scenarios("SET search_path TO app"), vec!["search-path-isolated-between-clients"]);
-        assert_eq!(scenarios("SET ROLE r"), vec!["set-role-isolated-between-clients", "set-role-reset-after-pinned-disconnect"]);
+        assert_eq!(
+            scenarios("SET work_mem = '1MB'"),
+            vec!["set-isolated-between-clients", "set-does-not-leak-after-disconnect"]
+        );
+        assert_eq!(
+            scenarios("SET search_path TO app"),
+            vec!["search-path-isolated-between-clients"]
+        );
+        assert_eq!(
+            scenarios("SET ROLE r"),
+            vec![
+                "set-role-isolated-between-clients",
+                "set-role-reset-after-pinned-disconnect"
+            ]
+        );
         assert_eq!(scenarios("LISTEN a"), vec!["listen-notify-delivered"]);
         // Every scenario a rule points to must exist.
-        let names: Vec<String> = crate::scenario::bundled().unwrap().into_iter().map(|s| s.name).collect();
+        let names: Vec<String> = crate::scenario::bundled()
+            .unwrap()
+            .into_iter()
+            .map(|s| s.name)
+            .collect();
         for (rule, _) in RULES {
             for s in scenarios_for(rule) {
                 assert!(names.iter().any(|n| n == s), "{rule} points to missing scenario {s}");
