@@ -1,0 +1,30 @@
+name = "temp-table-survives-own-transactions"
+description = "A temp table must stay usable by the client that created it, across its later transactions."
+
+[[step]]
+client = "a"
+simple = "CREATE TEMP TABLE pp_own_tmp (x int)"
+
+[[step]]
+client = "a"
+simple = "SELECT 1"
+
+[[step]]
+client = "a"
+simple = "SELECT count(*) FROM pp_own_tmp"
+
+[[step]]
+client = "a"
+simple = "BEGIN"
+
+[[step]]
+client = "a"
+simple = "SELECT 1"
+
+[[step]]
+client = "a"
+simple = "COMMIT"
+
+[[step]]
+client = "a"
+simple = "SELECT count(*) FROM pp_own_tmp"
