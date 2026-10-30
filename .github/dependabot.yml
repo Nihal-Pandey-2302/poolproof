@@ -4,6 +4,11 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      # postgres-protocol's iterators implement fallible-iterator 0.2's trait, so a
+      # newer major doesn't compile until postgres-protocol moves.
+      - dependency-name: fallible-iterator
+        update-types: ["version-update:semver-major"]
     groups:
       cargo:
         patterns: ["*"]
@@ -19,13 +24,15 @@ updates:
   # The Postgres and pooler images are the test matrix: each version is pinned on purpose
   # and has committed results in results/. A bump would silently drop a tested version
   # and break the verdict comparison in CI. New versions are added by hand, next to the
-  # old ones. Only helper images get updates here.
+  # old ones. Only helper images get updates here. Dependabot may name an image with or
+  # without its registry (ghcr.io/pgdogdev/pgdog is reported as pgdogdev/pgdog), so
+  # the patterns match any prefix.
   - package-ecosystem: docker-compose
     directory: /docker
     schedule:
       interval: weekly
     ignore:
-      - dependency-name: postgres
-      - dependency-name: edoburu/pgbouncer
-      - dependency-name: ghcr.io/pgdogdev/pgdog
-      - dependency-name: supabase/supavisor
+      - dependency-name: "*postgres"
+      - dependency-name: "*pgbouncer"
+      - dependency-name: "*pgdog"
+      - dependency-name: "*supavisor"
