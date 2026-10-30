@@ -50,10 +50,4 @@ First release.
   them.
 - Release binaries are built with thin LTO and stripped: 9.2 MB to 6.5 MB on Linux x86_64.
 
-### Security
-
-- HTML report: `refs` from a results file become links only for `http(s)://` URLs, with
-  `rel="noopener noreferrer"`, and the page has a Content-Security-Policy that allows only
-  its own inline script and style (by hash).
-
 [Unreleased]: https://github.com/Nihal-Pandey-2302/poolproof/commits/main
