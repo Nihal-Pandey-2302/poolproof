@@ -1,0 +1,102 @@
+//! `scan`: flags queries that break under transaction pooling.
+
+use serde::Serialize;
+
+mod input;
+mod rules;
+
+pub use input::load_queries;
+pub use rules::scan;
+
+/// Severity of a finding under transaction pooling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Severity {
+    /// Depends on the pooler and its config. Check before switching.
+    Warn,
+    /// Breaks or leaks state under transaction pooling.
+    Breaks,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Finding {
+    pub rule: &'static str,
+    pub severity: Severity,
+    pub detail: String,
+    pub query: String,
+    pub calls: u64,
+    /// Line in the input where the query first appears.
+    pub line: usize,
+    /// poolproof scenarios that test this pattern, so `--pooler` can show what a
+    /// given pooler actually does with it.
+    pub scenarios: Vec<&'static str>,
+    /// What those scenarios showed on the pooler given with `--pooler`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub on_pooler: Option<PoolerCheck>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PoolerCheck {
+    pub target: String,
+    pub postgres: Option<String>,
+    pub status: PoolerStatus,
+    /// Each related scenario and its result there: pass, silent, error, hang.
+    pub scenarios: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PoolerStatus {
+    /// A related scenario fails silently: wrong results, no error.
+    Breaks,
+    /// The pooler refuses the pattern with an error (or hangs), so it fails loudly.
+    Rejected,
+    /// The pooler passes every related scenario.
+    Ok,
+}
+
+/// A query from the input, with how often it ran and where it first appears.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Query {
+    pub text: String,
+    pub calls: u64,
+    pub line: usize,
+}
+
+/// Scenarios that exercise each rule. `session-set` is refined by parameter below.
+fn scenarios_for(rule: &str) -> Vec<&'static str> {
+    match rule {
+        "session-advisory-lock" => vec!["advisory-lock-released-on-disconnect"],
+        "session-set-config" => vec!["empty-search-path-from-set-config", "set-isolated-between-clients"],
+        "session-set" => vec!["set-isolated-between-clients", "set-does-not-leak-after-disconnect"],
+        "listen" => vec!["listen-notify-delivered"],
+        "temp-table" => vec!["temp-table-isolated-between-clients"],
+        "with-hold-cursor" => vec!["cursor-isolated-between-clients"],
+        "sql-prepare" => vec!["sql-prepare-isolated-between-clients"],
+        "discard" => vec!["discard-all-resets-settings"],
+        "multi-statement-transaction" => vec!["multi-statement-begin"],
+        _ => vec![],
+    }
+}
+
+/// Every rule with a one-line summary, for SARIF output.
+pub const RULES: &[(&str, &str)] = &[
+    ("session-advisory-lock", "Session-level advisory lock"),
+    ("session-set-config", "set_config() scoped to the session"),
+    ("session-set", "SET or RESET scoped to the session"),
+    ("listen", "LISTEN needs a dedicated session"),
+    ("temp-table", "Temp table that outlives the transaction"),
+    ("with-hold-cursor", "WITH HOLD cursor"),
+    ("sql-prepare", "SQL-level PREPARE"),
+    ("discard", "DISCARD on a shared server connection"),
+    (
+        "multi-statement-transaction",
+        "Several statements in one query string that starts a transaction",
+    ),
+];
+
+pub struct Report {
+    pub findings: Vec<Finding>,
+    pub queries: usize,
+    pub unparsed: usize,
+}

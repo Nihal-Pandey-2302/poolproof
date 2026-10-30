@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 
-use crate::raw::RawMessage;
+use crate::runner::raw::RawMessage;
 use serde::{Deserialize, Serialize};
 
 /// Pooling mode of a target. Scenarios list the modes they apply to.
