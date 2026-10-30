@@ -32,6 +32,27 @@ jobs:
       # RESULTS.md must be what the committed results render to.
       - run: cargo run -q -- report results/postgres-*.json | diff RESULTS.md -
 
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
+        with:
+          toolchain: stable
+          components: rustfmt
+      - run: cargo fmt --check
+
+  # rust-version in Cargo.toml must stay true.
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
+        with:
+          toolchain: "1.88"
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: cargo check --locked --all-targets
+
   # The self-test proxies (tools/pp-proxy), a separate crate.
   tools:
     runs-on: ubuntu-latest
@@ -39,7 +60,7 @@ jobs:
       run:
         working-directory: tools/pp-proxy
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
         with:
           toolchain: stable
@@ -79,6 +100,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
       - name: Start test bed
+        id: bed
         run: docker compose -f docker/compose.yml up -d --wait --wait-timeout 300
 
       - name: Run scenarios
@@ -118,6 +140,18 @@ jobs:
             echo "::error::Verdicts changed on Postgres ${{ matrix.postgres }}. Run scripts/update-results.sh and commit."
             exit 1
           fi
+
+      # Tests marked #[ignore] need a real Postgres. They run after the scenarios so they
+      # can't change a verdict, and even when the comparison failed. They get their own
+      # database: the poolers may still hold locks and transactions that scenarios leaked
+      # in `app`. --release reuses the dependencies built above.
+      - name: Tests against Postgres
+        if: ${{ !cancelled() && steps.bed.outcome == 'success' }}
+        env:
+          POOLPROOF_TEST_PG: postgres://postgres:postgres@127.0.0.1:55432/pp_test
+        run: |
+          docker compose -f docker/compose.yml exec -T postgres createdb -U postgres pp_test
+          cargo test --release --locked -- --ignored
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
