@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use tokio::time::{Instant, timeout};
 
 use super::compare::{FailKind, Mismatch, Verdict, baseline_failure};
-use super::pg::{connect, wait_ready};
+use super::pg::{connect, connect_with, wait_ready};
 use super::steps::run_steps;
 use super::{Outcome, Timeouts};
 use crate::scenario::Scenario;
@@ -20,7 +20,9 @@ async fn run_direct(direct: &Endpoint, statements: &[Statement], t: &Timeouts) -
     if statements.is_empty() {
         return Ok(());
     }
-    let (client, driver, _) = connect(direct, t).await?;
+    // Waits for the backend to exit on close, so a setup that ends holding a lock or a
+    // temp table is fully gone before the steps start.
+    let (client, driver, _) = connect_with(direct, t, true).await?;
     for s in statements {
         if let Err(e) = client.batch_execute(s.sql()).await {
             // The statement is shown as written. The server's message can quote the
@@ -34,7 +36,10 @@ async fn run_direct(direct: &Endpoint, statements: &[Statement], t: &Timeouts) -
         }
     }
     drop(client);
-    let _ = driver.await;
+    // TODO(#26): t.housekeeping once Timeouts has it.
+    if timeout(t.step, driver).await.is_err() {
+        anyhow::bail!("the backend did not exit within {:?} of the disconnect", t.step);
+    }
     Ok(())
 }
 
