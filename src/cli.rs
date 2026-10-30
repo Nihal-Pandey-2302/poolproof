@@ -6,6 +6,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 use crate::output::sarif::sarif;
 use crate::output::scan::print_scan;
+use crate::output::text::{Style, color_enabled};
 use crate::runner::{self, Verdict};
 use crate::scenario::{self, PoolMode};
 use crate::targets::Targets;
@@ -43,6 +44,9 @@ enum Command {
         /// Only run scenarios whose name contains this.
         #[arg(short, long)]
         filter: Option<String>,
+        /// Only run this target from the targets file. Repeat for several.
+        #[arg(long = "target", value_name = "NAME")]
+        only: Vec<String>,
         /// Run scenarios in reverse order. Verdicts should not change; if they do,
         /// state is leaking between scenarios.
         #[arg(long)]
@@ -130,6 +134,7 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
             mode,
             scenarios,
             filter,
+            only,
             reverse,
             verbose,
             format,
@@ -147,8 +152,12 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
             let text = matches!(format, RunFormat::Text);
             let opts = runner::suite::RunOptions {
                 filter: filter.as_deref(),
+                targets: &only,
                 text,
-                verbose,
+                style: Style {
+                    verbose,
+                    color: color_enabled(),
+                },
                 check_scenarios,
             };
             let (target_infos, results) = runner::suite::run(&targets.targets, &scenarios, &opts).await?;

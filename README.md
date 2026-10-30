@@ -96,9 +96,13 @@ mode = "transaction"
 reset = ["SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'"]
 ```
 
+`--target NAME` runs only that target from the file (repeat it for several).
+
 To share the outcome with your team, `--format html` writes one self-contained page with
 the grid and every step's trace. `--format json` saves the raw results;
-`poolproof report a.json b.json --format html` (or `markdown`) combines saved runs.
+`poolproof report a.json b.json --format html` (or `markdown`) combines saved runs. In
+these formats, a progress line per result goes to stderr. Text output is colored on a
+terminal unless `NO_COLOR` is set.
 
 Scenarios create and drop their own objects (prefixed `pp_`), so use a scratch database.
 That matters even more with `reset`, which kills every session on it. Without `reset`,
