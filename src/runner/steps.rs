@@ -7,7 +7,7 @@ use tokio::time::timeout;
 use tokio_postgres::NoTls;
 
 use super::pg::{Conn, backend_pid, connect, db_error, row_value, simple_outcome, wait_backend_gone};
-use super::raw::RawConn;
+use super::raw::{ExchangeOpts, RawConn};
 use super::{Outcome, Timeouts};
 use crate::scenario::{Action, Scenario};
 
@@ -25,6 +25,11 @@ pub async fn run_steps(scenario: &Scenario, pooled: &str, direct: &str, t: &Time
         .map(|s| s.client.as_str())
         .collect();
     let mut raw: HashMap<&str, RawConn> = HashMap::new();
+    let exchange_opts = ExchangeOpts {
+        step: t.step,
+        quiet: t.quiet,
+        parameter_status: false,
+    };
 
     for step in &scenario.steps {
         if raw_clients.contains(step.client.as_str()) {
@@ -46,7 +51,7 @@ pub async fn run_steps(scenario: &Scenario, pooled: &str, direct: &str, t: &Time
                         }
                     }
                     let conn = raw.get_mut(step.client.as_str()).expect("just connected");
-                    match conn.exchange(&messages, t.step, t.quiet).await {
+                    match conn.exchange(&messages, &exchange_opts).await {
                         Ok(messages) => Outcome::Messages { messages },
                         Err(e) => Outcome::error("CLIENT", format!("{e:#}")),
                     }

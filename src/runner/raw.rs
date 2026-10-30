@@ -131,6 +131,19 @@ impl RawMessage {
     }
 }
 
+/// How `exchange` waits for replies and what it records.
+#[derive(Debug, Clone, Copy)]
+pub struct ExchangeOpts {
+    /// How long to wait for all replies.
+    pub step: Duration,
+    /// Without a Sync, how long the server must be quiet before the replies count as
+    /// complete.
+    pub quiet: Duration,
+    /// Record each ParameterStatus as `ParameterStatus name=value`. Off by default,
+    /// since poolers add, drop and reorder them.
+    pub parameter_status: bool,
+}
+
 enum Next {
     Message(Message),
     Timeout,
@@ -236,14 +249,9 @@ impl RawConn {
 
     /// Send the messages and record the replies, one line each. Reads until one
     /// ReadyForQuery per Sync/Query/CopyDone. Without any of those (e.g. only Flush)
-    /// it reads until the server has been quiet for `quiet`. Ends with TIMEOUT or
+    /// it reads until the server has been quiet for `opts.quiet`. Ends with TIMEOUT or
     /// CLOSED if the replies stop early.
-    pub async fn exchange(
-        &mut self,
-        messages: &[RawMessage],
-        step_timeout: Duration,
-        quiet: Duration,
-    ) -> Result<Vec<String>> {
+    pub async fn exchange(&mut self, messages: &[RawMessage], opts: &ExchangeOpts) -> Result<Vec<String>> {
         let mut out = BytesMut::new();
         for m in messages {
             m.write(&mut out)?;
@@ -252,11 +260,11 @@ impl RawConn {
 
         let mut cycles = messages.iter().filter(|m| m.ends_cycle()).count();
         let wait_for_quiet = cycles == 0;
-        let deadline = Instant::now() + step_timeout;
+        let deadline = Instant::now() + opts.step;
         let mut lines = Vec::new();
         while wait_for_quiet || cycles > 0 {
             let until = if wait_for_quiet {
-                (Instant::now() + quiet).min(deadline)
+                (Instant::now() + opts.quiet).min(deadline)
             } else {
                 deadline
             };
@@ -278,7 +286,7 @@ impl RawConn {
             if let Message::ReadyForQuery(_) | Message::CopyInResponse(_) = message {
                 cycles = cycles.saturating_sub(1);
             }
-            if let Some(line) = summary(&message)? {
+            if let Some(line) = summary(&message, opts.parameter_status)? {
                 lines.push(line);
             }
         }
@@ -306,9 +314,9 @@ fn error_summary(body: &postgres_protocol::message::backend::ErrorResponseBody) 
     format!("{code} {message}")
 }
 
-/// One line per reply. Notices and ParameterStatus are skipped: poolers add,
-/// drop and reorder those, and they don't change what the client gets.
-fn summary(message: &Message) -> Result<Option<String>> {
+/// One line per reply. Notices are skipped, and ParameterStatus unless asked for:
+/// poolers add, drop and reorder those, and they rarely change what the client gets.
+fn summary(message: &Message, parameter_status: bool) -> Result<Option<String>> {
     let line = match message {
         Message::ParseComplete => "ParseComplete".to_string(),
         Message::BindComplete => "BindComplete".to_string(),
@@ -339,6 +347,9 @@ fn summary(message: &Message) -> Result<Option<String>> {
             )
         }
         Message::ReadyForQuery(body) => format!("ReadyForQuery {}", body.status() as char),
+        Message::ParameterStatus(body) if parameter_status => {
+            format!("ParameterStatus {}={}", body.name()?, body.value()?)
+        }
         _ => return Ok(None),
     };
     Ok(Some(line))
@@ -347,6 +358,29 @@ fn summary(message: &Message) -> Result<Option<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A backend message as the server would send it.
+    fn backend(tag: u8, body: &[u8]) -> Message {
+        let mut buf = BytesMut::new();
+        buf.extend_from_slice(&[tag]);
+        buf.extend_from_slice(&(body.len() as u32 + 4).to_be_bytes());
+        buf.extend_from_slice(body);
+        Message::parse(&mut buf).unwrap().unwrap()
+    }
+
+    #[test]
+    fn parameter_status_only_when_asked() {
+        let status = || backend(b'S', b"application_name\0app\0");
+        assert_eq!(summary(&status(), false).unwrap(), None);
+        assert_eq!(
+            summary(&status(), true).unwrap().as_deref(),
+            Some("ParameterStatus application_name=app")
+        );
+        assert_eq!(
+            summary(&backend(b'Z', b"I"), true).unwrap().as_deref(),
+            Some("ReadyForQuery I")
+        );
+    }
 
     #[test]
     fn parses_messages() {
