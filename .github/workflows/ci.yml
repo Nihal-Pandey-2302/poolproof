@@ -7,6 +7,12 @@ on:
   pull_request:
   workflow_dispatch:
 
+# A newer commit on the same branch (main too) cancels the older run: only the latest
+# result matters for merging and for the Pages deploy.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 # Jobs get read access only; a job that needs more says so itself.
 permissions:
   contents: read
