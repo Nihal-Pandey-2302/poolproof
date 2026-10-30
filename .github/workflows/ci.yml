@@ -104,13 +104,16 @@ jobs:
           fi
 
       # Tests marked #[ignore] need a real Postgres. They run after the scenarios so they
-      # can't change a verdict, and even when the comparison failed. --release reuses
-      # the dependencies built above.
+      # can't change a verdict, and even when the comparison failed. They get their own
+      # database: the poolers may still hold locks and transactions that scenarios leaked
+      # in `app`. --release reuses the dependencies built above.
       - name: Tests against Postgres
         if: ${{ !cancelled() && steps.bed.outcome == 'success' }}
         env:
-          POOLPROOF_TEST_PG: postgres://postgres:postgres@127.0.0.1:55432/app
-        run: cargo test --release --locked -- --ignored
+          POOLPROOF_TEST_PG: postgres://postgres:postgres@127.0.0.1:55432/pp_test
+        run: |
+          docker compose -f docker/compose.yml exec -T postgres createdb -U postgres pp_test
+          cargo test --release --locked -- --ignored
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
