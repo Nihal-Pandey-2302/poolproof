@@ -45,6 +45,10 @@ results/                 committed `run --format json` reports, one per Postgres
 docker/compose.yml       the test bed: Postgres and every pooler version in the matrix
 targets.toml             the test bed's targets
 scripts/update-results.sh  regenerates results/ and RESULTS.md from a fresh test bed
+scripts/testbed.sh       a second test bed with shifted ports, to run several side by side
+tools/pp-proxy/          self-test proxies (own crate, not shipped): a passthrough that must
+                         pass every scenario, and fault injectors that must fail known ones
+selftest/expected.toml   the verdict each self-test target must get
 ```
 
 ## How `run` works
@@ -119,4 +123,5 @@ report given with `--results`.
 | Terminal or SARIF output | `output/` |
 | A command or flag | `cli.rs`, README |
 | A pooler or version in the matrix | `docker/compose.yml`, `targets.toml`, then regenerate `results/` |
+| A harness self-test fault | `tools/pp-proxy/src/fault.rs`, `selftest/expected.toml` |
 | CI or releases | `.github/workflows/`, `docs/releasing.md` |
