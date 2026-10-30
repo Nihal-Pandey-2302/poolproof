@@ -26,9 +26,18 @@ enum Command {
         /// Targets file.
         #[arg(short, long, default_value = "targets.toml")]
         targets: PathBuf,
-        /// Scenario directory.
-        #[arg(short, long, default_value = "scenarios")]
-        scenarios: PathBuf,
+        /// Test one pooler without a targets file: its connection URL.
+        #[arg(long, requires = "direct")]
+        pooler: Option<String>,
+        /// With --pooler: the URL of the Postgres server behind it.
+        #[arg(long, requires = "pooler")]
+        direct: Option<String>,
+        /// With --pooler: the pooler's mode.
+        #[arg(long, value_enum, default_value_t = PoolMode::Transaction)]
+        mode: PoolMode,
+        /// Scenario directory. Defaults to the scenarios built into poolproof.
+        #[arg(short, long)]
+        scenarios: Option<PathBuf>,
         /// Only run scenarios whose name contains this.
         #[arg(short, long)]
         filter: Option<String>,
@@ -56,8 +65,9 @@ enum Command {
     },
     /// List bundled scenarios.
     List {
-        #[arg(short, long, default_value = "scenarios")]
-        scenarios: PathBuf,
+        /// Scenario directory. Defaults to the scenarios built into poolproof.
+        #[arg(short, long)]
+        scenarios: Option<PathBuf>,
     },
 }
 
@@ -121,11 +131,18 @@ async fn main() -> ExitCode {
 
 async fn run(cli: Cli) -> Result<ExitCode> {
     match cli.command {
-        Command::Run { targets, scenarios, filter, reverse, verbose, format } => {
-            let text = std::fs::read_to_string(&targets)
-                .with_context(|| format!("reading {}", targets.display()))?;
-            let targets: Targets = toml::from_str(&text).context("parsing targets")?;
-            let mut scenarios = scenario::load_dir(&scenarios)?;
+        Command::Run { targets, pooler, direct, mode, scenarios, filter, reverse, verbose, format } => {
+            let targets = match (pooler, direct) {
+                (Some(pooler), Some(direct)) => {
+                    Targets { targets: vec![Target { name: "pooler".into(), pooler, direct, mode, reset: vec![] }] }
+                }
+                _ => {
+                    let text = std::fs::read_to_string(&targets)
+                        .with_context(|| format!("reading {}", targets.display()))?;
+                    toml::from_str(&text).context("parsing targets")?
+                }
+            };
+            let mut scenarios = load_scenarios(scenarios.as_deref())?;
             if reverse {
                 scenarios.reverse();
             }
@@ -193,11 +210,18 @@ async fn run(cli: Cli) -> Result<ExitCode> {
             Ok(if failing { ExitCode::FAILURE } else { ExitCode::SUCCESS })
         }
         Command::List { scenarios } => {
-            for s in scenario::load_dir(&scenarios)? {
+            for s in load_scenarios(scenarios.as_deref())? {
                 println!("{:<40} {}", s.name, s.description);
             }
             Ok(ExitCode::SUCCESS)
         }
+    }
+}
+
+fn load_scenarios(dir: Option<&std::path::Path>) -> Result<Vec<scenario::Scenario>> {
+    match dir {
+        Some(dir) => scenario::load_dir(dir),
+        None => scenario::bundled(),
     }
 }
 
@@ -326,7 +350,10 @@ fn print_scan(report: &scan::Report) {
             scan::Severity::Warn => "WARN",
         };
         let query: String = f.query.split_whitespace().collect::<Vec<_>>().join(" ");
-        let query = if query.len() > 100 { format!("{}...", &query[..query.floor_char_boundary(100)]) } else { query };
+        let query = match (0..=100).rev().find(|&i| query.is_char_boundary(i)) {
+            Some(end) if query.len() > 100 => format!("{}...", &query[..end]),
+            _ => query,
+        };
         println!("{label:<7} {:<27} calls={:<8} {query}", f.rule, f.calls);
         println!("        {}", f.detail);
     }

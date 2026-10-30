@@ -5,7 +5,7 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
 /// Pooling mode of a target. Scenarios list the modes they apply to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum PoolMode {
     Session,
@@ -183,6 +183,22 @@ impl Step {
     }
 }
 
+/// The scenarios in `scenarios/`, embedded at build time as (file name, contents).
+const BUNDLED: &[(&str, &str)] = include!(concat!(env!("OUT_DIR"), "/bundled.rs"));
+
+fn parse(origin: &str, text: &str) -> Result<Scenario> {
+    let scenario: Scenario = toml::from_str(text).with_context(|| format!("parsing {origin}"))?;
+    for step in &scenario.steps {
+        step.action().with_context(|| format!("in {origin}"))?;
+    }
+    Ok(scenario)
+}
+
+/// The scenarios built into the binary.
+pub fn bundled() -> Result<Vec<Scenario>> {
+    BUNDLED.iter().map(|(name, text)| parse(name, text)).collect()
+}
+
 pub fn load_dir(dir: &Path) -> Result<Vec<Scenario>> {
     let mut paths: Vec<_> = std::fs::read_dir(dir)
         .with_context(|| format!("reading scenario dir {}", dir.display()))?
@@ -194,13 +210,7 @@ pub fn load_dir(dir: &Path) -> Result<Vec<Scenario>> {
     let mut scenarios = Vec::with_capacity(paths.len());
     for path in paths {
         let text = std::fs::read_to_string(&path)?;
-        let scenario: Scenario =
-            toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
-        for step in &scenario.steps {
-            step.action()
-                .with_context(|| format!("in {}", path.display()))?;
-        }
-        scenarios.push(scenario);
+        scenarios.push(parse(&path.display().to_string(), &text)?);
     }
     Ok(scenarios)
 }
@@ -210,10 +220,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn bundled_scenarios_parse() {
+    fn bundled_scenarios_match_dir() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("scenarios");
-        let scenarios = load_dir(&dir).unwrap();
-        assert!(!scenarios.is_empty());
+        let names = |v: Vec<Scenario>| v.into_iter().map(|s| s.name).collect::<Vec<_>>();
+        let bundled = names(bundled().unwrap());
+        assert!(!bundled.is_empty());
+        assert_eq!(bundled, names(load_dir(&dir).unwrap()));
     }
 
     #[test]

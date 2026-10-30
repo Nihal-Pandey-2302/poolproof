@@ -13,9 +13,18 @@ poolproof does two things:
 - **`poolproof run`** replays small scenarios against plain Postgres and then through your
   pooler, and reports every step where the results differ. Postgres is the oracle, so a
   scenario never hardcodes expected output.
-- **`poolproof scan`** reads your real queries (a `pg_stat_statements` export or a `.sql`
-  file) and flags patterns that are unsafe under transaction pooling, using the actual
-  Postgres parser.
+- **`poolproof scan`** reads your real queries (a `pg_stat_statements` export, Postgres
+  logs or a `.sql` file) and flags patterns that are unsafe under transaction pooling,
+  using the actual Postgres parser.
+
+## Install
+
+```sh
+cargo install --git https://github.com/Nihal-Pandey-2302/poolproof
+```
+
+Or download a binary for Linux or macOS (x86_64 and arm64) from the releases page. The
+scenarios are built into the binary.
 
 ## Example
 
@@ -56,7 +65,15 @@ cargo run -- run
 Each pooler in the test bed has a pool of one server connection, so leaks between clients
 happen every time instead of by luck.
 
-To test your own setup, edit `targets.toml`:
+To test your own pooler, point poolproof at it and at the Postgres server behind it:
+
+```sh
+poolproof run --pooler postgres://user:pass@pooler-host:6432/db \
+              --direct postgres://user:pass@postgres-host:5432/db
+```
+
+For several poolers, or to reset state between scenarios, use a targets file
+(`--targets`, default `targets.toml`):
 
 ```toml
 [[target]]

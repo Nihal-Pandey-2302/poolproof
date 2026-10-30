@@ -5,6 +5,12 @@ edition = "2024"
 description = "Find out what breaks when you put a connection pooler in front of Postgres"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/Nihal-Pandey-2302/poolproof"
+readme = "README.md"
+rust-version = "1.88"
+keywords = ["postgres", "pgbouncer", "connection-pool", "testing", "pooler"]
+categories = ["command-line-utilities", "database", "development-tools::testing"]
+# The test bed and CI files are for this repo, not for `cargo install`.
+exclude = [".github/", "docker/", "RESULTS.md", "targets.toml"]
 
 [dependencies]
 anyhow = "1.0.104"
