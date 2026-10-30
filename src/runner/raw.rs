@@ -221,7 +221,7 @@ impl AsyncWrite for RawStream {
 /// Asks for TLS with an SSLRequest, as libpq does, and starts it if the server agrees.
 /// A server that declines gets plaintext only with `prefer`.
 async fn negotiate_tls(mut tcp: TcpStream, tls: &Tls, host: &str) -> Result<RawStream> {
-    let Some(config) = &tls.config else {
+    let Some(config) = tls.client_config()? else {
         return Ok(RawStream::Plain(tcp));
     };
     let mut out = BytesMut::new();
