@@ -2,7 +2,7 @@
 //!
 //! Compares a `poolproof run --format json` report of the self-test targets with the
 //! expected verdicts. Any other verdict, and any target or scenario the expected file
-//! doesn't cover, exits 1.
+//! doesn't cover, or a missing result for any target and scenario, exits 1.
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -87,7 +87,8 @@ fn check(expected: &Expected, report: &Value) -> Vec<String> {
     for r in report["results"].as_array().into_iter().flatten() {
         let target = r["target"].as_str().unwrap_or("");
         let scenario = r["scenario"].as_str().unwrap_or("");
-        seen.insert(target.to_string());
+        seen.insert((target, ""));
+        seen.insert((target, scenario));
         let Some(t) = expected.targets.get(target) else {
             problems.push(format!("{target}: not in the expected file"));
             continue;
@@ -116,9 +117,16 @@ fn check(expected: &Expected, report: &Value) -> Vec<String> {
             problems.push(line);
         }
     }
+    // A partial report (e.g. from --filter) must not pass as complete.
     for target in expected.targets.keys() {
-        if !seen.contains(target) {
+        if !seen.contains(&(target.as_str(), "")) {
             problems.push(format!("{target}: no results in the report"));
+            continue;
+        }
+        for s in &scenario_names {
+            if !seen.contains(&(target.as_str(), *s)) {
+                problems.push(format!("{target} / {s}: no result in the report"));
+            }
         }
     }
     problems
@@ -202,6 +210,7 @@ mod tests {
             {"target": "t", "scenario": "a", "result": "fail", "mismatch": {"kind": "hang"}, "runs": 1, "failures": 1},
             {"target": "t", "scenario": "b", "result": "pass", "runs": 1, "failures": 0},
             {"target": "down", "scenario": "a", "result": "error", "reason": "baseline failed at step 1"},
+            {"target": "down", "scenario": "b", "result": "error", "reason": "target unreachable: pooler: x"},
             {"target": "extra", "scenario": "a", "result": "pass"},
         ]));
         let p = check(&expected(FILE), &r);
@@ -215,8 +224,22 @@ mod tests {
             {"target": "t", "scenario": "a", "result": "pass", "runs": 5, "failures": 1},
             {"target": "t", "scenario": "b", "result": "fail", "mismatch": {"kind": "silent"}},
             {"target": "down", "scenario": "a", "result": "error", "reason": "target unreachable: pooler: x"},
+            {"target": "down", "scenario": "b", "result": "error", "reason": "target unreachable: pooler: x"},
         ]));
         assert_eq!(check(&expected(FILE), &r).len(), 1);
+    }
+
+    #[test]
+    fn partial_report_is_incomplete() {
+        let r = report(json!([
+            {"target": "t", "scenario": "a", "result": "pass"},
+            {"target": "down", "scenario": "a", "result": "error", "reason": "target unreachable: pooler: x"},
+        ]));
+        let p = check(&expected(FILE), &r);
+        assert_eq!(
+            p,
+            vec!["down / b: no result in the report", "t / b: no result in the report"]
+        );
     }
 
     #[test]
