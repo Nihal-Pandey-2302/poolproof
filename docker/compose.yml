@@ -46,7 +46,7 @@ x-supavisor-env: &supavisor-env
 # One-shot: creates tenants (pool size 1, transaction mode) through the API.
 # Clients connect as `postgres.<tenant>`.
 x-supavisor-tenants: &supavisor-tenants
-  image: curlimages/curl:8.11.1
+  image: curlimages/curl:8.22.0
   entrypoint: ["/add-tenant.sh"]
   volumes:
     - ./supavisor/add-tenant.sh:/add-tenant.sh:ro
