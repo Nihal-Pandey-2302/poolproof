@@ -2,7 +2,9 @@
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use std::io;
+use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt};
+use tokio::net::TcpStream;
 
 pub const SSL_REQUEST: i32 = 80877103;
 pub const GSSENC_REQUEST: i32 = 80877104;
@@ -10,6 +12,17 @@ pub const CANCEL_REQUEST: i32 = 80877102;
 
 /// Larger messages are a broken peer, not something the self-test sends.
 const MAX_LEN: usize = 64 << 20;
+
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Connect to Postgres, giving up after 10s instead of waiting for the OS timeout.
+pub async fn connect(addr: &str) -> io::Result<TcpStream> {
+    let stream = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(addr))
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, format!("connecting to {addr} timed out")))??;
+    stream.set_nodelay(true)?;
+    Ok(stream)
+}
 
 /// One typed message: tag byte plus body, `raw` is the whole message as sent.
 pub struct Message {
@@ -77,6 +90,21 @@ impl<R: AsyncRead + Unpin> Reader<R> {
         Ok(Some((code, raw)))
     }
 
+    /// Tags of the complete messages already buffered, without consuming them.
+    pub fn buffered_tags(&self) -> Vec<u8> {
+        let mut tags = Vec::new();
+        let mut rest = &self.buf[..];
+        while rest.len() >= 5 {
+            let len = (&rest[1..5]).get_i32() as usize;
+            if len < 4 || rest.len() < len + 1 {
+                break;
+            }
+            tags.push(rest[0]);
+            rest = &rest[len + 1..];
+        }
+        tags
+    }
+
     /// The next typed message, or None on EOF between messages.
     pub async fn next(&mut self) -> io::Result<Option<Message>> {
         if !self.fill(5).await? {
@@ -132,6 +160,18 @@ mod tests {
         assert_eq!((m.tag, m.body()), (b'S', &b""[..]));
         writer.await.unwrap().unwrap();
         assert!(r.next().await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn buffered_tags_skips_partial_messages() {
+        let (mut a, b) = tokio::io::duplex(64);
+        a.write_all(&Message::new(b'A', b"x").raw).await.unwrap();
+        a.write_all(&Message::new(b'E', b"y").raw).await.unwrap();
+        a.write_all(&[b'Z', 0, 0, 0, 5]).await.unwrap();
+        let mut r = Reader::new(b);
+        r.fill(13).await.unwrap();
+        assert_eq!(r.buffered_tags(), vec![b'A', b'E']);
+        assert_eq!(r.next().await.unwrap().unwrap().tag, b'A');
     }
 
     #[tokio::test]
