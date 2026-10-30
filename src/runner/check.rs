@@ -253,15 +253,18 @@ fn compare(scenario: &Scenario, expected: &[Outcome], actual: Vec<Outcome>) -> C
         })
     });
     // A direct step that couldn't reach Postgres says nothing about the pooler, unless
-    // the pooler already went wrong at an earlier step. A TIMEOUT stays a failure: a
-    // lock the pooler leaked can block a direct observer.
-    if let Some(m) = &mismatch
-        && scenario.steps[m.step - 1].direct
-        && matches!(&m.actual, Outcome::Error { code, .. } if code == "CONNECT" || code == "CLIENT")
+    // the pooler already went wrong at an earlier step. That includes direct steps with
+    // `compare = "ignore"`, which never show up as a mismatch. A TIMEOUT stays a
+    // failure: a lock the pooler leaked can block a direct observer.
+    let direct_failed = scenario.steps.iter().zip(&actual).position(|(step, outcome)| {
+        step.direct && matches!(outcome, Outcome::Error { code, .. } if code == "CONNECT" || code == "CLIENT")
+    });
+    if let Some(i) = direct_failed
+        && mismatch.as_ref().is_none_or(|m| m.step > i)
     {
         return Checked {
             verdict: Verdict::Error {
-                reason: format!("postgres side failed at step {} (target run): {}", m.step, m.actual),
+                reason: format!("postgres side failed at step {} (target run): {}", i + 1, actual[i]),
             },
             steps: expected.iter().cloned().zip(actual).collect(),
             runs: 1,
@@ -363,6 +366,16 @@ mod tests {
             vec![Outcome::empty(), Outcome::error("CONNECT", "refused")],
         );
         assert!(matches!(&checked.verdict, Verdict::Fail { mismatch } if mismatch.step == 1));
+        // An ignored direct step that can't connect is still no result.
+        let s3 = scenario(
+            "name = 't'\ndescription = 't'\n[[step]]\nclient = 'pg'\ndirect = true\nsimple = 'SELECT 1'\ncompare = 'ignore'\n",
+        );
+        let checked = compare(&s3, &expected, vec![Outcome::error("CLIENT", "reset")]);
+        assert!(
+            reason(&checked).starts_with("postgres side failed at step 1 (target run)"),
+            "{}",
+            reason(&checked)
+        );
         // A direct observer blocked by a lock the pooler leaked is the pooler's fault.
         let checked = compare(&s, &expected, vec![Outcome::error("TIMEOUT", "no reply")]);
         assert!(matches!(checked.verdict, Verdict::Fail { .. }));
