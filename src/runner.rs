@@ -8,9 +8,13 @@ use tokio::task::JoinHandle;
 use tokio::time::timeout;
 use tokio_postgres::{AsyncMessage, Client, NoTls, SimpleQueryMessage, Statement};
 
+use crate::raw::RawConn;
 use crate::scenario::{Action, Compare, Scenario};
 
 const STEP_TIMEOUT: Duration = Duration::from_secs(10);
+/// For `send` steps without a Sync: how long the server must be quiet before the
+/// replies are considered complete.
+const RAW_QUIET: Duration = Duration::from_millis(500);
 /// How long a `notifications` step waits for the first NOTIFY to arrive.
 const NOTIFY_WAIT: Duration = Duration::from_secs(1);
 /// How long to wait for the pooler to answer again after a reset.
@@ -31,6 +35,8 @@ pub enum Outcome {
     },
     /// The client dropped the connection before the reply came.
     Abandoned,
+    /// Every reply to a `send` step, one line each.
+    Messages { messages: Vec<String> },
 }
 
 impl Outcome {
@@ -47,6 +53,10 @@ impl Outcome {
             Compare::Ignore => true,
             Compare::Status => match (self, other) {
                 (Outcome::Ok { .. }, Outcome::Ok { .. }) | (Outcome::Abandoned, Outcome::Abandoned) => true,
+                (Outcome::Messages { messages: a }, Outcome::Messages { messages: b }) => {
+                    let failures = |m: &[String]| m.iter().filter(|l| is_failure_line(l)).cloned().collect::<Vec<_>>();
+                    failures(a) == failures(b)
+                }
                 (Outcome::Error { code: a, .. }, Outcome::Error { code: b, .. }) => a == b,
                 _ => false,
             },
@@ -74,6 +84,7 @@ impl std::fmt::Display for Outcome {
             }
             Outcome::Error { code, message } => write!(f, "error {code}: {message}"),
             Outcome::Abandoned => write!(f, "abandoned"),
+            Outcome::Messages { messages } => write!(f, "{}", messages.join(", ")),
         }
     }
 }
@@ -163,7 +174,47 @@ pub async fn run_steps(scenario: &Scenario, pooled: &str, direct: &str) -> Resul
     let mut conns: HashMap<&str, Conn> = HashMap::new();
     let mut outcomes = Vec::with_capacity(scenario.steps.len());
 
+    // Clients that use `send` talk raw protocol on their own connection.
+    let raw_clients: std::collections::HashSet<&str> =
+        scenario.steps.iter().filter(|s| s.send.is_some()).map(|s| s.client.as_str()).collect();
+    let mut raw: HashMap<&str, RawConn> = HashMap::new();
+
     for step in &scenario.steps {
+        if raw_clients.contains(step.client.as_str()) {
+            if let Some(ms) = step.delay_ms {
+                tokio::time::sleep(Duration::from_millis(ms)).await;
+            }
+            let outcome = match step.action()? {
+                Action::Send(messages) => {
+                    if !raw.contains_key(step.client.as_str()) {
+                        let url = if step.direct { direct } else { pooled };
+                        match RawConn::connect(url, STEP_TIMEOUT).await {
+                            Ok(conn) => {
+                                raw.insert(&step.client, conn);
+                            }
+                            Err(e) => {
+                                outcomes.push(Outcome::error("CONNECT", format!("{e:#}")));
+                                continue;
+                            }
+                        }
+                    }
+                    let conn = raw.get_mut(step.client.as_str()).expect("just connected");
+                    match conn.exchange(&messages, STEP_TIMEOUT, RAW_QUIET).await {
+                        Ok(messages) => Outcome::Messages { messages },
+                        Err(e) => Outcome::error("CLIENT", format!("{e:#}")),
+                    }
+                }
+                Action::Disconnect => {
+                    if let Some(conn) = raw.remove(step.client.as_str()) {
+                        conn.terminate().await;
+                    }
+                    Outcome::empty()
+                }
+                _ => bail!("client '{}' uses send, so its only other step can be disconnect", step.client),
+            };
+            outcomes.push(outcome);
+            continue;
+        }
         if !conns.contains_key(step.client.as_str()) {
             let url = if step.direct { direct } else { pooled };
             match connect(url).await {
@@ -197,6 +248,7 @@ pub async fn run_steps(scenario: &Scenario, pooled: &str, direct: &str) -> Resul
         }
 
         let outcome = match step.action()? {
+            Action::Send(_) => unreachable!("send clients are handled above"),
             Action::Simple(sql) => match timeout(STEP_TIMEOUT, conn.client.simple_query(sql)).await {
                 Err(_) => Outcome::error("TIMEOUT", format!("no reply within {STEP_TIMEOUT:?}")),
                 Ok(res) => simple_outcome(res),
@@ -299,6 +351,9 @@ pub async fn run_steps(scenario: &Scenario, pooled: &str, direct: &str) -> Resul
     for (_, conn) in conns.drain() {
         conn.close().await;
     }
+    for (_, conn) in raw.drain() {
+        conn.terminate().await;
+    }
     Ok(outcomes)
 }
 
@@ -377,11 +432,30 @@ pub enum FailKind {
     Hang,
 }
 
+/// A `send` reply line that means something went wrong: an error, a timeout, or
+/// the connection closing.
+fn is_failure_line(line: &str) -> bool {
+    line.starts_with("Error ") || line == "TIMEOUT" || line == "CLOSED"
+}
+
 impl FailKind {
-    fn of(actual: &Outcome) -> Self {
+    fn of(expected: &Outcome, actual: &Outcome) -> Self {
         match actual {
             Outcome::Error { code, .. } if code == "TIMEOUT" => FailKind::Hang,
             Outcome::Error { .. } => FailKind::Error,
+            Outcome::Messages { messages } => {
+                let expected_lines = match expected {
+                    Outcome::Messages { messages } => messages.as_slice(),
+                    _ => &[],
+                };
+                if messages.iter().any(|l| l == "TIMEOUT") {
+                    FailKind::Hang
+                } else if messages.iter().any(|l| is_failure_line(l) && !expected_lines.contains(l)) {
+                    FailKind::Error
+                } else {
+                    FailKind::Silent
+                }
+            }
             Outcome::Ok { .. } | Outcome::Abandoned => FailKind::Silent,
         }
     }
@@ -439,7 +513,7 @@ pub async fn check(scenario: &Scenario, pooled: &str, direct: &str, reset: &[Str
         (!expected[i].matches(&actual[i], step.compare)).then(|| Mismatch {
             step: i + 1,
             action: step.describe(),
-            kind: FailKind::of(&actual[i]),
+            kind: FailKind::of(&expected[i], &actual[i]),
             expected: expected[i].clone(),
             actual: actual[i].clone(),
         })
@@ -465,9 +539,15 @@ mod tests {
 
     #[test]
     fn fail_kind_follows_pooler_outcome() {
-        assert_eq!(FailKind::of(&Outcome::empty()), FailKind::Silent);
-        assert_eq!(FailKind::of(&Outcome::error("XX000", "not allowed")), FailKind::Error);
-        assert_eq!(FailKind::of(&Outcome::error("TIMEOUT", "no reply")), FailKind::Hang);
+        let ok = Outcome::empty();
+        assert_eq!(FailKind::of(&ok, &Outcome::empty()), FailKind::Silent);
+        assert_eq!(FailKind::of(&ok, &Outcome::error("XX000", "not allowed")), FailKind::Error);
+        assert_eq!(FailKind::of(&ok, &Outcome::error("TIMEOUT", "no reply")), FailKind::Hang);
+        let msgs = |m: &[&str]| Outcome::Messages { messages: m.iter().map(|s| s.to_string()).collect() };
+        let pg = msgs(&["ParseComplete", "Error 42601", "ReadyForQuery I"]);
+        assert_eq!(FailKind::of(&pg, &msgs(&["ParseComplete", "ReadyForQuery I"])), FailKind::Silent);
+        assert_eq!(FailKind::of(&pg, &msgs(&["Error 08P01", "ReadyForQuery I"])), FailKind::Error);
+        assert_eq!(FailKind::of(&pg, &msgs(&["ParseComplete", "TIMEOUT"])), FailKind::Hang);
     }
 
     #[test]

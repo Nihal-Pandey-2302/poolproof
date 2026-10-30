@@ -1,0 +1,26 @@
+name = "protocol-statement-reparsed-after-close"
+description = "After Close, a statement name can be prepared again with different SQL, and the new SQL runs."
+
+[[step]]
+client = "a"
+send = ["parse s1 SELECT 'old'::text", "sync"]
+
+[[step]]
+client = "b"
+send = ["query SELECT 1"]
+
+[[step]]
+client = "a"
+send = ["close statement s1", "sync"]
+
+[[step]]
+client = "a"
+send = ["parse s1 SELECT 'new'::text", "sync"]
+
+[[step]]
+client = "b"
+send = ["query SELECT 2"]
+
+[[step]]
+client = "a"
+send = ["bind - s1", "execute -", "sync"]

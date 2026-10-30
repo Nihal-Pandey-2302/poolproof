@@ -1,0 +1,15 @@
+name = "protocol-error-after-flush"
+description = "An error in a request that ends with Flush instead of Sync must be sent right away, and Sync must recover."
+refs = ["https://github.com/pgdogdev/pgdog/issues/1873"]
+
+[[step]]
+client = "a"
+send = ["parse - SELEC 1", "flush"]
+
+[[step]]
+client = "a"
+send = ["sync"]
+
+[[step]]
+client = "a"
+send = ["parse - SELECT 'recovered'::text", "bind - -", "execute -", "sync"]

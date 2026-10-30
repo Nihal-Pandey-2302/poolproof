@@ -14,6 +14,7 @@ report each scenario came from.
 | `cancel-from-idle-client-is-harmless` | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass |
 | `cancel-reaches-running-query` | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass |
 | `cancel-under-saturated-pool` | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass |
+| `copy-from-stdin` | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass |
 | `cursor-isolated-between-clients` | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | FAIL error | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | FAIL error |
 | `discard-all-in-transaction-fails` | pass | pass | pass | pass | pass | pass | pass | pass | pass | FAIL error | pass | pass | pass | pass | pass | pass | pass | pass | pass | FAIL error |
 | `discard-all-resets-settings` | pass | pass | pass | **FAIL** silent | **FAIL** silent | pass | pass | pass | pass | FAIL error | pass | pass | pass | **FAIL** silent | **FAIL** silent | pass | pass | pass | pass | FAIL error |
@@ -22,6 +23,12 @@ report each scenario came from.
 | `multi-statement-begin` | pass | pass | pass | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | pass | pass | pass | pass | pass | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | pass | pass |
 | `prepare-in-aborted-transaction` | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass |
 | `prepared-statement-survives-other-clients` | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass |
+| `protocol-error-after-flush` | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass |
+| `protocol-pipeline-recovers-after-error` | pass | pass | pass | pass | pass | pass | pass | FAIL hang | pass | pass | pass | pass | pass | pass | pass | pass | pass | FAIL hang | pass | pass |
+| `protocol-pipelined-statements` | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass |
+| `protocol-statement-names-isolated` | pass | pass | pass | pass | pass | pass | pass | FAIL error | FAIL error | FAIL error | pass | pass | pass | pass | pass | pass | pass | FAIL error | FAIL error | FAIL error |
+| `protocol-statement-reparsed-after-close` | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass |
+| `protocol-unnamed-statement-survives-other-clients` | FAIL error | FAIL error | FAIL error | pass | pass | pass | pass | FAIL error | FAIL error | FAIL error | FAIL error | FAIL error | FAIL error | pass | pass | pass | pass | FAIL error | FAIL error | FAIL error |
 | `search-path-isolated-between-clients` | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | pass | pass | pass | **FAIL** silent | **FAIL** silent | FAIL error | **FAIL** silent | **FAIL** silent | pass | pass | pass | pass | pass | **FAIL** silent | **FAIL** silent | FAIL error |
 | `set-does-not-leak-after-disconnect` | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | pass | pass | pass | **FAIL** silent | **FAIL** silent | FAIL error | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | pass | pass | pass | **FAIL** silent | **FAIL** silent | FAIL error |
 | `set-isolated-between-clients` | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | pass | pass | pass | **FAIL** silent | **FAIL** silent | FAIL error | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | pass | pass | pass | **FAIL** silent | **FAIL** silent | FAIL error |
@@ -896,6 +903,166 @@ A simple query that starts with BEGIN must run every statement in the string.
 - postgres: `ok rows=[] tags=[0, 1, 0]`
 - pooler: `ok rows=[] tags=[0]`
 - from https://github.com/pgdogdev/pgdog/issues/1849
+
+### supavisor-2.9.13 (pg 17.11) / protocol-pipeline-recovers-after-error (hang)
+
+In a pipeline, a failing request must not affect the request after the next Sync.
+
+- step 1: `[a] send: parse - SELECT 1/0 / bind - - / execute - / sync / parse - SELECT 'second'::text / bind - - / execute - / sync`
+- postgres: `ParseComplete, Error 22012, ReadyForQuery I, ParseComplete, BindComplete, DataRow second, CommandComplete SELECT 1, ReadyForQuery I`
+- pooler: `ParseComplete, Error 22012, ReadyForQuery I, TIMEOUT`
+
+### supavisor-2.9.13 (pg 18.4) / protocol-pipeline-recovers-after-error (hang)
+
+In a pipeline, a failing request must not affect the request after the next Sync.
+
+- step 1: `[a] send: parse - SELECT 1/0 / bind - - / execute - / sync / parse - SELECT 'second'::text / bind - - / execute - / sync`
+- postgres: `ParseComplete, Error 22012, ReadyForQuery I, ParseComplete, BindComplete, DataRow second, CommandComplete SELECT 1, ReadyForQuery I`
+- pooler: `ParseComplete, Error 22012, ReadyForQuery I, TIMEOUT`
+
+### supavisor-2.9.13 (pg 17.11) / protocol-statement-names-isolated (error)
+
+Two clients can prepare protocol-level statements with the same name, and each runs its own.
+
+- step 2: `[b] send: parse s1 SELECT 'from b'::text / sync`
+- postgres: `ParseComplete, ReadyForQuery I`
+- pooler: `Error 42P05, ReadyForQuery I`
+
+### supavisor-2.10.0-rc.1 (pg 17.11) / protocol-statement-names-isolated (error)
+
+Two clients can prepare protocol-level statements with the same name, and each runs its own.
+
+- step 2: `[b] send: parse s1 SELECT 'from b'::text / sync`
+- postgres: `ParseComplete, ReadyForQuery I`
+- pooler: `Error 42P05, ReadyForQuery I`
+
+### supavisor-2.10.0-rc.1-strict (pg 17.11) / protocol-statement-names-isolated (error)
+
+Two clients can prepare protocol-level statements with the same name, and each runs its own.
+
+- step 2: `[b] send: parse s1 SELECT 'from b'::text / sync`
+- postgres: `ParseComplete, ReadyForQuery I`
+- pooler: `Error 42P05, ReadyForQuery I`
+
+### supavisor-2.9.13 (pg 18.4) / protocol-statement-names-isolated (error)
+
+Two clients can prepare protocol-level statements with the same name, and each runs its own.
+
+- step 2: `[b] send: parse s1 SELECT 'from b'::text / sync`
+- postgres: `ParseComplete, ReadyForQuery I`
+- pooler: `Error 42P05, ReadyForQuery I`
+
+### supavisor-2.10.0-rc.1 (pg 18.4) / protocol-statement-names-isolated (error)
+
+Two clients can prepare protocol-level statements with the same name, and each runs its own.
+
+- step 2: `[b] send: parse s1 SELECT 'from b'::text / sync`
+- postgres: `ParseComplete, ReadyForQuery I`
+- pooler: `Error 42P05, ReadyForQuery I`
+
+### supavisor-2.10.0-rc.1-strict (pg 18.4) / protocol-statement-names-isolated (error)
+
+Two clients can prepare protocol-level statements with the same name, and each runs its own.
+
+- step 2: `[b] send: parse s1 SELECT 'from b'::text / sync`
+- postgres: `ParseComplete, ReadyForQuery I`
+- pooler: `Error 42P05, ReadyForQuery I`
+
+### pgbouncer-1.24.1 (pg 17.11) / protocol-unnamed-statement-survives-other-clients (error)
+
+The unnamed statement stays usable until the same client replaces it, even if other clients ran queries.
+
+- step 3: `[a] send: bind - - / execute - / sync`
+- postgres: `BindComplete, DataRow from a, CommandComplete SELECT 1, ReadyForQuery I`
+- pooler: `Error 26000, ReadyForQuery I`
+
+### pgbouncer-1.25.2 (pg 17.11) / protocol-unnamed-statement-survives-other-clients (error)
+
+The unnamed statement stays usable until the same client replaces it, even if other clients ran queries.
+
+- step 3: `[a] send: bind - - / execute - / sync`
+- postgres: `BindComplete, DataRow from a, CommandComplete SELECT 1, ReadyForQuery I`
+- pooler: `Error 26000, ReadyForQuery I`
+
+### pgbouncer-1.26.1 (pg 17.11) / protocol-unnamed-statement-survives-other-clients (error)
+
+The unnamed statement stays usable until the same client replaces it, even if other clients ran queries.
+
+- step 3: `[a] send: bind - - / execute - / sync`
+- postgres: `BindComplete, DataRow from a, CommandComplete SELECT 1, ReadyForQuery I`
+- pooler: `Error 26000, ReadyForQuery I`
+
+### supavisor-2.9.13 (pg 17.11) / protocol-unnamed-statement-survives-other-clients (error)
+
+The unnamed statement stays usable until the same client replaces it, even if other clients ran queries.
+
+- step 3: `[a] send: bind - - / execute - / sync`
+- postgres: `BindComplete, DataRow from a, CommandComplete SELECT 1, ReadyForQuery I`
+- pooler: `Error 26000, ReadyForQuery I`
+
+### supavisor-2.10.0-rc.1 (pg 17.11) / protocol-unnamed-statement-survives-other-clients (error)
+
+The unnamed statement stays usable until the same client replaces it, even if other clients ran queries.
+
+- step 3: `[a] send: bind - - / execute - / sync`
+- postgres: `BindComplete, DataRow from a, CommandComplete SELECT 1, ReadyForQuery I`
+- pooler: `Error 26000, ReadyForQuery I`
+
+### supavisor-2.10.0-rc.1-strict (pg 17.11) / protocol-unnamed-statement-survives-other-clients (error)
+
+The unnamed statement stays usable until the same client replaces it, even if other clients ran queries.
+
+- step 3: `[a] send: bind - - / execute - / sync`
+- postgres: `BindComplete, DataRow from a, CommandComplete SELECT 1, ReadyForQuery I`
+- pooler: `Error 26000, ReadyForQuery I`
+
+### pgbouncer-1.24.1 (pg 18.4) / protocol-unnamed-statement-survives-other-clients (error)
+
+The unnamed statement stays usable until the same client replaces it, even if other clients ran queries.
+
+- step 3: `[a] send: bind - - / execute - / sync`
+- postgres: `BindComplete, DataRow from a, CommandComplete SELECT 1, ReadyForQuery I`
+- pooler: `Error 26000, ReadyForQuery I`
+
+### pgbouncer-1.25.2 (pg 18.4) / protocol-unnamed-statement-survives-other-clients (error)
+
+The unnamed statement stays usable until the same client replaces it, even if other clients ran queries.
+
+- step 3: `[a] send: bind - - / execute - / sync`
+- postgres: `BindComplete, DataRow from a, CommandComplete SELECT 1, ReadyForQuery I`
+- pooler: `Error 26000, ReadyForQuery I`
+
+### pgbouncer-1.26.1 (pg 18.4) / protocol-unnamed-statement-survives-other-clients (error)
+
+The unnamed statement stays usable until the same client replaces it, even if other clients ran queries.
+
+- step 3: `[a] send: bind - - / execute - / sync`
+- postgres: `BindComplete, DataRow from a, CommandComplete SELECT 1, ReadyForQuery I`
+- pooler: `Error 26000, ReadyForQuery I`
+
+### supavisor-2.9.13 (pg 18.4) / protocol-unnamed-statement-survives-other-clients (error)
+
+The unnamed statement stays usable until the same client replaces it, even if other clients ran queries.
+
+- step 3: `[a] send: bind - - / execute - / sync`
+- postgres: `BindComplete, DataRow from a, CommandComplete SELECT 1, ReadyForQuery I`
+- pooler: `Error 26000, ReadyForQuery I`
+
+### supavisor-2.10.0-rc.1 (pg 18.4) / protocol-unnamed-statement-survives-other-clients (error)
+
+The unnamed statement stays usable until the same client replaces it, even if other clients ran queries.
+
+- step 3: `[a] send: bind - - / execute - / sync`
+- postgres: `BindComplete, DataRow from a, CommandComplete SELECT 1, ReadyForQuery I`
+- pooler: `Error 26000, ReadyForQuery I`
+
+### supavisor-2.10.0-rc.1-strict (pg 18.4) / protocol-unnamed-statement-survives-other-clients (error)
+
+The unnamed statement stays usable until the same client replaces it, even if other clients ran queries.
+
+- step 3: `[a] send: bind - - / execute - / sync`
+- postgres: `BindComplete, DataRow from a, CommandComplete SELECT 1, ReadyForQuery I`
+- pooler: `Error 26000, ReadyForQuery I`
 
 ### pgbouncer-1.24.1 (pg 17.11) / search-path-isolated-between-clients (silent)
 

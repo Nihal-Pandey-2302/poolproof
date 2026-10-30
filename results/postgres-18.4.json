@@ -156,6 +156,16 @@
       ]
     },
     {
+      "name": "copy-from-stdin",
+      "description": "COPY FROM STDIN through the pooler must load every row.",
+      "refs": [],
+      "steps": [
+        "[a] send: query COPY pp_copy FROM STDIN",
+        "[a] send: copydata 1\n2\n3\n / copydone",
+        "[check (direct)] simple: SELECT count(*) FROM pp_copy"
+      ]
+    },
+    {
       "name": "cursor-isolated-between-clients",
       "description": "A WITH HOLD cursor declared by one client must not be visible to another client.",
       "refs": [],
@@ -242,6 +252,69 @@
         "[b] simple: SELECT 1",
         "[b] disconnect",
         "[a] execute q"
+      ]
+    },
+    {
+      "name": "protocol-error-after-flush",
+      "description": "An error in a request that ends with Flush instead of Sync must be sent right away, and Sync must recover.",
+      "refs": [
+        "https://github.com/pgdogdev/pgdog/issues/1873"
+      ],
+      "steps": [
+        "[a] send: parse - SELEC 1 / flush",
+        "[a] send: sync",
+        "[a] send: parse - SELECT 'recovered'::text / bind - - / execute - / sync"
+      ]
+    },
+    {
+      "name": "protocol-pipeline-recovers-after-error",
+      "description": "In a pipeline, a failing request must not affect the request after the next Sync.",
+      "refs": [],
+      "steps": [
+        "[a] send: parse - SELECT 1/0 / bind - - / execute - / sync / parse - SELECT 'second'::text / bind - - / execute - / sync"
+      ]
+    },
+    {
+      "name": "protocol-pipelined-statements",
+      "description": "Several named statements prepared and run in one pipeline must all return their own results.",
+      "refs": [],
+      "steps": [
+        "[a] send: parse p1 SELECT 'one'::text / parse p2 SELECT 'two'::text / bind - p2 / execute - / bind - p1 / execute - / sync",
+        "[a] send: describe statement p1 / sync"
+      ]
+    },
+    {
+      "name": "protocol-statement-names-isolated",
+      "description": "Two clients can prepare protocol-level statements with the same name, and each runs its own.",
+      "refs": [],
+      "steps": [
+        "[a] send: parse s1 SELECT 'from a'::text / sync",
+        "[b] send: parse s1 SELECT 'from b'::text / sync",
+        "[b] send: bind - s1 / execute - / sync",
+        "[a] send: bind - s1 / execute - / sync"
+      ]
+    },
+    {
+      "name": "protocol-statement-reparsed-after-close",
+      "description": "After Close, a statement name can be prepared again with different SQL, and the new SQL runs.",
+      "refs": [],
+      "steps": [
+        "[a] send: parse s1 SELECT 'old'::text / sync",
+        "[b] send: query SELECT 1",
+        "[a] send: close statement s1 / sync",
+        "[a] send: parse s1 SELECT 'new'::text / sync",
+        "[b] send: query SELECT 2",
+        "[a] send: bind - s1 / execute - / sync"
+      ]
+    },
+    {
+      "name": "protocol-unnamed-statement-survives-other-clients",
+      "description": "The unnamed statement stays usable until the same client replaces it, even if other clients ran queries.",
+      "refs": [],
+      "steps": [
+        "[a] send: parse - SELECT 'from a'::text / sync",
+        "[b] send: query SELECT 1",
+        "[a] send: bind - - / execute - / sync"
       ]
     },
     {
@@ -762,6 +835,67 @@
     },
     {
       "target": "pgbouncer-1.24.1",
+      "scenario": "copy-from-stdin",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "CopyInResponse"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "CopyInResponse"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "CommandComplete COPY 3",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "CommandComplete COPY 3",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "ok",
+            "rows": [
+              [
+                "3"
+              ]
+            ],
+            "tags": [
+              1
+            ]
+          },
+          "pooler": {
+            "status": "ok",
+            "rows": [
+              [
+                "3"
+              ]
+            ],
+            "tags": [
+              1
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgbouncer-1.24.1",
       "scenario": "cursor-isolated-between-clients",
       "result": "fail",
       "mismatch": {
@@ -1310,6 +1444,429 @@
             ],
             "tags": [
               1
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgbouncer-1.24.1",
+      "scenario": "protocol-error-after-flush",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "Error 42601"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "Error 42601"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "BindComplete",
+              "DataRow recovered",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "BindComplete",
+              "DataRow recovered",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgbouncer-1.24.1",
+      "scenario": "protocol-pipeline-recovers-after-error",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "Error 22012",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow second",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "Error 22012",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow second",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgbouncer-1.24.1",
+      "scenario": "protocol-pipelined-statements",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow two",
+              "CommandComplete SELECT 1",
+              "BindComplete",
+              "DataRow one",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow two",
+              "CommandComplete SELECT 1",
+              "BindComplete",
+              "DataRow one",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParameterDescription 0",
+              "RowDescription text",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParameterDescription 0",
+              "RowDescription text",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgbouncer-1.24.1",
+      "scenario": "protocol-statement-names-isolated",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from b",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from b",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from a",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from a",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgbouncer-1.24.1",
+      "scenario": "protocol-statement-reparsed-after-close",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "CloseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "CloseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 2",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 2",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow new",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow new",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgbouncer-1.24.1",
+      "scenario": "protocol-unnamed-statement-survives-other-clients",
+      "result": "fail",
+      "mismatch": {
+        "step": 3,
+        "action": "[a] send: bind - - / execute - / sync",
+        "kind": "error",
+        "expected": {
+          "status": "messages",
+          "messages": [
+            "BindComplete",
+            "DataRow from a",
+            "CommandComplete SELECT 1",
+            "ReadyForQuery I"
+          ]
+        },
+        "actual": {
+          "status": "messages",
+          "messages": [
+            "Error 26000",
+            "ReadyForQuery I"
+          ]
+        }
+      },
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from a",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "Error 26000",
+              "ReadyForQuery I"
             ]
           }
         }
@@ -2471,6 +3028,67 @@
     },
     {
       "target": "pgbouncer-1.25.2",
+      "scenario": "copy-from-stdin",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "CopyInResponse"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "CopyInResponse"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "CommandComplete COPY 3",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "CommandComplete COPY 3",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "ok",
+            "rows": [
+              [
+                "3"
+              ]
+            ],
+            "tags": [
+              1
+            ]
+          },
+          "pooler": {
+            "status": "ok",
+            "rows": [
+              [
+                "3"
+              ]
+            ],
+            "tags": [
+              1
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgbouncer-1.25.2",
       "scenario": "cursor-isolated-between-clients",
       "result": "fail",
       "mismatch": {
@@ -3019,6 +3637,429 @@
             ],
             "tags": [
               1
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgbouncer-1.25.2",
+      "scenario": "protocol-error-after-flush",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "Error 42601"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "Error 42601"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "BindComplete",
+              "DataRow recovered",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "BindComplete",
+              "DataRow recovered",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgbouncer-1.25.2",
+      "scenario": "protocol-pipeline-recovers-after-error",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "Error 22012",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow second",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "Error 22012",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow second",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgbouncer-1.25.2",
+      "scenario": "protocol-pipelined-statements",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow two",
+              "CommandComplete SELECT 1",
+              "BindComplete",
+              "DataRow one",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow two",
+              "CommandComplete SELECT 1",
+              "BindComplete",
+              "DataRow one",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParameterDescription 0",
+              "RowDescription text",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParameterDescription 0",
+              "RowDescription text",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgbouncer-1.25.2",
+      "scenario": "protocol-statement-names-isolated",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from b",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from b",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from a",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from a",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgbouncer-1.25.2",
+      "scenario": "protocol-statement-reparsed-after-close",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "CloseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "CloseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 2",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 2",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow new",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow new",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgbouncer-1.25.2",
+      "scenario": "protocol-unnamed-statement-survives-other-clients",
+      "result": "fail",
+      "mismatch": {
+        "step": 3,
+        "action": "[a] send: bind - - / execute - / sync",
+        "kind": "error",
+        "expected": {
+          "status": "messages",
+          "messages": [
+            "BindComplete",
+            "DataRow from a",
+            "CommandComplete SELECT 1",
+            "ReadyForQuery I"
+          ]
+        },
+        "actual": {
+          "status": "messages",
+          "messages": [
+            "Error 26000",
+            "ReadyForQuery I"
+          ]
+        }
+      },
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from a",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "Error 26000",
+              "ReadyForQuery I"
             ]
           }
         }
@@ -4169,6 +5210,67 @@
             "rows": [
               [
                 ""
+              ]
+            ],
+            "tags": [
+              1
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgbouncer-1.26.1",
+      "scenario": "copy-from-stdin",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "CopyInResponse"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "CopyInResponse"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "CommandComplete COPY 3",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "CommandComplete COPY 3",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "ok",
+            "rows": [
+              [
+                "3"
+              ]
+            ],
+            "tags": [
+              1
+            ]
+          },
+          "pooler": {
+            "status": "ok",
+            "rows": [
+              [
+                "3"
               ]
             ],
             "tags": [
@@ -4716,6 +5818,429 @@
             ],
             "tags": [
               1
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgbouncer-1.26.1",
+      "scenario": "protocol-error-after-flush",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "Error 42601"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "Error 42601"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "BindComplete",
+              "DataRow recovered",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "BindComplete",
+              "DataRow recovered",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgbouncer-1.26.1",
+      "scenario": "protocol-pipeline-recovers-after-error",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "Error 22012",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow second",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "Error 22012",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow second",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgbouncer-1.26.1",
+      "scenario": "protocol-pipelined-statements",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow two",
+              "CommandComplete SELECT 1",
+              "BindComplete",
+              "DataRow one",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow two",
+              "CommandComplete SELECT 1",
+              "BindComplete",
+              "DataRow one",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParameterDescription 0",
+              "RowDescription text",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParameterDescription 0",
+              "RowDescription text",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgbouncer-1.26.1",
+      "scenario": "protocol-statement-names-isolated",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from b",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from b",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from a",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from a",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgbouncer-1.26.1",
+      "scenario": "protocol-statement-reparsed-after-close",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "CloseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "CloseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 2",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 2",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow new",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow new",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgbouncer-1.26.1",
+      "scenario": "protocol-unnamed-statement-survives-other-clients",
+      "result": "fail",
+      "mismatch": {
+        "step": 3,
+        "action": "[a] send: bind - - / execute - / sync",
+        "kind": "error",
+        "expected": {
+          "status": "messages",
+          "messages": [
+            "BindComplete",
+            "DataRow from a",
+            "CommandComplete SELECT 1",
+            "ReadyForQuery I"
+          ]
+        },
+        "actual": {
+          "status": "messages",
+          "messages": [
+            "Error 26000",
+            "ReadyForQuery I"
+          ]
+        }
+      },
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from a",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "Error 26000",
+              "ReadyForQuery I"
             ]
           }
         }
@@ -5880,6 +7405,67 @@
     },
     {
       "target": "pgdog-0.1.50",
+      "scenario": "copy-from-stdin",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "CopyInResponse"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "CopyInResponse"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "CommandComplete COPY 3",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "CommandComplete COPY 3",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "ok",
+            "rows": [
+              [
+                "3"
+              ]
+            ],
+            "tags": [
+              1
+            ]
+          },
+          "pooler": {
+            "status": "ok",
+            "rows": [
+              [
+                "3"
+              ]
+            ],
+            "tags": [
+              1
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgdog-0.1.50",
       "scenario": "cursor-isolated-between-clients",
       "result": "fail",
       "mismatch": {
@@ -6467,6 +8053,410 @@
             ],
             "tags": [
               1
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgdog-0.1.50",
+      "scenario": "protocol-error-after-flush",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "Error 42601"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "Error 42601"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "BindComplete",
+              "DataRow recovered",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "BindComplete",
+              "DataRow recovered",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgdog-0.1.50",
+      "scenario": "protocol-pipeline-recovers-after-error",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "Error 22012",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow second",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "Error 22012",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow second",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgdog-0.1.50",
+      "scenario": "protocol-pipelined-statements",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow two",
+              "CommandComplete SELECT 1",
+              "BindComplete",
+              "DataRow one",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow two",
+              "CommandComplete SELECT 1",
+              "BindComplete",
+              "DataRow one",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParameterDescription 0",
+              "RowDescription text",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParameterDescription 0",
+              "RowDescription text",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgdog-0.1.50",
+      "scenario": "protocol-statement-names-isolated",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from b",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from b",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from a",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from a",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgdog-0.1.50",
+      "scenario": "protocol-statement-reparsed-after-close",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "CloseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "CloseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 2",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 2",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow new",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow new",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgdog-0.1.50",
+      "scenario": "protocol-unnamed-statement-survives-other-clients",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from a",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from a",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
             ]
           }
         }
@@ -7508,6 +9498,67 @@
     },
     {
       "target": "pgdog-0.1.56",
+      "scenario": "copy-from-stdin",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "CopyInResponse"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "CopyInResponse"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "CommandComplete COPY 3",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "CommandComplete COPY 3",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "ok",
+            "rows": [
+              [
+                "3"
+              ]
+            ],
+            "tags": [
+              1
+            ]
+          },
+          "pooler": {
+            "status": "ok",
+            "rows": [
+              [
+                "3"
+              ]
+            ],
+            "tags": [
+              1
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgdog-0.1.56",
       "scenario": "cursor-isolated-between-clients",
       "result": "fail",
       "mismatch": {
@@ -8095,6 +10146,410 @@
             ],
             "tags": [
               1
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgdog-0.1.56",
+      "scenario": "protocol-error-after-flush",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "Error 42601"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "Error 42601"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "BindComplete",
+              "DataRow recovered",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "BindComplete",
+              "DataRow recovered",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgdog-0.1.56",
+      "scenario": "protocol-pipeline-recovers-after-error",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "Error 22012",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow second",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "Error 22012",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow second",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgdog-0.1.56",
+      "scenario": "protocol-pipelined-statements",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow two",
+              "CommandComplete SELECT 1",
+              "BindComplete",
+              "DataRow one",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow two",
+              "CommandComplete SELECT 1",
+              "BindComplete",
+              "DataRow one",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParameterDescription 0",
+              "RowDescription text",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParameterDescription 0",
+              "RowDescription text",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgdog-0.1.56",
+      "scenario": "protocol-statement-names-isolated",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from b",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from b",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from a",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from a",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgdog-0.1.56",
+      "scenario": "protocol-statement-reparsed-after-close",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "CloseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "CloseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 2",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 2",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow new",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow new",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgdog-0.1.56",
+      "scenario": "protocol-unnamed-statement-survives-other-clients",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from a",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from a",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
             ]
           }
         }
@@ -9163,6 +11618,67 @@
     },
     {
       "target": "pgdog-0.1.62",
+      "scenario": "copy-from-stdin",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "CopyInResponse"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "CopyInResponse"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "CommandComplete COPY 3",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "CommandComplete COPY 3",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "ok",
+            "rows": [
+              [
+                "3"
+              ]
+            ],
+            "tags": [
+              1
+            ]
+          },
+          "pooler": {
+            "status": "ok",
+            "rows": [
+              [
+                "3"
+              ]
+            ],
+            "tags": [
+              1
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgdog-0.1.62",
       "scenario": "cursor-isolated-between-clients",
       "result": "fail",
       "mismatch": {
@@ -9723,6 +12239,410 @@
             ],
             "tags": [
               1
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgdog-0.1.62",
+      "scenario": "protocol-error-after-flush",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "Error 42601"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "Error 42601"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "BindComplete",
+              "DataRow recovered",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "BindComplete",
+              "DataRow recovered",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgdog-0.1.62",
+      "scenario": "protocol-pipeline-recovers-after-error",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "Error 22012",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow second",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "Error 22012",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow second",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgdog-0.1.62",
+      "scenario": "protocol-pipelined-statements",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow two",
+              "CommandComplete SELECT 1",
+              "BindComplete",
+              "DataRow one",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow two",
+              "CommandComplete SELECT 1",
+              "BindComplete",
+              "DataRow one",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParameterDescription 0",
+              "RowDescription text",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParameterDescription 0",
+              "RowDescription text",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgdog-0.1.62",
+      "scenario": "protocol-statement-names-isolated",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from b",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from b",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from a",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from a",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgdog-0.1.62",
+      "scenario": "protocol-statement-reparsed-after-close",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "CloseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "CloseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 2",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 2",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow new",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow new",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgdog-0.1.62",
+      "scenario": "protocol-unnamed-statement-survives-other-clients",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from a",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from a",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
             ]
           }
         }
@@ -10791,6 +13711,67 @@
     },
     {
       "target": "pgdog-0.1.62-pubsub",
+      "scenario": "copy-from-stdin",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "CopyInResponse"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "CopyInResponse"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "CommandComplete COPY 3",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "CommandComplete COPY 3",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "ok",
+            "rows": [
+              [
+                "3"
+              ]
+            ],
+            "tags": [
+              1
+            ]
+          },
+          "pooler": {
+            "status": "ok",
+            "rows": [
+              [
+                "3"
+              ]
+            ],
+            "tags": [
+              1
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgdog-0.1.62-pubsub",
       "scenario": "cursor-isolated-between-clients",
       "result": "fail",
       "mismatch": {
@@ -11343,6 +14324,410 @@
             ],
             "tags": [
               1
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgdog-0.1.62-pubsub",
+      "scenario": "protocol-error-after-flush",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "Error 42601"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "Error 42601"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "BindComplete",
+              "DataRow recovered",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "BindComplete",
+              "DataRow recovered",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgdog-0.1.62-pubsub",
+      "scenario": "protocol-pipeline-recovers-after-error",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "Error 22012",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow second",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "Error 22012",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow second",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgdog-0.1.62-pubsub",
+      "scenario": "protocol-pipelined-statements",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow two",
+              "CommandComplete SELECT 1",
+              "BindComplete",
+              "DataRow one",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow two",
+              "CommandComplete SELECT 1",
+              "BindComplete",
+              "DataRow one",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParameterDescription 0",
+              "RowDescription text",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParameterDescription 0",
+              "RowDescription text",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgdog-0.1.62-pubsub",
+      "scenario": "protocol-statement-names-isolated",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from b",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from b",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from a",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from a",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgdog-0.1.62-pubsub",
+      "scenario": "protocol-statement-reparsed-after-close",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "CloseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "CloseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 2",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 2",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow new",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow new",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "pgdog-0.1.62-pubsub",
+      "scenario": "protocol-unnamed-statement-survives-other-clients",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from a",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from a",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
             ]
           }
         }
@@ -12385,6 +15770,67 @@
             "rows": [
               [
                 ""
+              ]
+            ],
+            "tags": [
+              1
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "supavisor-2.9.13",
+      "scenario": "copy-from-stdin",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "CopyInResponse"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "CopyInResponse"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "CommandComplete COPY 3",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "CommandComplete COPY 3",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "ok",
+            "rows": [
+              [
+                "3"
+              ]
+            ],
+            "tags": [
+              1
+            ]
+          },
+          "pooler": {
+            "status": "ok",
+            "rows": [
+              [
+                "3"
               ]
             ],
             "tags": [
@@ -12944,6 +16390,471 @@
             ],
             "tags": [
               1
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "supavisor-2.9.13",
+      "scenario": "protocol-error-after-flush",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "Error 42601"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "Error 42601"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "BindComplete",
+              "DataRow recovered",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "BindComplete",
+              "DataRow recovered",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "supavisor-2.9.13",
+      "scenario": "protocol-pipeline-recovers-after-error",
+      "result": "fail",
+      "mismatch": {
+        "step": 1,
+        "action": "[a] send: parse - SELECT 1/0 / bind - - / execute - / sync / parse - SELECT 'second'::text / bind - - / execute - / sync",
+        "kind": "hang",
+        "expected": {
+          "status": "messages",
+          "messages": [
+            "ParseComplete",
+            "Error 22012",
+            "ReadyForQuery I",
+            "ParseComplete",
+            "BindComplete",
+            "DataRow second",
+            "CommandComplete SELECT 1",
+            "ReadyForQuery I"
+          ]
+        },
+        "actual": {
+          "status": "messages",
+          "messages": [
+            "ParseComplete",
+            "Error 22012",
+            "ReadyForQuery I",
+            "TIMEOUT"
+          ]
+        }
+      },
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "Error 22012",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow second",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "Error 22012",
+              "ReadyForQuery I",
+              "TIMEOUT"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "supavisor-2.9.13",
+      "scenario": "protocol-pipelined-statements",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow two",
+              "CommandComplete SELECT 1",
+              "BindComplete",
+              "DataRow one",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow two",
+              "CommandComplete SELECT 1",
+              "BindComplete",
+              "DataRow one",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParameterDescription 0",
+              "RowDescription text",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParameterDescription 0",
+              "RowDescription text",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "supavisor-2.9.13",
+      "scenario": "protocol-statement-names-isolated",
+      "result": "fail",
+      "mismatch": {
+        "step": 2,
+        "action": "[b] send: parse s1 SELECT 'from b'::text / sync",
+        "kind": "error",
+        "expected": {
+          "status": "messages",
+          "messages": [
+            "ParseComplete",
+            "ReadyForQuery I"
+          ]
+        },
+        "actual": {
+          "status": "messages",
+          "messages": [
+            "Error 42P05",
+            "ReadyForQuery I"
+          ]
+        }
+      },
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "Error 42P05",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from b",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from a",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from a",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from a",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "supavisor-2.9.13",
+      "scenario": "protocol-statement-reparsed-after-close",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "CloseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "CloseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 2",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 2",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow new",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow new",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "supavisor-2.9.13",
+      "scenario": "protocol-unnamed-statement-survives-other-clients",
+      "result": "fail",
+      "mismatch": {
+        "step": 3,
+        "action": "[a] send: bind - - / execute - / sync",
+        "kind": "error",
+        "expected": {
+          "status": "messages",
+          "messages": [
+            "BindComplete",
+            "DataRow from a",
+            "CommandComplete SELECT 1",
+            "ReadyForQuery I"
+          ]
+        },
+        "actual": {
+          "status": "messages",
+          "messages": [
+            "Error 26000",
+            "ReadyForQuery I"
+          ]
+        }
+      },
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from a",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "Error 26000",
+              "ReadyForQuery I"
             ]
           }
         }
@@ -14105,6 +18016,67 @@
     },
     {
       "target": "supavisor-2.10.0-rc.1",
+      "scenario": "copy-from-stdin",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "CopyInResponse"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "CopyInResponse"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "CommandComplete COPY 3",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "CommandComplete COPY 3",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "ok",
+            "rows": [
+              [
+                "3"
+              ]
+            ],
+            "tags": [
+              1
+            ]
+          },
+          "pooler": {
+            "status": "ok",
+            "rows": [
+              [
+                "3"
+              ]
+            ],
+            "tags": [
+              1
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "supavisor-2.10.0-rc.1",
       "scenario": "cursor-isolated-between-clients",
       "result": "fail",
       "mismatch": {
@@ -14653,6 +18625,448 @@
             ],
             "tags": [
               1
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "supavisor-2.10.0-rc.1",
+      "scenario": "protocol-error-after-flush",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "Error 42601"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "Error 42601"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "BindComplete",
+              "DataRow recovered",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "BindComplete",
+              "DataRow recovered",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "supavisor-2.10.0-rc.1",
+      "scenario": "protocol-pipeline-recovers-after-error",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "Error 22012",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow second",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "Error 22012",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow second",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "supavisor-2.10.0-rc.1",
+      "scenario": "protocol-pipelined-statements",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow two",
+              "CommandComplete SELECT 1",
+              "BindComplete",
+              "DataRow one",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow two",
+              "CommandComplete SELECT 1",
+              "BindComplete",
+              "DataRow one",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParameterDescription 0",
+              "RowDescription text",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParameterDescription 0",
+              "RowDescription text",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "supavisor-2.10.0-rc.1",
+      "scenario": "protocol-statement-names-isolated",
+      "result": "fail",
+      "mismatch": {
+        "step": 2,
+        "action": "[b] send: parse s1 SELECT 'from b'::text / sync",
+        "kind": "error",
+        "expected": {
+          "status": "messages",
+          "messages": [
+            "ParseComplete",
+            "ReadyForQuery I"
+          ]
+        },
+        "actual": {
+          "status": "messages",
+          "messages": [
+            "Error 42P05",
+            "ReadyForQuery I"
+          ]
+        }
+      },
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "Error 42P05",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from b",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from a",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from a",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from a",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "supavisor-2.10.0-rc.1",
+      "scenario": "protocol-statement-reparsed-after-close",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "CloseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "CloseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 2",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 2",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow new",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow new",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "supavisor-2.10.0-rc.1",
+      "scenario": "protocol-unnamed-statement-survives-other-clients",
+      "result": "fail",
+      "mismatch": {
+        "step": 3,
+        "action": "[a] send: bind - - / execute - / sync",
+        "kind": "error",
+        "expected": {
+          "status": "messages",
+          "messages": [
+            "BindComplete",
+            "DataRow from a",
+            "CommandComplete SELECT 1",
+            "ReadyForQuery I"
+          ]
+        },
+        "actual": {
+          "status": "messages",
+          "messages": [
+            "Error 26000",
+            "ReadyForQuery I"
+          ]
+        }
+      },
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from a",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "Error 26000",
+              "ReadyForQuery I"
             ]
           }
         }
@@ -15802,6 +20216,67 @@
     },
     {
       "target": "supavisor-2.10.0-rc.1-strict",
+      "scenario": "copy-from-stdin",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "CopyInResponse"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "CopyInResponse"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "CommandComplete COPY 3",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "CommandComplete COPY 3",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "ok",
+            "rows": [
+              [
+                "3"
+              ]
+            ],
+            "tags": [
+              1
+            ]
+          },
+          "pooler": {
+            "status": "ok",
+            "rows": [
+              [
+                "3"
+              ]
+            ],
+            "tags": [
+              1
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "supavisor-2.10.0-rc.1-strict",
       "scenario": "cursor-isolated-between-clients",
       "result": "fail",
       "mismatch": {
@@ -16333,6 +20808,448 @@
             ],
             "tags": [
               1
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "supavisor-2.10.0-rc.1-strict",
+      "scenario": "protocol-error-after-flush",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "Error 42601"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "Error 42601"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "BindComplete",
+              "DataRow recovered",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "BindComplete",
+              "DataRow recovered",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "supavisor-2.10.0-rc.1-strict",
+      "scenario": "protocol-pipeline-recovers-after-error",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "Error 22012",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow second",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "Error 22012",
+              "ReadyForQuery I",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow second",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "supavisor-2.10.0-rc.1-strict",
+      "scenario": "protocol-pipelined-statements",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow two",
+              "CommandComplete SELECT 1",
+              "BindComplete",
+              "DataRow one",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ParseComplete",
+              "BindComplete",
+              "DataRow two",
+              "CommandComplete SELECT 1",
+              "BindComplete",
+              "DataRow one",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParameterDescription 0",
+              "RowDescription text",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParameterDescription 0",
+              "RowDescription text",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "supavisor-2.10.0-rc.1-strict",
+      "scenario": "protocol-statement-names-isolated",
+      "result": "fail",
+      "mismatch": {
+        "step": 2,
+        "action": "[b] send: parse s1 SELECT 'from b'::text / sync",
+        "kind": "error",
+        "expected": {
+          "status": "messages",
+          "messages": [
+            "ParseComplete",
+            "ReadyForQuery I"
+          ]
+        },
+        "actual": {
+          "status": "messages",
+          "messages": [
+            "Error 42P05",
+            "ReadyForQuery I"
+          ]
+        }
+      },
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "Error 42P05",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from b",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from a",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from a",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from a",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "supavisor-2.10.0-rc.1-strict",
+      "scenario": "protocol-statement-reparsed-after-close",
+      "result": "pass",
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "CloseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "CloseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 2",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 2",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow new",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow new",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "target": "supavisor-2.10.0-rc.1-strict",
+      "scenario": "protocol-unnamed-statement-survives-other-clients",
+      "result": "fail",
+      "mismatch": {
+        "step": 3,
+        "action": "[a] send: bind - - / execute - / sync",
+        "kind": "error",
+        "expected": {
+          "status": "messages",
+          "messages": [
+            "BindComplete",
+            "DataRow from a",
+            "CommandComplete SELECT 1",
+            "ReadyForQuery I"
+          ]
+        },
+        "actual": {
+          "status": "messages",
+          "messages": [
+            "Error 26000",
+            "ReadyForQuery I"
+          ]
+        }
+      },
+      "steps": [
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "ParseComplete",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "RowDescription ?column?",
+              "DataRow 1",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          }
+        },
+        {
+          "postgres": {
+            "status": "messages",
+            "messages": [
+              "BindComplete",
+              "DataRow from a",
+              "CommandComplete SELECT 1",
+              "ReadyForQuery I"
+            ]
+          },
+          "pooler": {
+            "status": "messages",
+            "messages": [
+              "Error 26000",
+              "ReadyForQuery I"
             ]
           }
         }

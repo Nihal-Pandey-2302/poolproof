@@ -2,6 +2,8 @@ use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
+
+use crate::raw::RawMessage;
 use serde::{Deserialize, Serialize};
 
 /// Pooling mode of a target. Scenarios list the modes they apply to.
@@ -84,6 +86,10 @@ pub struct Step {
     /// Record the NOTIFY messages this client has received since the last such step.
     #[serde(default)]
     pub notifications: bool,
+    /// Write these protocol messages directly (e.g. `parse s1 SELECT 1`, `bind - s1`,
+    /// `execute -`, `sync`) and record every reply. A client that uses `send` talks
+    /// raw protocol for its whole life; `disconnect` is its only other step.
+    pub send: Option<Vec<String>>,
     /// Sleep this long before the step, e.g. so a cancel lands while a query runs.
     pub delay_ms: Option<u64>,
     #[serde(default)]
@@ -103,6 +109,7 @@ pub enum Compare {
 }
 
 pub enum Action<'a> {
+    Send(Vec<RawMessage>),
     Simple(&'a str),
     Abandon { sql: &'a str, after: Duration },
     Prepare { sql: &'a str, name: &'a str },
@@ -124,13 +131,14 @@ impl Step {
             self.wait,
             self.cancel,
             self.notifications,
+            self.send.is_some(),
         ]
         .iter()
         .filter(|s| **s)
         .count();
         if set != 1 {
             bail!(
-                "step for client '{}' must have exactly one of simple, prepare, execute, disconnect, wait, cancel, notifications",
+                "step for client '{}' must have exactly one of simple, prepare, execute, disconnect, wait, cancel, notifications, send",
                 self.client
             );
         }
@@ -154,6 +162,13 @@ impl Step {
         if let Some(name) = &self.execute {
             return Ok(Action::Execute(name));
         }
+        if let Some(messages) = &self.send {
+            let messages = messages
+                .iter()
+                .map(|m| m.parse().with_context(|| format!("in send for client '{}': `{m}`", self.client)))
+                .collect::<Result<Vec<RawMessage>>>()?;
+            return Ok(Action::Send(messages));
+        }
         Ok(if self.wait {
             Action::Wait
         } else if self.cancel {
@@ -169,6 +184,7 @@ impl Step {
         let via = if self.direct { " (direct)" } else { "" };
         let what = match self.action() {
             Ok(Action::Simple(sql)) => format!("simple: {sql}"),
+            Ok(Action::Send(_)) => format!("send: {}", self.send.as_deref().unwrap_or_default().join(" / ")),
             Ok(Action::Abandon { sql, after }) => format!("abandon after {after:?}: {sql}"),
             Ok(Action::Prepare { sql, name }) => format!("prepare {name}: {sql}"),
             Ok(Action::Execute(name)) => format!("execute {name}"),

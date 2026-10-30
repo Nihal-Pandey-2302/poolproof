@@ -1,0 +1,17 @@
+name = "copy-from-stdin"
+description = "COPY FROM STDIN through the pooler must load every row."
+setup = ["DROP TABLE IF EXISTS pp_copy", "CREATE TABLE pp_copy (x int)"]
+teardown = ["DROP TABLE IF EXISTS pp_copy"]
+
+[[step]]
+client = "a"
+send = ["query COPY pp_copy FROM STDIN"]
+
+[[step]]
+client = "a"
+send = ["copydata 1\n2\n3\n", "copydone"]
+
+[[step]]
+client = "check"
+direct = true
+simple = "SELECT count(*) FROM pp_copy"

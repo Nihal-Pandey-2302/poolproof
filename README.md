@@ -183,6 +183,22 @@ Step actions:
 - `wait`: collect the result of this client's `background` query.
 - `cancel`: send a CancelRequest with this client's key, through the same pooler.
 - `notifications`: the NOTIFY messages this client received since the last such step.
+- `send`: write protocol messages directly and record every reply, for the things drivers
+  hide: statement names, Flush vs Sync, pipelines, COPY. For example:
+
+  ```toml
+  [[step]]
+  client = "a"
+  send = ["parse s1 SELECT 'a'::text", "bind - s1", "execute -", "sync"]
+  # replies: ParseComplete, BindComplete, DataRow a, CommandComplete SELECT 1, ReadyForQuery I
+  ```
+
+  Messages: `parse NAME SQL`, `bind PORTAL STATEMENT`, `execute PORTAL [MAX_ROWS]`,
+  `describe statement|portal NAME`, `close statement|portal NAME`, `sync`, `flush`,
+  `query SQL`, `copydata TEXT`, `copydone`. `-` is the unnamed statement or portal. Replies
+  are read up to one ReadyForQuery per `sync`/`query`/`copydone`; without those, until the
+  server is quiet for half a second. Errors are recorded by SQLSTATE only. A client that uses
+  `send` has its own raw connection; `disconnect` is its only other step.
 
 Options on a `simple` step: `background = true` starts the query and moves on, so other
 clients can act while it runs. `abandon_after_ms` drops the connection without a goodbye
@@ -200,8 +216,8 @@ link to the issue is the most useful contribution.
 
 ## Status
 
-Early. Not covered yet: RDS Proxy in the test bed, statement name
-collisions at the protocol level, COPY, and TLS.
+Not covered yet: RDS Proxy and PgCat in the test bed, session-mode targets, TLS, and
+COPY TO STDOUT.
 
 ## License
 

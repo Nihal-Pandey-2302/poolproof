@@ -1,0 +1,9 @@
+name = "protocol-pipeline-recovers-after-error"
+description = "In a pipeline, a failing request must not affect the request after the next Sync."
+
+[[step]]
+client = "a"
+send = [
+  "parse - SELECT 1/0", "bind - -", "execute -", "sync",
+  "parse - SELECT 'second'::text", "bind - -", "execute -", "sync",
+]

@@ -1,3 +1,4 @@
+mod raw;
 mod report;
 mod runner;
 mod scan;

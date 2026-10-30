@@ -1,0 +1,14 @@
+name = "protocol-unnamed-statement-survives-other-clients"
+description = "The unnamed statement stays usable until the same client replaces it, even if other clients ran queries."
+
+[[step]]
+client = "a"
+send = ["parse - SELECT 'from a'::text", "sync"]
+
+[[step]]
+client = "b"
+send = ["query SELECT 1"]
+
+[[step]]
+client = "a"
+send = ["bind - -", "execute -", "sync"]

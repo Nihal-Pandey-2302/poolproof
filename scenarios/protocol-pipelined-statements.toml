@@ -1,0 +1,13 @@
+name = "protocol-pipelined-statements"
+description = "Several named statements prepared and run in one pipeline must all return their own results."
+
+[[step]]
+client = "a"
+send = [
+  "parse p1 SELECT 'one'::text", "parse p2 SELECT 'two'::text",
+  "bind - p2", "execute -", "bind - p1", "execute -", "sync",
+]
+
+[[step]]
+client = "a"
+send = ["describe statement p1", "sync"]

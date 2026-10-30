@@ -742,9 +742,12 @@ name = "poolproof"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bytes",
  "clap",
  "csv",
+ "fallible-iterator",
  "pg_query",
+ "postgres-protocol",
  "serde",
  "serde_json",
  "tokio",
