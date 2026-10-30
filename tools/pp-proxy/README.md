@@ -19,7 +19,7 @@ One process, one listener per fault, all forwarding to one Postgres:
 `PROXY_BIND` sets the listen address (default `127.0.0.1`; in a container set it to `0.0.0.0`).
 
 `selftest/expected.toml` lists the verdict each target must get. In the docker test bed
-(ports 56471-56476) the proxy runs under the `selftest` profile:
+(ports 56471-56477) the proxy runs under the `selftest` profile:
 
     docker compose -f docker/compose.yml --profile selftest up -d --wait postgres pp-proxy
     poolproof run --targets selftest/targets.toml --format json > selftest.json
