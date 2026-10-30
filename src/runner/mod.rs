@@ -20,7 +20,7 @@ pub use pg::server_version;
 /// every run used before these were configurable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Timeouts {
-    /// Connecting, including startup and authentication.
+    /// Connecting: TCP connect, startup and authentication together, one deadline.
     pub connect: Duration,
     /// The reply to one step.
     pub step: Duration,

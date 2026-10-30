@@ -15,7 +15,7 @@ use postgres_protocol::message::backend::Message;
 use postgres_protocol::message::frontend;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
-use tokio::time::{Instant, timeout};
+use tokio::time::{Instant, timeout_at};
 use tokio_postgres::config::Host;
 
 /// One frontend message, written in a scenario as e.g. `parse s1 SELECT 1`.
@@ -188,7 +188,9 @@ impl RawConn {
         let password = config.get_password().unwrap_or_default().to_vec();
         let dbname = config.get_dbname().unwrap_or(&user).to_string();
 
-        let stream = timeout(connect_timeout, TcpStream::connect((host.as_str(), port)))
+        // One deadline for TCP connect and startup, as for tokio-postgres clients.
+        let deadline = Instant::now() + connect_timeout;
+        let stream = timeout_at(deadline, TcpStream::connect((host.as_str(), port)))
             .await
             .context("connect timed out")??;
         let mut conn = RawConn {
@@ -200,7 +202,6 @@ impl RawConn {
         frontend::startup_message([("user", user.as_str()), ("database", dbname.as_str())], &mut out)?;
         conn.send(&out).await?;
 
-        let deadline = Instant::now() + connect_timeout;
         let mut scram: Option<ScramSha256> = None;
         loop {
             let message = match conn.next(deadline).await? {
