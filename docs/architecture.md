@@ -1,0 +1,122 @@
+# Architecture
+
+poolproof has two independent halves that share a report format:
+
+- `run` is a differential tester. It plays each scenario against plain Postgres, then
+  through a pooler, and compares what clients saw. Postgres is the oracle: scenarios
+  never hardcode expected output.
+- `scan` is a static checker. It parses queries with the Postgres parser
+  (`pg_query`) and flags patterns that break under transaction pooling. With
+  `--pooler`, it looks up what `run` found on that pooler.
+
+`report` renders saved `run` results, and is how `RESULTS.md` and the results site are
+made.
+
+## Layout
+
+```text
+build.rs                 embeds scenarios/*.toml and results/*.json into the binary
+src/main.rs              entry point: SIGPIPE, exit code 2 on error
+src/lib.rs               the modules below, as a library for tests/ (no stable API)
+src/cli.rs               clap commands and flags; wires the modules together
+src/scenario.rs          scenario TOML format: Scenario, Step, Action, Compare, PoolMode
+src/targets.rs           targets TOML format, and the single target from --pooler/--direct
+src/runner/
+  mod.rs                 Outcome (what a client saw for one step), timeouts
+  suite.rs               the loop over targets and scenarios behind `run`
+  check.rs               one scenario on one target: reset, setup, baseline, pooler, compare
+  steps.rs               runs a scenario's steps, one connection per client
+  pg.rs                  normal clients on tokio-postgres; reset helpers, server version
+  raw.rs                 raw protocol clients for `send` steps
+  compare.rs             outcome matching, Verdict, Mismatch, FailKind (silent/error/hang)
+src/report/
+  mod.rs                 the JSON report, bundled results, lookups for scan --pooler
+  markdown.rs            RESULTS.md-style table
+  html.rs, report.html   the self-contained results page
+src/scan/
+  mod.rs                 Finding, Severity, rule list, rule -> scenario mapping
+  input.rs               pg_stat_statements CSV, stderr and jsonlog logs, .sql files
+  rules.rs               the rules, on the parsed statement tree
+src/output/
+  text.rs                `run` results on the terminal
+  scan.rs, sarif.rs      `scan` results as text, JSON and SARIF
+scenarios/               one TOML file per scenario
+results/                 committed `run --format json` reports, one per Postgres version
+docker/compose.yml       the test bed: Postgres and every pooler version in the matrix
+targets.toml             the test bed's targets
+scripts/update-results.sh  regenerates results/ and RESULTS.md from a fresh test bed
+```
+
+## How `run` works
+
+```text
+cli ─ targets.toml or --pooler/--direct ─┐
+    ─ scenarios (built in or --scenarios)┴─> runner::suite::run
+                                               for each target, for each scenario:
+                                               runner::check
+                                                 1. reset, setup        (direct)
+                                                 2. run_steps baseline  (every client direct)
+                                                 3. teardown            (direct)
+                                                 4. reset, wait for the pooler to answer
+                                                 5. setup, run_steps through the pooler,
+                                                    teardown            (repeat times)
+                                                 6. first step whose outcomes differ
+                                                    -> Verdict
+                                               -> text as it goes, or report::Report
+                                                  -> JSON, markdown or HTML
+```
+
+Details that matter when changing this:
+
+- The baseline and the pooler run use the same code, `run_steps(scenario, pooled,
+  direct)`. For the baseline both URLs are Postgres. Steps marked `direct = true` go to
+  Postgres in both runs, which is how scenarios look behind the pooler.
+- Each client gets its own connection on its first step. Normal clients use
+  tokio-postgres (`pg.rs`). A client with any `send` step gets a raw connection
+  (`raw.rs`) that writes frontend messages itself and records every reply as a line,
+  because drivers hide exactly what those scenarios test (statement names, Sync vs
+  Flush, pipelining).
+- Every step produces an `Outcome`: rows and command tags, an error (SQLSTATE plus
+  message), `abandoned`, or reply lines. Harness-side problems are errors with a
+  pseudo-code: `TIMEOUT`, `CONNECT`, `CLIENT`.
+- `compare.rs` decides whether two outcomes match, per the step's `compare` setting.
+  Error messages never count, only codes, since wording differs between versions. The
+  first mismatch becomes a `Fail` with a kind: `silent` (a different result), `error`
+  (an error Postgres didn't give) or `hang` (timeout).
+- `reset` exists because poolers keep server connections. Without it, state one
+  scenario leaked can change the next scenario's verdict.
+- Closing a direct connection returns before Postgres has ended the backend, so the
+  runner waits for the backend to exit after a direct client disconnects, before the
+  next step looks at server state.
+
+## How `scan` works
+
+```text
+input file -> scan::input::load_queries -> Vec<Query> (SQL, calls, line)
+           -> scan::rules::scan -> findings (rule, severity, query)
+           -> with --pooler: report::find_target + check_finding
+                             (rule -> scenarios -> that pooler's verdicts)
+           -> output::scan (text, JSON) or output::sarif
+```
+
+The results `--pooler` uses come from `results/`, built into the binary, or from a
+report given with `--results`.
+
+## Where to change what
+
+| To add or change | Edit |
+|---|---|
+| A scenario | `scenarios/<name>.toml`, then `scripts/update-results.sh` (see CONTRIBUTING.md) |
+| A step action or option | `scenario.rs` (format and validation), `runner/steps.rs`, README's step list |
+| A protocol message for `send` | `runner/raw.rs` (parsing the `send` line, encoding, reply lines) |
+| How outcomes are compared or classified | `runner/compare.rs`, with unit tests there |
+| Reset, setup, repeat or timing behavior | `runner/check.rs`, `runner/pg.rs` |
+| A targets file field | `targets.rs`, README's targets example |
+| A field in the JSON report | `report/mod.rs`; it's a stable format, see the versioning policy in CHANGELOG.md |
+| The results table or page | `report/markdown.rs`, `report/html.rs` and `report/report.html` |
+| A `scan` rule | `scan/rules.rs`, `RULES` and the rule -> scenario map in `scan/mod.rs`, README's rule list |
+| A `scan` input format | `scan/input.rs` |
+| Terminal or SARIF output | `output/` |
+| A command or flag | `cli.rs`, README |
+| A pooler or version in the matrix | `docker/compose.yml`, `targets.toml`, then regenerate `results/` |
+| CI or releases | `.github/workflows/`, `docs/releasing.md` |
