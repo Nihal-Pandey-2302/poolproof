@@ -25,8 +25,10 @@ src/runner/
   mod.rs                 Outcome (what a client saw for one step), timeouts
   suite.rs               the loop over targets and scenarios behind `run`
   check.rs               one scenario on one target: reset, setup, baseline, pooler, compare
+                         (run_direct runs reset, setup and teardown statements)
   steps.rs               runs a scenario's steps, one connection per client
-  pg.rs                  normal clients on tokio-postgres; reset helpers, server version
+  pg.rs                  normal clients on tokio-postgres: connect, wait_ready after a
+                         reset, waiting for a disconnected backend to exit, server version
   raw.rs                 raw protocol clients for `send` steps
   compare.rs             outcome matching, Verdict, Mismatch, FailKind (silent/error/hang)
 src/report/
@@ -39,7 +41,7 @@ src/scan/
   rules.rs               the rules, on the parsed statement tree
 src/output/
   text.rs                `run` results on the terminal
-  scan.rs, sarif.rs      `scan` results as text, JSON and SARIF
+  scan.rs, sarif.rs      `scan` results as text and SARIF (cli.rs prints JSON directly)
 scenarios/               one TOML file per scenario
 results/                 committed `run --format json` reports, one per Postgres version
 docker/compose.yml       the test bed: Postgres and every pooler version in the matrix
@@ -61,11 +63,12 @@ cli ─ targets.toml or --pooler/--direct ─┐
                                                  1. reset, setup        (direct)
                                                  2. run_steps baseline  (every client direct)
                                                  3. teardown            (direct)
-                                                 4. reset, wait for the pooler to answer
-                                                 5. setup, run_steps through the pooler,
-                                                    teardown            (repeat times)
-                                                 6. first step whose outcomes differ
-                                                    -> Verdict
+                                                 4. for each pooler run (repeat times):
+                                                    reset, wait for the pooler to answer
+                                                    (only with a reset), setup, run_steps
+                                                    through the pooler, teardown
+                                                 5. first step whose outcomes differ
+                                                    -> Verdict (first failing run kept)
                                                -> text as it goes, or report::Report
                                                   -> JSON, markdown or HTML
 ```
@@ -82,7 +85,10 @@ Details that matter when changing this:
   Flush, pipelining).
 - Every step produces an `Outcome`: rows and command tags, an error (SQLSTATE plus
   message), `abandoned`, or reply lines. Harness-side problems are errors with a
-  pseudo-code: `TIMEOUT`, `CONNECT`, `CLIENT`.
+  pseudo-code: `TIMEOUT` (no reply in time), `CONNECT` (couldn't connect), `CLOSED` (the
+  connection closed), `CLIENT` (any other driver error) and `NO_STATEMENT` (an `execute`
+  whose `prepare` failed). A raw `send` client records these as a final reply line
+  (`TIMEOUT`, `CLOSED`) instead of an error outcome.
 - `compare.rs` decides whether two outcomes match, per the step's `compare` setting.
   Error messages never count, only codes, since wording differs between versions. The
   first mismatch becomes a `Fail` with a kind: `silent` (a different result), `error`
@@ -100,7 +106,7 @@ input file -> scan::input::load_queries -> Vec<Query> (SQL, calls, line)
            -> scan::rules::scan -> findings (rule, severity, query)
            -> with --pooler: report::find_target + check_finding
                              (rule -> scenarios -> that pooler's verdicts)
-           -> output::scan (text, JSON) or output::sarif
+           -> output::scan (text), output::sarif, or JSON printed by cli.rs
 ```
 
 The results `--pooler` uses come from `results/`, built into the binary, or from a
@@ -114,7 +120,7 @@ report given with `--results`.
 | A step action or option | `scenario.rs` (format and validation), `runner/steps.rs`, README's step list |
 | A protocol message for `send` | `runner/raw.rs` (parsing the `send` line, encoding, reply lines) |
 | How outcomes are compared or classified | `runner/compare.rs`, with unit tests there |
-| Reset, setup, repeat or timing behavior | `runner/check.rs`, `runner/pg.rs` |
+| Reset, setup, repeat or timing behavior | `runner/check.rs`, `runner/pg.rs`, timeouts in `runner/mod.rs` |
 | A targets file field | `targets.rs`, README's targets example |
 | A field in the JSON report | `report/mod.rs`; it's a stable format, see the versioning policy in CHANGELOG.md |
 | The results table or page | `report/markdown.rs`, `report/html.rs` and `report/report.html` |
@@ -122,6 +128,6 @@ report given with `--results`.
 | A `scan` input format | `scan/input.rs` |
 | Terminal or SARIF output | `output/` |
 | A command or flag | `cli.rs`, README |
-| A pooler or version in the matrix | `docker/compose.yml`, `targets.toml`, then regenerate `results/` |
-| A harness self-test fault | `tools/pp-proxy/src/fault.rs`, `selftest/expected.toml` |
+| A pooler or version in the matrix | `docker/compose.yml`, `targets.toml` (with `product`, `version`, `config`), the version list in README.md, the Docker ignore list in `.github/dependabot.yml`, then regenerate `results/` |
+| A harness self-test fault | `tools/pp-proxy/src/fault.rs` (the fault and its name), `main.rs` (`PROXY_LISTEN` parsing) and `shared.rs` (the shared-server fault) there, the table in `tools/pp-proxy/README.md`, `selftest/expected.toml` |
 | CI or releases | `.github/workflows/`, `docs/releasing.md` |
