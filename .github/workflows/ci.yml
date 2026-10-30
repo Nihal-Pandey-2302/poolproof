@@ -1,7 +1,9 @@
 name: ci
 
+# Branches run through pull_request; push only for main, so a PR runs CI once.
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
