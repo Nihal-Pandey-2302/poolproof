@@ -8,7 +8,9 @@ use std::process::{Command, Output};
 const INLINE: &str = "canary-inline-7f3a";
 const FROM_VAR: &str = "canary-var-91bc";
 const FROM_PGPASSWORD: &str = "canary-pgpassword-4d2e";
-const CANARIES: [&str; 3] = [INLINE, FROM_VAR, FROM_PGPASSWORD];
+/// Would point the URL at another host if inserted unencoded.
+const TRICKY: &str = "canary-tricky@127.0.0.1:2/";
+const CANARIES: [&str; 4] = [INLINE, FROM_VAR, FROM_PGPASSWORD, "canary-tricky"];
 
 fn targets_file(name: &str, text: &str) -> PathBuf {
     let path = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(name);
@@ -20,6 +22,7 @@ fn poolproof(args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_poolproof"))
         .args(args)
         .env("PP_TEST_PASSWORD", FROM_VAR)
+        .env("PP_TEST_TRICKY", TRICKY)
         .env("PGPASSWORD", FROM_PGPASSWORD)
         .env("PGPASSFILE", "/nonexistent")
         .output()
@@ -50,6 +53,12 @@ mode = "transaction"
 name = "variable"
 pooler = "postgres://u:${{PP_TEST_PASSWORD}}@127.0.0.1:1/app"
 direct = "host=127.0.0.1 port=1 user=u password='${{PP_TEST_PASSWORD}}' dbname=app"
+mode = "transaction"
+
+[[target]]
+name = "tricky"
+pooler = "postgres://u:${{PP_TEST_TRICKY}}@127.0.0.1:1/app"
+direct = "postgres://u:${{PP_TEST_TRICKY}}@127.0.0.1:1/app"
 mode = "transaction"
 
 [[target]]

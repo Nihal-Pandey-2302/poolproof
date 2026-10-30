@@ -94,7 +94,14 @@ impl Targets {
 impl Target {
     fn from_file(t: TargetFile, env: &dyn Fn(&str) -> Option<String>) -> Result<Self> {
         let endpoint = |field: &str, url: &str| -> Result<Endpoint> {
-            let url = expand_vars(url, env).with_context(|| field.to_string())?;
+            // A value is data: encoded so it can't end the field it's in, e.g. a
+            // password with `@` turning the rest into the host.
+            let quote = if url.starts_with("postgres://") || url.starts_with("postgresql://") {
+                percent_encode
+            } else {
+                backslash_escape
+            };
+            let url = expand_vars(url, env, quote).with_context(|| field.to_string())?;
             Endpoint::resolve(&url, env).with_context(|| field.to_string())
         };
         Ok(Target {
@@ -103,7 +110,7 @@ impl Target {
             reset: t
                 .reset
                 .iter()
-                .map(|sql| expand_vars(sql, env).context("reset"))
+                .map(|sql| expand_vars(sql, env, |v| v.to_string()).context("reset"))
                 .collect::<Result<_>>()?,
             name: t.name,
             mode: t.mode,
@@ -114,9 +121,10 @@ impl Target {
     }
 }
 
-/// Replaces `${NAME}` with the environment variable NAME, so passwords can stay out of
-/// the file. `$${` stands for a literal `${`; any other `$` is left alone.
-fn expand_vars(text: &str, env: &dyn Fn(&str) -> Option<String>) -> Result<String> {
+/// Replaces `${NAME}` with the environment variable NAME, passed through `quote`, so
+/// passwords can stay out of the file. `$${` stands for a literal `${`; any other `$` is
+/// left alone.
+fn expand_vars(text: &str, env: &dyn Fn(&str) -> Option<String>, quote: fn(&str) -> String) -> Result<String> {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(i) = rest.find('$') {
@@ -132,13 +140,14 @@ fn expand_vars(text: &str, env: &dyn Fn(&str) -> Option<String>) -> Result<Strin
             let name = &after[..end];
             let valid = name.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
                 && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+            // Not echoed: the text between the braces may be part of a literal password.
             if !valid {
-                bail!("invalid variable name `{name}`");
+                bail!("invalid variable name in `${{...}}`");
             }
             let Some(value) = env(name) else {
                 bail!("environment variable {name} is not set");
             };
-            out.push_str(&value);
+            out.push_str(&quote(&value));
             rest = &after[end + 1..];
         } else {
             out.push('$');
@@ -147,6 +156,30 @@ fn expand_vars(text: &str, env: &dyn Fn(&str) -> Option<String>) -> Result<Strin
     }
     out.push_str(rest);
     Ok(out)
+}
+
+/// For URLs: every byte but the unreserved ones (RFC 3986) as `%XX`.
+fn percent_encode(value: &str) -> String {
+    value
+        .bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => (b as char).to_string(),
+            b => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
+/// For `key=value` strings: a backslash before `\`, `'` and whitespace, which works
+/// both inside and outside quotes.
+fn backslash_escape(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for c in value.chars() {
+        if c == '\\' || c == '\'' || c.is_whitespace() {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
 }
 
 /// A server to connect to: the parsed URL, with a password from PGPASSWORD or the
@@ -325,15 +358,38 @@ mod tests {
     #[test]
     fn expands_variables() {
         let env = env_of(&[("PW", "s3cret"), ("_X1", "x")]);
-        assert_eq!(
-            expand_vars("postgres://u:${PW}@h/${_X1}", &env).unwrap(),
-            "postgres://u:s3cret@h/x"
-        );
-        assert_eq!(expand_vars("$${PW} $1 $$ a$", &env).unwrap(), "${PW} $1 $$ a$");
-        let err = |s: &str| expand_vars(s, &env).unwrap_err().to_string();
+        let raw = |s: &str| expand_vars(s, &env, |v| v.to_string());
+        assert_eq!(raw("postgres://u:${PW}@h/${_X1}").unwrap(), "postgres://u:s3cret@h/x");
+        assert_eq!(raw("$${PW} $1 $$ a$").unwrap(), "${PW} $1 $$ a$");
+        let err = |s: &str| raw(s).unwrap_err().to_string();
         assert_eq!(err("${MISSING}"), "environment variable MISSING is not set");
         assert_eq!(err("${PW"), "unclosed `${`");
-        assert_eq!(err("${1X}"), "invalid variable name `1X`");
+        assert_eq!(err("${1X}"), "invalid variable name in `${...}`");
+        assert!(!err("${pa ss}").contains("pa ss"));
+    }
+
+    #[test]
+    fn substituted_values_stay_inside_their_field() {
+        // Through the targets file, as a user would write it.
+        let resolve = |template: &str, value: &str| {
+            let env = env_of(&[("PW", value), ("PGPASSFILE", "/nonexistent")]);
+            let file: TargetFile = toml::from_str(&format!(
+                "name = 't'\nmode = 'transaction'\npooler = \"\"\"{template}\"\"\"\ndirect = \"\"\"{template}\"\"\"\n"
+            ))
+            .unwrap();
+            Target::from_file(file, &env).unwrap().pooler
+        };
+        for value in ["x@127.0.0.1:2/", "ab%41", "a b'c\\d:e/f?g#h&i=j"] {
+            for template in [
+                "postgres://u:${PW}@127.0.0.1:1/app",
+                "host=127.0.0.1 port=1 user=u password=${PW} dbname=app",
+                "host=127.0.0.1 port=1 user=u password='${PW}' dbname=app",
+            ] {
+                let e = resolve(template, value);
+                assert_eq!(password(&e).as_deref(), Some(value), "{template}");
+                assert_eq!(e.to_string(), "postgres://u@127.0.0.1:1/app", "{template}");
+            }
+        }
     }
 
     #[test]
