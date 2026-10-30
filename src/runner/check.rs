@@ -1,10 +1,17 @@
 use anyhow::{Context, Result};
+use tokio::time::timeout;
 
-use super::Outcome;
-use super::compare::{FailKind, Mismatch, Verdict};
+use super::compare::{FailKind, Mismatch, Verdict, baseline_failure};
 use super::pg::{connect, wait_ready};
 use super::steps::run_steps;
+use super::{Outcome, STEP_TIMEOUT};
 use crate::scenario::Scenario;
+
+/// Start of the ERROR reason when a target's pooler URL doesn't answer before the run.
+/// The self-test matches on it, so keep it stable.
+pub const POOLER_UNREACHABLE: &str = "target unreachable: pooler:";
+/// Same for the target's direct (plain Postgres) URL.
+pub const DIRECT_UNREACHABLE: &str = "target unreachable: direct:";
 
 async fn run_direct(url: &str, statements: &[String]) -> Result<()> {
     if statements.is_empty() {
@@ -22,6 +29,23 @@ async fn run_direct(url: &str, statements: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// Connect and run `SELECT 1` once.
+async fn probe(url: &str) -> Result<()> {
+    let (client, driver, _) = connect(url).await?;
+    let res = timeout(STEP_TIMEOUT, client.simple_query("SELECT 1")).await;
+    drop(client);
+    let _ = timeout(STEP_TIMEOUT, driver).await;
+    res.context("SELECT 1 timed out")??;
+    Ok(())
+}
+
+/// Check that a target's direct and pooler URLs both answer, before running any
+/// scenario on it. The error is the ERROR reason for each of its scenarios.
+pub async fn preflight(pooled: &str, direct: &str) -> Result<(), String> {
+    probe(direct).await.map_err(|e| format!("{DIRECT_UNREACHABLE} {e:#}"))?;
+    probe(pooled).await.map_err(|e| format!("{POOLER_UNREACHABLE} {e:#}"))
+}
+
 /// The verdict plus each step's (postgres, pooler) outcomes. `steps` is empty when the
 /// pooler run never happened. With `repeat`, the first failing run is the one kept.
 pub struct Checked {
@@ -31,50 +55,71 @@ pub struct Checked {
     pub failures: u32,
 }
 
-/// Run a scenario against plain Postgres, then through the pooler, and compare.
-/// `reset` runs on `direct` before each run so state leaked on the pooler's server
-/// connections by an earlier scenario can't change this one's result.
-pub async fn check(scenario: &Scenario, pooled: &str, direct: &str, reset: &[String]) -> Result<Checked> {
-    run_direct(direct, reset).await.context("reset (baseline)")?;
-    run_direct(direct, &scenario.setup).await.context("setup (baseline)")?;
-    let expected = run_steps(scenario, direct, direct).await;
-    run_direct(direct, &scenario.teardown)
-        .await
-        .context("teardown (baseline)")?;
-    let expected = expected?;
+impl Checked {
+    fn error(reason: String) -> Self {
+        Checked {
+            verdict: Verdict::Error { reason },
+            steps: vec![],
+            runs: 1,
+            failures: 0,
+        }
+    }
+}
 
-    run_direct(direct, reset).await.context("reset (target)")?;
-    if !reset.is_empty()
+/// One run of a scenario's steps with reset, setup and teardown around it. `side` is
+/// "baseline" or "target" and names the run in errors. Teardown runs even when setup
+/// or a step fails; the first error is the one returned.
+async fn run_once(
+    scenario: &Scenario,
+    pooled: &str,
+    direct: &str,
+    reset: &[String],
+    side: &str,
+) -> Result<Vec<Outcome>, String> {
+    run_direct(direct, reset)
+        .await
+        .map_err(|e| format!("reset ({side}): {e:#}"))?;
+    // A reset kills the pooler's server connections, and it needs a moment to open new
+    // ones. Without a reset there's nothing to wait for.
+    if side == "target"
+        && !reset.is_empty()
         && let Err(e) = wait_ready(pooled).await
     {
-        return Ok(Checked {
-            verdict: Verdict::Error {
-                reason: format!("{e:#}"),
-            },
-            steps: vec![],
-            runs: 0,
-            failures: 0,
-        });
+        return Err(format!("{e:#}"));
+    }
+    let outcomes = match run_direct(direct, &scenario.setup).await {
+        Ok(()) => run_steps(scenario, pooled, direct)
+            .await
+            .map_err(|e| format!("steps ({side}): {e:#}")),
+        Err(e) => Err(format!("setup ({side}): {e:#}")),
+    };
+    let teardown = run_direct(direct, &scenario.teardown)
+        .await
+        .map_err(|e| format!("teardown ({side}): {e:#}"));
+    let outcomes = outcomes?;
+    teardown?;
+    Ok(outcomes)
+}
+
+/// Run a scenario against plain Postgres, then through the pooler, and compare.
+/// `reset` runs on `direct` before each run so state leaked on the pooler's server
+/// connections by an earlier scenario can't change this one's result. Anything that
+/// stops the comparison is a `Verdict::Error` for this scenario only.
+pub async fn check(scenario: &Scenario, pooled: &str, direct: &str, reset: &[String]) -> Checked {
+    let expected = match run_once(scenario, direct, direct, reset, "baseline").await {
+        Ok(expected) => expected,
+        Err(reason) => return Checked::error(reason),
+    };
+    if let Some(reason) = baseline_failure(&expected) {
+        return Checked::error(reason);
     }
 
     let mut kept: Option<Checked> = None;
     let mut failures = 0;
-    for run in 1..=scenario.repeat {
-        let checked = if run == 1 {
-            check_target(scenario, pooled, direct, &expected).await?
-        } else {
-            run_direct(direct, reset).await.context("reset (target)")?;
-            match (reset.is_empty(), wait_ready(pooled).await) {
-                (false, Err(e)) => Checked {
-                    verdict: Verdict::Error {
-                        reason: format!("{e:#}"),
-                    },
-                    steps: vec![],
-                    runs: 1,
-                    failures: 0,
-                },
-                _ => check_target(scenario, pooled, direct, &expected).await?,
-            }
+    for _ in 0..scenario.repeat {
+        let checked = match run_once(scenario, pooled, direct, reset, "target").await {
+            Ok(actual) => compare(scenario, &expected, actual),
+            Err(reason) => Checked::error(reason),
         };
         let failed = !matches!(checked.verdict, Verdict::Pass);
         failures += u32::from(failed);
@@ -83,21 +128,15 @@ pub async fn check(scenario: &Scenario, pooled: &str, direct: &str, reset: &[Str
             kept = Some(checked);
         }
     }
-    let mut checked = kept.expect("repeat is at least 1");
+    // Loading rejects repeat = 0, so the loop ran at least once.
+    let mut checked = kept.unwrap_or_else(|| Checked::error("repeat is 0".into()));
     checked.runs = scenario.repeat;
     checked.failures = failures;
-    Ok(checked)
+    checked
 }
 
-/// One pooler-side run of a scenario, compared with the baseline outcomes.
-async fn check_target(scenario: &Scenario, pooled: &str, direct: &str, expected: &[Outcome]) -> Result<Checked> {
-    run_direct(direct, &scenario.setup).await.context("setup (target)")?;
-    let actual = run_steps(scenario, pooled, direct).await;
-    run_direct(direct, &scenario.teardown)
-        .await
-        .context("teardown (target)")?;
-    let actual = actual?;
-
+/// Compare one pooler-side run with the baseline outcomes.
+fn compare(scenario: &Scenario, expected: &[Outcome], actual: Vec<Outcome>) -> Checked {
     let mismatch = scenario.steps.iter().enumerate().find_map(|(i, step)| {
         (!expected[i].matches(&actual[i], step.compare)).then(|| Mismatch {
             step: i + 1,
@@ -111,10 +150,72 @@ async fn check_target(scenario: &Scenario, pooled: &str, direct: &str, expected:
         Some(mismatch) => Verdict::Fail { mismatch },
         None => Verdict::Pass,
     };
-    Ok(Checked {
+    Checked {
         verdict,
         steps: expected.iter().cloned().zip(actual).collect(),
         runs: 1,
         failures: 0,
-    })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use super::*;
+
+    const CLOSED_PORT: &str = "postgres://x:y@127.0.0.1:1/app";
+
+    fn scenario(toml_text: &str) -> Scenario {
+        toml::from_str(toml_text).unwrap()
+    }
+
+    fn reason(checked: &Checked) -> &str {
+        match &checked.verdict {
+            Verdict::Error { reason } => reason,
+            _ => panic!("expected an error verdict"),
+        }
+    }
+
+    #[tokio::test]
+    async fn unreachable_postgres_is_an_error_not_a_pass() {
+        let s = scenario("name = 't'\ndescription = 't'\n[[step]]\nclient = 'a'\nsimple = 'SELECT 1'\n");
+        let checked = check(&s, CLOSED_PORT, CLOSED_PORT, &[]).await;
+        let reason = reason(&checked);
+        assert!(
+            reason.starts_with("baseline failed at step 1: error CONNECT"),
+            "{reason}"
+        );
+    }
+
+    #[tokio::test]
+    async fn failing_setup_is_a_scenario_error() {
+        let s = scenario(
+            "name = 't'\ndescription = 't'\nsetup = ['SELECT 1']\n[[step]]\nclient = 'a'\nsimple = 'SELECT 1'\n",
+        );
+        let checked = check(&s, CLOSED_PORT, CLOSED_PORT, &[]).await;
+        let reason = reason(&checked);
+        assert!(reason.starts_with("setup (baseline): "), "{reason}");
+    }
+
+    #[tokio::test]
+    async fn repeats_without_reset_do_not_wait_for_the_pooler() {
+        // No steps and no setup, so nothing connects except a needless wait_ready.
+        let mut s = scenario("name = 't'\ndescription = 't'\nrepeat = 3\nstep = []\n");
+        s.steps.clear();
+        let started = Instant::now();
+        let checked = check(&s, CLOSED_PORT, CLOSED_PORT, &[]).await;
+        assert!(matches!(checked.verdict, Verdict::Pass));
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "took {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[tokio::test]
+    async fn preflight_names_the_unreachable_side() {
+        let reason = preflight(CLOSED_PORT, CLOSED_PORT).await.unwrap_err();
+        assert!(reason.starts_with(DIRECT_UNREACHABLE), "{reason}");
+    }
 }

@@ -1,8 +1,8 @@
 //! The loop over targets and scenarios behind `poolproof run`.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 
-use super::{Verdict, check, server_version};
+use super::{Verdict, check, preflight, server_version};
 use crate::output::text::print_result;
 use crate::report::{ResultRow, StepOutcomes, TargetInfo};
 use crate::scenario::Scenario;
@@ -34,18 +34,23 @@ pub async fn run(
                 target.name
             );
         }
+        // Without both URLs answering, every scenario would compare two failures.
+        let unreachable = preflight(&target.pooler, &target.direct).await.err();
+        if let Some(reason) = &unreachable {
+            eprintln!("error: target '{}': {reason}", target.name);
+        }
         for s in scenarios {
             if filter.is_some_and(|f| !s.name.contains(f)) {
                 continue;
             }
-            let (verdict, steps, runs, failures) = if s.modes.contains(&target.mode) {
-                let checked = check(s, &target.pooler, &target.direct, &target.reset)
-                    .await
-                    .with_context(|| format!("{} / {}", target.name, s.name))?;
-                (checked.verdict, checked.steps, checked.runs, checked.failures)
-            } else {
+            let (verdict, steps, runs, failures) = if !s.modes.contains(&target.mode) {
                 let reason = format!("not applicable to {} mode", target.mode);
                 (Verdict::Skip { reason }, vec![], 0, 0)
+            } else if let Some(reason) = &unreachable {
+                (Verdict::Error { reason: reason.clone() }, vec![], 0, 0)
+            } else {
+                let checked = check(s, &target.pooler, &target.direct, &target.reset).await;
+                (checked.verdict, checked.steps, checked.runs, checked.failures)
             };
             if text {
                 print_result(&target.name, s, &verdict, &steps, runs, failures, verbose);

@@ -53,6 +53,22 @@ fn is_failure_line(line: &str) -> bool {
     line.starts_with("Error ") || line == "TIMEOUT" || line == "CLOSED"
 }
 
+/// Error codes the harness itself produces when a step never got a real answer.
+const HARNESS_CODES: &[&str] = &["CONNECT", "TIMEOUT", "CLIENT", "CLOSED", "NO_STATEMENT"];
+
+/// The first baseline step that failed in the harness rather than in Postgres. Postgres
+/// is the oracle, so a baseline like that can't be compared: an unreachable server
+/// would otherwise "match" an unreachable pooler.
+pub(super) fn baseline_failure(expected: &[Outcome]) -> Option<String> {
+    let failed = |o: &Outcome| match o {
+        Outcome::Error { code, .. } => HARNESS_CODES.contains(&code.as_str()),
+        Outcome::Messages { messages } => messages.iter().any(|l| l == "TIMEOUT" || l == "CLOSED"),
+        Outcome::Ok { .. } | Outcome::Abandoned => false,
+    };
+    let (i, outcome) = expected.iter().enumerate().find(|(_, o)| failed(o))?;
+    Some(format!("baseline failed at step {}: {outcome}", i + 1))
+}
+
 impl FailKind {
     pub(super) fn of(expected: &Outcome, actual: &Outcome) -> Self {
         match actual {
@@ -142,6 +158,22 @@ mod tests {
             FailKind::Error
         );
         assert_eq!(FailKind::of(&pg, &msgs(&["ParseComplete", "TIMEOUT"])), FailKind::Hang);
+    }
+
+    #[test]
+    fn harness_errors_in_the_baseline_are_failures() {
+        let msgs = |m: &[&str]| Outcome::Messages {
+            messages: m.iter().map(|s| s.to_string()).collect(),
+        };
+        for code in HARNESS_CODES {
+            let failure = baseline_failure(&[Outcome::empty(), Outcome::error(code, "x")]).unwrap();
+            assert!(failure.starts_with("baseline failed at step 2: error"), "{failure}");
+        }
+        assert!(baseline_failure(&[msgs(&["ParseComplete", "TIMEOUT"])]).is_some());
+        assert!(baseline_failure(&[msgs(&["CLOSED"])]).is_some());
+        // Errors from Postgres itself are what scenarios test for.
+        assert!(baseline_failure(&[Outcome::error("42P01", "x"), msgs(&["Error 42P05", "ReadyForQuery I"])]).is_none());
+        assert!(baseline_failure(&[Outcome::Abandoned]).is_none());
     }
 
     #[test]
