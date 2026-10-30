@@ -111,9 +111,16 @@ poolproof scan queries.csv
 ```
 
 From Postgres logs, with `log_statement = 'all'` or `log_min_duration_statement` set:
-`poolproof scan postgresql.log` (stderr format) or `poolproof scan postgresql.json`
-(jsonlog). Logs keep multi-statement query strings whole; pg_stat_statements splits them,
-so some problems only show up in logs. A `.sql` file works too, e.g. your migrations.
+`poolproof scan postgresql.log` (stderr format), `postgresql.csv` (csvlog) or
+`postgresql.json` (jsonlog). Logs keep multi-statement query strings whole;
+pg_stat_statements splits them, so some problems only show up in logs. Logs are read as a
+stream, so multi-GB files are fine. poolproof reads the English log prefixes (`LOG:`,
+`statement:`), so the server needs `lc_messages = 'C'` or another English locale. A `.sql`
+file works too, e.g. your migrations.
+
+`--input pgss|csvlog|log|jsonlog|sql` says what the input is when the extension doesn't
+(a `.csv` is told apart by its first row). `-` reads stdin:
+`pg_dump --schema-only mydb | poolproof scan - --input sql`.
 
 ### Against your pooler
 

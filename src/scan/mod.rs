@@ -5,7 +5,7 @@ use serde::Serialize;
 mod input;
 mod rules;
 
-pub use input::load_queries;
+pub use input::{InputFormat, load_queries};
 pub use rules::scan;
 
 /// Severity of a finding under transaction pooling.
