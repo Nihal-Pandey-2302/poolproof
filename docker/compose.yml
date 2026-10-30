@@ -56,6 +56,9 @@ services:
   supavisor:
     image: supabase/supavisor:2.9.13
     command: sh -c "/app/bin/migrate && /app/bin/server"
+    # The entrypoint raises the open files limit to 100000 and exits if it can't.
+    ulimits:
+      nofile: 100000
     environment:
       PORT: "4000"
       PROXY_PORT_SESSION: "5452"
