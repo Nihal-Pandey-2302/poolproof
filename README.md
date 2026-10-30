@@ -45,6 +45,10 @@ ERROR means there was nothing to compare: a target URL didn't answer before the 
 step on the Postgres side got no reply (timeout, connection failure), or setup, teardown
 or reset failed. It only stops that scenario, and `run` exits 1 as for a FAIL.
 
+`--fail-on` picks which failures make the exit code 1: `silent` (only silent ones),
+`error` (silent and error), `any` (the default, hangs too) or `none`. ERROR counts for all
+but `none`. A pooler with known hangs can still gate CI on wrong results.
+
 ```text
 $ poolproof run --filter multi-statement
 FAIL  pgdog-0.1.62             multi-statement-begin (silent)
