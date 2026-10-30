@@ -99,10 +99,12 @@ jobs:
           # is skipped on both sides before results/ is regenerated.
           timing=$(jq -c '[.scenarios[] | select(.repeat > 1) | .name]' new.json)
           # A malformed line would silently skip nothing, so it fails the step instead.
-          awk 'NF && $1 !~ /^#/ && NF != 2 { bad = 1
+          # sub() drops a trailing \r, so a file saved with CRLF line ends still matches.
+          awk '{ sub(/\r$/, "") }
+               NF && $1 !~ /^#/ && NF != 2 { bad = 1
                  printf "::error file=%s,line=%d::expected \"<target> <scenario>\", got: %s\n", FILENAME, FNR, $0 }
                END { exit bad }' results/known-flaky.txt
-          flaky=$(awk 'NF == 2 && $1 !~ /^#/ { print $1 " " $2 }' results/known-flaky.txt | jq -Rsc 'split("\n") | map(select(. != ""))')
+          flaky=$(awk '{ sub(/\r$/, "") } NF == 2 && $1 !~ /^#/ { print $1 " " $2 }' results/known-flaky.txt | jq -Rsc 'split("\n") | map(select(. != ""))')
           if [ "$flaky" != "[]" ]; then
             { echo "### Not compared (results/known-flaky.txt)"; jq -r '.[] | "- \(.)"' <<<"$flaky"; } >> "$GITHUB_STEP_SUMMARY"
           fi
