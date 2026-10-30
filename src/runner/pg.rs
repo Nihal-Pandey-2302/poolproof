@@ -115,6 +115,9 @@ async fn open(endpoint: &Endpoint) -> Result<(Box<dyn Io>, String)> {
         Some(Host::Tcp(host)) => {
             let stream = TcpStream::connect((host.as_str(), port)).await?;
             stream.set_nodelay(true)?;
+            // As tokio-postgres does on the sockets it opens: keepalives after 2 hours idle.
+            let keepalive = socket2::TcpKeepalive::new().with_time(Duration::from_secs(2 * 60 * 60));
+            socket2::SockRef::from(&stream).set_tcp_keepalive(&keepalive)?;
             Ok((Box::new(stream), host.clone()))
         }
         #[cfg(unix)]
