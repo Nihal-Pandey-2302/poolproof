@@ -31,23 +31,7 @@ pub fn scan(queries: &[Query]) -> Report {
             unparsed += 1;
             continue;
         };
-        let first = findings.len();
-        // Per session-set finding: scenarios specific to the parameter, if any.
-        let mut set_scenarios: Vec<Option<Vec<&'static str>>> = Vec::new();
-        let mut push = |rule, severity, detail: String| {
-            let scenarios = scenarios_for(rule);
-            findings.push(Finding {
-                rule,
-                severity,
-                detail,
-                query: query.to_string(),
-                calls: *calls,
-                line: *line,
-                scenarios,
-                on_pooler: None,
-            });
-        };
-
+        let mut hits = Vec::new();
         let starts_transaction = parsed.protobuf.stmts.first().is_some_and(|raw| {
             matches!(
                 raw.stmt.as_ref().and_then(|s| s.node.as_ref()),
@@ -55,198 +39,36 @@ pub fn scan(queries: &[Query]) -> Report {
             )
         });
         if starts_transaction && parsed.protobuf.stmts.len() > 1 {
-            push(
+            hits.push(Hit::new(
                 "multi-statement-transaction",
                 Severity::Warn,
                 "This one query string starts with BEGIN, COMMIT or ROLLBACK and has more statements \
                  after it. Some poolers only handle the first statement and defer or drop the rest \
                  (PgDog: https://github.com/pgdogdev/pgdog/issues/1849). Send them separately."
                     .to_string(),
-            );
+            ));
         }
+        let statements: Vec<&NodeEnum> = parsed
+            .protobuf
+            .stmts
+            .iter()
+            .filter_map(|raw| raw.stmt.as_ref()?.node.as_ref())
+            .collect();
+        hits.extend(check(&statements));
+        let (embedded, uninspected) = embedded_hits(query, &parsed);
+        hits.extend(embedded);
+        unparsed += uninspected;
 
-        let calls = function_calls(&parsed);
-        let names: BTreeSet<&str> = calls.iter().filter_map(|call| function_name(call)).collect();
-        for short in names.into_iter().filter(|n| SESSION_ADVISORY_LOCKS.contains(n)) {
-            push(
-                "session-advisory-lock",
-                Severity::Breaks,
-                format!(
-                    "{short}() holds the lock for the whole session. Under transaction pooling \
-                     the server connection goes back to the pool still holding it. Use the \
-                     pg_advisory_xact_* variant."
-                ),
-            );
-        }
-
-        if let Some(is_local) = set_config_is_local(&calls) {
-            let detail = match is_local {
-                IsLocal::False => {
-                    "set_config(..., false) changes the setting for the session, which other \
-                     clients of the same server connection will see. Pass true to scope it to \
-                     the transaction."
-                }
-                IsLocal::Parameter => {
-                    "set_config()'s third argument (is_local) is a parameter here, as in \
-                     pg_stat_statements, which replaces literals. If it is false, the setting \
-                     lasts for the session and other clients of the same server connection will \
-                     see it. Check the value: true scopes it to the transaction."
-                }
-                IsLocal::Expression => {
-                    "set_config()'s third argument (is_local) is not a literal. If it is false, \
-                     the setting lasts for the session and other clients of the same server \
-                     connection will see it."
-                }
-            };
-            push("session-set-config", Severity::Warn, detail.to_string());
-        }
-
-        for raw in &parsed.protobuf.stmts {
-            let Some(node) = raw.stmt.as_ref().and_then(|s| s.node.as_ref()) else {
-                continue;
-            };
-            match node {
-                NodeEnum::VariableSetStmt(set) => {
-                    let kind = VariableSetKind::try_from(set.kind).unwrap_or(VariableSetKind::Undefined);
-                    let transaction_scoped =
-                        set.is_local || (kind == VariableSetKind::VarSetMulti && set.name == "TRANSACTION");
-                    if !transaction_scoped {
-                        let target = if kind == VariableSetKind::VarResetAll {
-                            "ALL"
-                        } else {
-                            set.name.as_str()
-                        };
-                        push(
-                            "session-set",
-                            Severity::Warn,
-                            format!(
-                                "SET/RESET of `{target}` outside SET LOCAL lasts for the session. \
-                                 Some poolers track a few parameters per client; most leak the rest \
-                                 to whoever gets the server connection next."
-                            ),
-                        );
-                        let refined = match target {
-                            "role" | "session_authorization" => Some(vec![
-                                "set-role-isolated-between-clients",
-                                "set-role-reset-after-pinned-disconnect",
-                            ]),
-                            "search_path" => Some(vec!["search-path-isolated-between-clients"]),
-                            _ => None,
-                        };
-                        set_scenarios.push(refined);
-                    }
-                }
-                NodeEnum::ListenStmt(listen) => push(
-                    "listen",
-                    Severity::Breaks,
-                    format!(
-                        "LISTEN {} needs a dedicated session. Notifications go to whichever client \
-                         holds the server connection, or nobody.",
-                        listen.conditionname
-                    ),
-                ),
-                NodeEnum::CreateStmt(create) => {
-                    let temp = create.relation.as_ref().is_some_and(|r| r.relpersistence == "t");
-                    let dropped_at_commit = create.oncommit == OnCommitAction::OncommitDrop as i32;
-                    if temp && !dropped_at_commit {
-                        push(
-                            "temp-table",
-                            Severity::Breaks,
-                            "Temp tables live for the session. Other clients can see them and later \
-                             transactions may land on a server connection without them. Use ON \
-                             COMMIT DROP inside a transaction."
-                                .to_string(),
-                        );
-                    }
-                }
-                NodeEnum::CreateTableAsStmt(ctas) => {
-                    let temp = ctas
-                        .into
-                        .as_ref()
-                        .and_then(|i| i.rel.as_ref())
-                        .is_some_and(|r| r.relpersistence == "t");
-                    let dropped_at_commit = ctas
-                        .into
-                        .as_ref()
-                        .is_some_and(|i| i.on_commit == OnCommitAction::OncommitDrop as i32);
-                    if temp && !dropped_at_commit {
-                        push(
-                            "temp-table",
-                            Severity::Breaks,
-                            "CREATE TEMP TABLE ... AS / SELECT INTO TEMP creates a session-scoped table.".to_string(),
-                        );
-                    }
-                }
-                NodeEnum::SelectStmt(select) => {
-                    let temp = select
-                        .into_clause
-                        .as_ref()
-                        .and_then(|i| i.rel.as_ref())
-                        .is_some_and(|r| r.relpersistence == "t");
-                    if temp {
-                        push(
-                            "temp-table",
-                            Severity::Breaks,
-                            "SELECT ... INTO TEMP creates a session-scoped table.".to_string(),
-                        );
-                    }
-                }
-                NodeEnum::DeclareCursorStmt(cursor) if cursor.options & CURSOR_OPT_HOLD != 0 => push(
-                    "with-hold-cursor",
-                    Severity::Breaks,
-                    format!(
-                        "Cursor {} is WITH HOLD, so it outlives the transaction. Later FETCHes can \
-                         land on a different server connection.",
-                        cursor.portalname
-                    ),
-                ),
-                NodeEnum::DiscardStmt(_) => push(
-                    "discard",
-                    Severity::Warn,
-                    "DISCARD resets the server connection it runs on. Under transaction pooling \
-                     that connection is shared, and the pooler's view of it (tracked settings, \
-                     prepared statements) can stop matching. It is usually only needed in session \
-                     mode, where the pooler runs it for you."
-                        .to_string(),
-                ),
-                NodeEnum::PrepareStmt(prepare) => push(
-                    "sql-prepare",
-                    Severity::Warn,
-                    format!(
-                        "SQL-level PREPARE {} creates a session object. Poolers that handle \
-                         protocol-level prepared statements often don't track this form.",
-                        prepare.name
-                    ),
-                ),
-                NodeEnum::DeallocateStmt(deallocate) if deallocate.isall => push(
-                    "deallocate-all",
-                    Severity::Warn,
-                    "DEALLOCATE ALL drops every prepared statement on the server connection, \
-                     including other clients' when it is shared. Poolers that track protocol-level \
-                     prepared statements can lose track of them. Drivers send it to recover from \
-                     \"prepared statement does not exist\"; with a pooler that tracks statements \
-                     it is usually not needed."
-                        .to_string(),
-                ),
-                NodeEnum::LoadStmt(load) => push(
-                    "load",
-                    Severity::Warn,
-                    format!(
-                        "LOAD '{}' loads a library into the server process for the rest of the \
-                         session. Under transaction pooling, later transactions may run on a \
-                         connection without it, and other clients get it where they didn't ask.",
-                        load.filename
-                    ),
-                ),
-                _ => {}
-            }
-        }
-        let sets = findings[first..].iter_mut().filter(|f| f.rule == "session-set");
-        for (finding, scenarios) in sets.zip(set_scenarios) {
-            if let Some(scenarios) = scenarios {
-                finding.scenarios = scenarios;
-            }
-        }
+        findings.extend(hits.into_iter().map(|hit| Finding {
+            rule: hit.rule,
+            severity: hit.severity,
+            detail: hit.detail,
+            query: query.to_string(),
+            calls: *calls,
+            line: *line,
+            scenarios: hit.scenarios,
+            on_pooler: None,
+        }));
     }
 
     findings.sort_by(|a, b| b.severity.cmp(&a.severity).then(b.calls.cmp(&a.calls)));
@@ -255,6 +77,207 @@ pub fn scan(queries: &[Query]) -> Report {
         queries: merged.len(),
         unparsed,
     }
+}
+
+/// A rule match, before it becomes a [`Finding`] for a query.
+struct Hit {
+    rule: &'static str,
+    severity: Severity,
+    detail: String,
+    scenarios: Vec<&'static str>,
+}
+
+impl Hit {
+    fn new(rule: &'static str, severity: Severity, detail: String) -> Hit {
+        Hit {
+            rule,
+            severity,
+            detail,
+            scenarios: scenarios_for(rule),
+        }
+    }
+}
+
+/// The rules that look at what statements run: function calls and statement kinds.
+fn check(statements: &[&NodeEnum]) -> Vec<Hit> {
+    let mut hits = Vec::new();
+    let calls = function_calls(statements);
+    let names: BTreeSet<&str> = calls.iter().filter_map(|call| function_name(call)).collect();
+    for short in names.into_iter().filter(|n| SESSION_ADVISORY_LOCKS.contains(n)) {
+        hits.push(Hit::new(
+            "session-advisory-lock",
+            Severity::Breaks,
+            format!(
+                "{short}() holds the lock for the whole session. Under transaction pooling \
+                 the server connection goes back to the pool still holding it. Use the \
+                 pg_advisory_xact_* variant."
+            ),
+        ));
+    }
+
+    if let Some(is_local) = set_config_is_local(&calls) {
+        let detail = match is_local {
+            IsLocal::False => {
+                "set_config(..., false) changes the setting for the session, which other \
+                 clients of the same server connection will see. Pass true to scope it to \
+                 the transaction."
+            }
+            IsLocal::Parameter => {
+                "set_config()'s third argument (is_local) is a parameter here, as in \
+                 pg_stat_statements, which replaces literals. If it is false, the setting \
+                 lasts for the session and other clients of the same server connection will \
+                 see it. Check the value: true scopes it to the transaction."
+            }
+            IsLocal::Expression => {
+                "set_config()'s third argument (is_local) is not a literal. If it is false, \
+                 the setting lasts for the session and other clients of the same server \
+                 connection will see it."
+            }
+        };
+        hits.push(Hit::new("session-set-config", Severity::Warn, detail.to_string()));
+    }
+
+    for node in statements {
+        match node {
+            NodeEnum::VariableSetStmt(set) => {
+                let kind = VariableSetKind::try_from(set.kind).unwrap_or(VariableSetKind::Undefined);
+                let transaction_scoped =
+                    set.is_local || (kind == VariableSetKind::VarSetMulti && set.name == "TRANSACTION");
+                if !transaction_scoped {
+                    let target = if kind == VariableSetKind::VarResetAll {
+                        "ALL"
+                    } else {
+                        set.name.as_str()
+                    };
+                    let mut hit = Hit::new(
+                        "session-set",
+                        Severity::Warn,
+                        format!(
+                            "SET/RESET of `{target}` outside SET LOCAL lasts for the session. \
+                         Some poolers track a few parameters per client; most leak the rest \
+                         to whoever gets the server connection next."
+                        ),
+                    );
+                    let refined = match target {
+                        "role" | "session_authorization" => Some(vec![
+                            "set-role-isolated-between-clients",
+                            "set-role-reset-after-pinned-disconnect",
+                        ]),
+                        "search_path" => Some(vec!["search-path-isolated-between-clients"]),
+                        _ => None,
+                    };
+                    if let Some(scenarios) = refined {
+                        hit.scenarios = scenarios;
+                    }
+                    hits.push(hit);
+                }
+            }
+            NodeEnum::ListenStmt(listen) => hits.push(Hit::new(
+                "listen",
+                Severity::Breaks,
+                format!(
+                    "LISTEN {} needs a dedicated session. Notifications go to whichever client \
+                 holds the server connection, or nobody.",
+                    listen.conditionname
+                ),
+            )),
+            NodeEnum::CreateStmt(create) => {
+                let temp = create.relation.as_ref().is_some_and(|r| r.relpersistence == "t");
+                let dropped_at_commit = create.oncommit == OnCommitAction::OncommitDrop as i32;
+                if temp && !dropped_at_commit {
+                    hits.push(Hit::new(
+                        "temp-table",
+                        Severity::Breaks,
+                        "Temp tables live for the session. Other clients can see them and later \
+                     transactions may land on a server connection without them. Use ON \
+                     COMMIT DROP inside a transaction."
+                            .to_string(),
+                    ));
+                }
+            }
+            NodeEnum::CreateTableAsStmt(ctas) => {
+                let temp = ctas
+                    .into
+                    .as_ref()
+                    .and_then(|i| i.rel.as_ref())
+                    .is_some_and(|r| r.relpersistence == "t");
+                let dropped_at_commit = ctas
+                    .into
+                    .as_ref()
+                    .is_some_and(|i| i.on_commit == OnCommitAction::OncommitDrop as i32);
+                if temp && !dropped_at_commit {
+                    hits.push(Hit::new(
+                        "temp-table",
+                        Severity::Breaks,
+                        "CREATE TEMP TABLE ... AS / SELECT INTO TEMP creates a session-scoped table.".to_string(),
+                    ));
+                }
+            }
+            NodeEnum::SelectStmt(select) => {
+                let temp = select
+                    .into_clause
+                    .as_ref()
+                    .and_then(|i| i.rel.as_ref())
+                    .is_some_and(|r| r.relpersistence == "t");
+                if temp {
+                    hits.push(Hit::new(
+                        "temp-table",
+                        Severity::Breaks,
+                        "SELECT ... INTO TEMP creates a session-scoped table.".to_string(),
+                    ));
+                }
+            }
+            NodeEnum::DeclareCursorStmt(cursor) if cursor.options & CURSOR_OPT_HOLD != 0 => hits.push(Hit::new(
+                "with-hold-cursor",
+                Severity::Breaks,
+                format!(
+                    "Cursor {} is WITH HOLD, so it outlives the transaction. Later FETCHes can \
+                 land on a different server connection.",
+                    cursor.portalname
+                ),
+            )),
+            NodeEnum::DiscardStmt(_) => hits.push(Hit::new(
+                "discard",
+                Severity::Warn,
+                "DISCARD resets the server connection it runs on. Under transaction pooling \
+             that connection is shared, and the pooler's view of it (tracked settings, \
+             prepared statements) can stop matching. It is usually only needed in session \
+             mode, where the pooler runs it for you."
+                    .to_string(),
+            )),
+            NodeEnum::PrepareStmt(prepare) => hits.push(Hit::new(
+                "sql-prepare",
+                Severity::Warn,
+                format!(
+                    "SQL-level PREPARE {} creates a session object. Poolers that handle \
+                 protocol-level prepared statements often don't track this form.",
+                    prepare.name
+                ),
+            )),
+            NodeEnum::DeallocateStmt(deallocate) if deallocate.isall => hits.push(Hit::new(
+                "deallocate-all",
+                Severity::Warn,
+                "DEALLOCATE ALL drops every prepared statement on the server connection, \
+             including other clients' when it is shared. Poolers that track protocol-level \
+             prepared statements can lose track of them. Drivers send it to recover from \
+             \"prepared statement does not exist\"; with a pooler that tracks statements \
+             it is usually not needed."
+                    .to_string(),
+            )),
+            NodeEnum::LoadStmt(load) => hits.push(Hit::new(
+                "load",
+                Severity::Warn,
+                format!(
+                    "LOAD '{}' loads a library into the server process for the rest of the \
+                 session. Under transaction pooling, later transactions may run on a \
+                 connection without it, and other clients get it where they didn't ask.",
+                    load.filename
+                ),
+            )),
+            _ => {}
+        }
+    }
+    hits
 }
 
 /// What a `set_config(name, value, is_local)` call passes as `is_local`, when it
@@ -266,16 +289,172 @@ enum IsLocal {
     False,
 }
 
-/// Every function call the query runs, including inside PREPARE and DECLARE CURSOR,
-/// which pg_query's own walk doesn't enter. Calls in views, functions and rules are
-/// left out: creating them runs nothing.
-fn function_calls(parsed: &pg_query::ParseResult) -> Vec<&FuncCall> {
-    let mut statements: Vec<&NodeEnum> = parsed
-        .protobuf
-        .stmts
-        .iter()
-        .filter_map(|raw| raw.stmt.as_ref()?.node.as_ref())
-        .collect();
+/// Statements that run elsewhere: DO blocks run now, function bodies whenever the
+/// function is called. Function hits become warnings that name the function.
+/// Also returns how many bodies could not be read.
+fn embedded_hits(query: &str, parsed: &pg_query::ParseResult) -> (Vec<Hit>, usize) {
+    let mut hits: Vec<Hit> = Vec::new();
+    let mut uninspected = 0;
+    for raw in &parsed.protobuf.stmts {
+        let Some(node) = raw.stmt.as_ref().and_then(|s| s.node.as_ref()) else {
+            continue;
+        };
+        // The statement's own text, for the PL/pgSQL parser. stmt_len 0 means to the end.
+        let start = raw.stmt_location as usize;
+        let end = if raw.stmt_len == 0 {
+            query.len()
+        } else {
+            start + raw.stmt_len as usize
+        };
+        let text = query.get(start..end).unwrap_or(query);
+
+        let (function, body) = match node {
+            NodeEnum::DoStmt(stmt) if language(&stmt.args).unwrap_or("plpgsql") == "plpgsql" => {
+                (None, plpgsql_statements(text))
+            }
+            NodeEnum::CreateFunctionStmt(stmt) => {
+                let name = stmt
+                    .funcname
+                    .last()
+                    .and_then(|n| match n.node.as_ref()? {
+                        NodeEnum::String(s) => Some(s.sval.clone()),
+                        _ => None,
+                    })
+                    .unwrap_or_default();
+                let body = match (&stmt.sql_body, language(&stmt.options)) {
+                    // BEGIN ATOMIC ... END or RETURN expr: already parsed.
+                    (Some(sql_body), _) => {
+                        let mut roots = Vec::new();
+                        flatten_lists(sql_body, &mut roots);
+                        hits.extend(within_function(&name, check(&roots)));
+                        continue;
+                    }
+                    (None, Some("sql")) => function_source(&stmt.options)
+                        .and_then(|source| pg_query::parse(source, pg_query::ParserOptions::DEFAULT).ok())
+                        .map(|parsed| vec![parsed])
+                        .ok_or(()),
+                    (None, Some("plpgsql")) => plpgsql_statements(text),
+                    _ => continue,
+                };
+                (Some(name), body)
+            }
+            _ => continue,
+        };
+        let Ok(body) = body else {
+            uninspected += 1;
+            continue;
+        };
+        let roots: Vec<&NodeEnum> = body
+            .iter()
+            .flat_map(|parsed| &parsed.protobuf.stmts)
+            .filter_map(|raw| raw.stmt.as_ref()?.node.as_ref())
+            .collect();
+        let found = check(&roots);
+        match function {
+            Some(name) => hits.extend(within_function(&name, found)),
+            None => hits.extend(found.into_iter().map(|hit| Hit {
+                detail: format!("In a DO block: {}", hit.detail),
+                ..hit
+            })),
+        }
+    }
+    // Several statements in one body can match the same rule the same way.
+    let mut seen = BTreeSet::new();
+    hits.retain(|hit| seen.insert((hit.rule, hit.detail.clone())));
+    (hits, uninspected)
+}
+
+fn within_function(name: &str, hits: Vec<Hit>) -> Vec<Hit> {
+    hits.into_iter()
+        .map(|hit| Hit {
+            severity: Severity::Warn,
+            detail: format!("In function {name}(), each time it is called: {}", hit.detail),
+            ..hit
+        })
+        .collect()
+}
+
+/// `LANGUAGE x` from DO or CREATE FUNCTION options.
+fn language(options: &[pg_query::protobuf::Node]) -> Option<&str> {
+    def_elem_string(options, "language")
+}
+
+/// The body of `CREATE FUNCTION ... AS 'source'`.
+fn function_source(options: &[pg_query::protobuf::Node]) -> Option<&str> {
+    def_elem_string(options, "as")
+}
+
+/// The first string value of the DefElem option named `name`: a String, or the first
+/// of a List of them.
+fn def_elem_string<'a>(options: &'a [pg_query::protobuf::Node], name: &str) -> Option<&'a str> {
+    let arg = options.iter().find_map(|o| match o.node.as_ref()? {
+        NodeEnum::DefElem(d) if d.defname == name => d.arg.as_ref()?.node.as_ref(),
+        _ => None,
+    })?;
+    let first = match arg {
+        NodeEnum::List(list) => list.items.first()?.node.as_ref()?,
+        other => other,
+    };
+    match first {
+        NodeEnum::String(s) => Some(&s.sval),
+        _ => None,
+    }
+}
+
+/// The statements in a BEGIN ATOMIC body, which arrives as nested Lists.
+fn flatten_lists<'a>(node: &'a pg_query::protobuf::Node, out: &mut Vec<&'a NodeEnum>) {
+    match node.node.as_ref() {
+        Some(NodeEnum::List(list)) => list.items.iter().for_each(|item| flatten_lists(item, out)),
+        Some(other) => out.push(other),
+        None => {}
+    }
+}
+
+/// The SQL in a PL/pgSQL DO block or function (`text` is the whole statement), each
+/// statement and expression parsed on its own. Dynamic EXECUTE strings stay opaque.
+fn plpgsql_statements(text: &str) -> Result<Vec<pg_query::ParseResult>, ()> {
+    let tree = pg_query::parse_plpgsql(text).map_err(|_| ())?;
+    let mut exprs = Vec::new();
+    collect_plpgsql_exprs(&tree, &mut exprs);
+    Ok(exprs
+        .into_iter()
+        .filter_map(|(sql, mode)| {
+            // RawParseMode in parser.h: 0 a statement, 2 an expression, 3-5 an assignment.
+            let sql = match mode {
+                0 => sql.to_string(),
+                2 => format!("SELECT {sql}"),
+                3..=5 => {
+                    let (_, value) = sql.split_once(":=").or_else(|| sql.split_once('='))?;
+                    format!("SELECT {value}")
+                }
+                _ => return None,
+            };
+            pg_query::parse(&sql, pg_query::ParserOptions::DEFAULT).ok()
+        })
+        .collect())
+}
+
+/// Every `PLpgSQL_expr` in parse_plpgsql's JSON: its SQL and parse mode.
+fn collect_plpgsql_exprs<'a>(value: &'a serde_json::Value, out: &mut Vec<(&'a str, i64)>) {
+    match value {
+        serde_json::Value::Object(map) => {
+            if let Some(expr) = map.get("PLpgSQL_expr")
+                && let Some(sql) = expr.get("query").and_then(|q| q.as_str())
+            {
+                out.push((sql, expr.get("parseMode").and_then(|m| m.as_i64()).unwrap_or(0)));
+            }
+            map.values().for_each(|v| collect_plpgsql_exprs(v, out));
+        }
+        serde_json::Value::Array(items) => items.iter().for_each(|v| collect_plpgsql_exprs(v, out)),
+        _ => {}
+    }
+}
+
+/// Every function call the statements run, including inside PREPARE and DECLARE
+/// CURSOR, which pg_query's own walk doesn't enter. Calls in views, functions and
+/// rules are left out here: creating them runs nothing (see [`embedded_hits`]).
+fn function_calls<'a>(statements: &[&'a NodeEnum]) -> Vec<&'a FuncCall> {
+    let mut statements = statements.to_vec();
     let mut calls = Vec::new();
     while let Some(statement) = statements.pop() {
         match statement {
@@ -553,12 +732,9 @@ mod tests {
     #[test]
     fn ignores_calls_in_stored_definitions() {
         // Creating these runs nothing; the call happens later, wherever they are used.
+        // (Functions are reported as warnings, see looks_inside_do_blocks_and_functions.)
         assert!(rules("CREATE VIEW v AS SELECT pg_advisory_lock(5)").is_empty());
         assert!(rules("CREATE OR REPLACE VIEW v AS SELECT set_config('a', 'b', false)").is_empty());
-        assert!(
-            rules("CREATE FUNCTION f() RETURNS bool LANGUAGE sql BEGIN ATOMIC SELECT pg_advisory_lock(1); END")
-                .is_empty()
-        );
         assert!(rules("CREATE RULE r AS ON INSERT TO t DO ALSO SELECT pg_advisory_lock(1)").is_empty());
         assert!(rules("CREATE SCHEMA s CREATE VIEW v AS SELECT pg_advisory_lock(1)").is_empty());
         // These do run the query now.
@@ -569,6 +745,75 @@ mod tests {
         assert_eq!(
             rules("SELECT pg_advisory_lock(1); CREATE VIEW v AS SELECT 1"),
             vec!["session-advisory-lock"]
+        );
+    }
+
+    #[test]
+    fn looks_inside_do_blocks_and_functions() {
+        let findings = |sql: &str| {
+            let mut f: Vec<_> = scan(&[query(sql, 1)])
+                .findings
+                .into_iter()
+                .map(|f| (f.rule, f.severity, f.detail))
+                .collect();
+            f.sort();
+            f
+        };
+        // A DO block runs now: same rules, same severity.
+        let found = findings("DO $$ BEGIN PERFORM pg_advisory_lock(3); END $$");
+        assert_eq!(found.len(), 1);
+        assert_eq!((found[0].0, found[0].1), ("session-advisory-lock", Severity::Breaks));
+        assert!(found[0].2.starts_with("In a DO block: "));
+        let body = "DO $$ DECLARE got bool; BEGIN \
+                    got := pg_try_advisory_lock(4); \
+                    IF set_config('app.x', 'y', false) IS NULL THEN RAISE NOTICE 'n'; END IF; \
+                    SET search_path TO app; LISTEN jobs; CREATE TEMP TABLE t (a int); \
+                    PERFORM pg_try_advisory_lock(5); \
+                    END $$";
+        let rules_found: Vec<_> = findings(body).into_iter().map(|f| f.0).collect();
+        assert_eq!(
+            rules_found,
+            vec![
+                "listen",
+                "session-advisory-lock",
+                "session-set",
+                "session-set-config",
+                "temp-table"
+            ]
+        );
+        // Transaction-scoped work, other languages and dynamic SQL give nothing.
+        assert!(rules("DO $$ BEGIN PERFORM pg_advisory_xact_lock(3); SET LOCAL work_mem = '1MB'; END $$").is_empty());
+        assert!(rules("DO LANGUAGE plpython3u $$ plpy.execute('LISTEN a') $$").is_empty());
+        assert!(rules("DO $$ BEGIN EXECUTE 'LISTEN a'; END $$").is_empty());
+
+        // A function body runs each time the function is called: a warning naming it.
+        for sql in [
+            "CREATE FUNCTION app.take(job bigint) RETURNS void LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_advisory_lock(job); END $$",
+            "CREATE FUNCTION app.take(job bigint) RETURNS bool LANGUAGE sql AS $$ SELECT pg_advisory_lock(job) IS NOT NULL $$",
+            "CREATE FUNCTION app.take(job bigint) RETURNS void LANGUAGE sql BEGIN ATOMIC SELECT pg_advisory_lock(job); END",
+        ] {
+            let found = findings(sql);
+            assert_eq!(found.len(), 1, "{sql}");
+            assert_eq!(
+                (found[0].0, found[0].1),
+                ("session-advisory-lock", Severity::Warn),
+                "{sql}"
+            );
+            assert!(
+                found[0].2.starts_with("In function take(), each time it is called: "),
+                "{sql}"
+            );
+        }
+        assert!(rules("CREATE FUNCTION f() RETURNS int LANGUAGE plpgsql AS $$ BEGIN RETURN 1; END $$").is_empty());
+        assert!(rules("CREATE FUNCTION f() RETURNS int LANGUAGE c AS 'mylib', 'f'").is_empty());
+
+        // A body the PL/pgSQL parser rejects counts as not parsed.
+        let report = scan(&[query("DO $$ BEGIN undeclared := 1; END $$", 1)]);
+        assert_eq!((report.findings.len(), report.unparsed), (0, 1));
+        // With other statements in the same string.
+        assert_eq!(
+            rules("SET work_mem = '1MB'; DO $$ BEGIN LISTEN jobs; END $$"),
+            vec!["listen", "session-set"]
         );
     }
 

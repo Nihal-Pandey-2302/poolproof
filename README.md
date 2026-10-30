@@ -161,7 +161,10 @@ Rules today: session `SET`/`RESET` (including `SET ROLE`) and `set_config(..., f
 parameter there, as pg_stat_statements shows it, gives a warning to check the value),
 session advisory locks, `LISTEN`, temp tables without `ON COMMIT DROP`, `WITH HOLD`
 cursors, SQL-level `PREPARE`, `DISCARD`, `DEALLOCATE ALL`, `LOAD`, and query strings that
-start a transaction and run more statements in it.
+start a transaction and run more statements in it. Statements inside DO blocks and
+function bodies (PL/pgSQL and SQL) are checked too. Findings in a function body are
+warnings that name the function, since it runs whenever the function is called. Dynamic
+`EXECUTE` strings are not inspected.
 
 ## Writing a scenario
 
