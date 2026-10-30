@@ -38,7 +38,7 @@ jobs:
       - name: Smoke test
         if: matrix.target != 'x86_64-apple-darwin'
         shell: bash
-        run: ./target/${{ matrix.target }}/release/poolproof list | grep -q multi-statement-begin
+        run: ./target/${{ matrix.target }}/release/poolproof list | grep multi-statement-begin
       - uses: actions/upload-artifact@v7
         with:
           name: poolproof-${{ matrix.target }}

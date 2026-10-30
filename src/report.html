@@ -90,7 +90,11 @@ dialog::backdrop { background: rgba(0,0,0,.45); }
 .steps th { font-size: 12px; color: var(--muted); font-weight: 500; }
 .steps tr.diff td { background: var(--hl); }
 .steps tr.after td { opacity: .55; }
-.steps td.out { word-break: break-word; white-space: pre-line; }
+.steps { table-layout: fixed; }
+.steps th:nth-child(1) { width: 32px; }
+.steps th:nth-child(2) { width: 34%; }
+.steps td { white-space: pre-line; overflow-wrap: anywhere; }
+.steps td.out { overflow-wrap: break-word; }
 footer { color: var(--muted); font-size: 12px; max-width: 1400px; margin: 0 auto; padding: 0 16px 30px; }
 .empty { padding: 30px; color: var(--muted); }
 @media (max-width: 600px) {
@@ -309,7 +313,9 @@ footer { color: var(--muted); font-size: 12px; max-width: 1400px; margin: 0 auto
       s.steps.forEach((step, i) => {
         const o = x.steps[i] || {};
         const cls = failStep === i + 1 ? "diff" : failStep && i + 1 > failStep ? "after" : "";
-        tb.append(el("tr", { class: cls }, el("td", {}, String(i + 1)), el("td", { class: "mono" }, step),
+        // A send step lists its messages one per line, like the replies.
+        const shown = step.includes("] send: ") ? step.replace("] send: ", "] send:\n").split(" / ").join("\n") : step;
+        tb.append(el("tr", { class: cls }, el("td", {}, String(i + 1)), el("td", { class: "mono" }, shown),
           el("td", { class: "mono out" }, outcome(o.postgres)), el("td", { class: "mono out" }, outcome(o.pooler))));
       });
       t.append(tb);

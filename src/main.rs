@@ -150,6 +150,12 @@ struct Target {
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    // Exit quietly when the reader goes away (`poolproof list | head`) instead of
+    // panicking on the failed write, like other command-line tools.
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
     match run(Cli::parse()).await {
         Ok(code) => code,
         Err(e) => {

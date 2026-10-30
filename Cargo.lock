@@ -746,6 +746,7 @@ dependencies = [
  "clap",
  "csv",
  "fallible-iterator",
+ "libc",
  "pg_query",
  "postgres-protocol",
  "serde",
