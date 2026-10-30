@@ -375,7 +375,8 @@ pub(super) async fn wait_ready(endpoint: &Endpoint, t: &Timeouts) -> Result<bool
     }
 }
 
-/// Poolers (by endpoint) whose backend pid never settled; see `settle`.
+/// Poolers (by endpoint) whose backend pid never settled; see `settle`. A pooler that
+/// stopped answering the probes once lands here too: settling is best effort.
 static ROTATING: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 enum Settle {
