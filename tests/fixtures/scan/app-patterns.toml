@@ -1,0 +1,213 @@
+# Hand-written application SQL: common unsafe patterns, and lookalikes that must not match.
+
+[[query]]
+sql = 'CREATE TEMP TABLE tmp_import (LIKE users INCLUDING DEFAULTS)'
+form = "pgss"
+expect = ["temp-table"]
+note = "bulk import staging"
+
+[[query]]
+sql = 'CREATE TEMPORARY TABLE IF NOT EXISTS seen_ids (id bigint PRIMARY KEY)'
+form = "pgss"
+expect = ["temp-table"]
+
+[[query]]
+sql = 'CREATE TEMP TABLE tmp_batch ON COMMIT DROP AS SELECT id FROM users WHERE created_at > $1'
+form = "pgss"
+expect = []
+note = "ON COMMIT DROP inside a transaction is safe"
+
+[[query]]
+sql = 'SELECT id, email INTO TEMP tmp_users FROM users'
+form = "pgss"
+expect = ["temp-table"]
+
+[[query]]
+sql = 'CREATE UNLOGGED TABLE import_staging (id bigint)'
+form = "pgss"
+expect = []
+
+[[query]]
+sql = 'SET ROLE $1'
+form = "pgss-18"
+expect = ["session-set"]
+
+[[query]]
+sql = 'RESET ROLE'
+form = "pgss"
+expect = ["session-set"]
+
+[[query]]
+sql = 'SET SESSION AUTHORIZATION $1'
+form = "pgss-18"
+expect = ["session-set"]
+
+[[query]]
+sql = 'SET LOCAL statement_timeout = $1'
+form = "pgss-18"
+expect = []
+
+[[query]]
+sql = "SET LOCAL statement_timeout = '5s'"
+form = "pgss-17"
+expect = []
+
+[[query]]
+sql = 'SET default_transaction_isolation TO $1'
+form = "pgss-18"
+expect = ["session-set"]
+
+[[query]]
+sql = 'PREPARE get_user (bigint) AS SELECT * FROM users WHERE id = $1'
+form = "log"
+expect = ["sql-prepare"]
+
+[[query]]
+sql = 'DISCARD ALL'
+form = "pgss"
+expect = ["discard"]
+
+[[query]]
+sql = "LOAD 'auto_explain'"
+form = "pgss"
+expect = ["load"]
+
+[[query]]
+sql = "PREPARE TRANSACTION 'order-42'"
+form = "log"
+expect = []
+note = "two-phase commit is not tied to a session: COMMIT PREPARED works from any connection"
+
+[[query]]
+sql = "COMMIT PREPARED 'order-42'"
+form = "log"
+expect = []
+
+[[query]]
+sql = "ALTER FUNCTION app.audit() SET search_path = app, pg_temp"
+form = "log"
+expect = []
+note = "function-level SET applies only during the call"
+
+[[query]]
+sql = "CREATE FUNCTION app.now_utc() RETURNS timestamptz LANGUAGE sql SET timezone = 'UTC' AS 'SELECT now()'"
+form = "log"
+expect = []
+
+[[query]]
+sql = "ALTER ROLE app_user SET statement_timeout = '30s'"
+form = "log"
+expect = []
+note = "applies at next login, not to the current session"
+
+[[query]]
+sql = "WITH ctx AS (SELECT set_config('app.tenant_id', $1, true)) SELECT o.* FROM orders o, ctx WHERE o.archived = false"
+form = "log"
+expect = []
+note = "false elsewhere in the query, set_config itself is transaction-scoped"
+
+[[query]]
+sql = 'SELECT * FROM listen_events WHERE channel = $1'
+form = "pgss"
+expect = []
+
+[[query]]
+sql = "SELECT 'SET search_path TO evil; LISTEN x' AS sql_text"
+form = "log"
+expect = []
+note = "keywords inside a string literal"
+
+[[query]]
+sql = '''-- LISTEN jobs
+SELECT id FROM jobs WHERE state = $1 /* pg_advisory_lock */'''
+form = "log"
+expect = []
+note = "keywords in comments"
+
+[[query]]
+sql = 'SELECT pg_advisory_unlock_all()'
+form = "pgss"
+expect = []
+
+[[query]]
+sql = 'SELECT 1; SELECT 2'
+form = "log"
+expect = []
+note = "multi-statement without a transaction"
+
+[[query]]
+sql = 'BEGIN; SELECT pg_advisory_xact_lock(1); UPDATE counters SET n = n + 1 WHERE id = 1; COMMIT'
+form = "log"
+expect = ["multi-statement-transaction"]
+
+[[query]]
+sql = 'PREPARE lock_job (bigint) AS SELECT pg_try_advisory_lock($1)'
+form = "log"
+expect = ["sql-prepare", "session-advisory-lock"]
+note = "the lock inside PREPARE counts too"
+
+[[query]]
+sql = 'DECLARE jobs_cur CURSOR FOR SELECT id, pg_advisory_lock(id) FROM jobs WHERE state = $1'
+form = "pgss"
+expect = ["session-advisory-lock"]
+note = "the lock inside DECLARE counts too"
+
+[[query]]
+sql = "SELECT set_config('app.user_id', $1, 'false')"
+form = "log"
+expect = ["session-set-config"]
+note = "string literal Postgres reads as boolean false"
+
+[[query]]
+sql = "SELECT set_config('app.user_id', $1, 'on')"
+form = "log"
+expect = []
+note = "string literal Postgres reads as boolean true"
+
+[[query]]
+sql = "SELECT set_config('app.user_id', $1, false::boolean)"
+form = "log"
+expect = ["session-set-config"]
+
+[[query]]
+sql = 'SELECT set_config($1, $2, $3::boolean)'
+form = "pgss"
+expect = ["session-set-config"]
+note = "a cast parameter is still a parameter: check the value"
+
+[[query]]
+sql = "SELECT set_config(is_local => true, setting_name => 'app.user_id', new_value => $1)"
+form = "log"
+expect = []
+note = "named arguments in any order"
+
+[[query]]
+sql = "SELECT set_config('app.user_id', new_value => $1, is_local => false)"
+form = "log"
+expect = ["session-set-config"]
+
+[[query]]
+sql = 'CREATE VIEW active_locks AS SELECT pg_advisory_lock(5)'
+form = "sql"
+expect = []
+note = "creating a view runs nothing"
+
+[[query]]
+sql = '''CREATE FUNCTION app.take_job_lock(job bigint) RETURNS void LANGUAGE sql
+BEGIN ATOMIC
+  SELECT pg_advisory_lock(job);
+END'''
+form = "sql"
+expect = []
+note = "creating a function runs nothing; calling it is what takes the lock"
+
+[[query]]
+sql = 'CREATE RULE audit_insert AS ON INSERT TO orders DO ALSO SELECT pg_advisory_lock(1)'
+form = "sql"
+expect = []
+
+[[query]]
+sql = 'CREATE MATERIALIZED VIEW lock_snapshot AS SELECT pg_advisory_lock(1)'
+form = "sql"
+expect = ["session-advisory-lock"]
+note = "a materialized view runs its query when created"

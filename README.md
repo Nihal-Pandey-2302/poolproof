@@ -121,9 +121,16 @@ poolproof scan queries.csv
 ```
 
 From Postgres logs, with `log_statement = 'all'` or `log_min_duration_statement` set:
-`poolproof scan postgresql.log` (stderr format) or `poolproof scan postgresql.json`
-(jsonlog). Logs keep multi-statement query strings whole; pg_stat_statements splits them,
-so some problems only show up in logs. A `.sql` file works too, e.g. your migrations.
+`poolproof scan postgresql.log` (stderr format), `postgresql.csv` (csvlog) or
+`postgresql.json` (jsonlog). Logs keep multi-statement query strings whole;
+pg_stat_statements splits them, so some problems only show up in logs. Logs are read as a
+stream, so multi-GB files are fine. poolproof reads the English log prefixes (`LOG:`,
+`statement:`), so the server needs `lc_messages = 'C'` or another English locale. A `.sql`
+file works too, e.g. your migrations.
+
+`--input pgss|csvlog|log|jsonlog|sql` says what the input is when the extension doesn't
+(a `.csv` is told apart by its first row). `-` reads stdin:
+`pg_dump --schema-only mydb | poolproof scan - --input sql`.
 
 ### Against your pooler
 
@@ -160,10 +167,11 @@ Without `--pooler`, the exit code is 1 if anything would break under transaction
     sarif_file: poolproof.sarif
 ```
 
-Rules today: session `SET`/`RESET` (including `SET ROLE`) and `set_config(..., false)`,
+Rules today: session `SET`/`RESET` (including `SET ROLE`) and `set_config(..., false)` (a
+parameter there, as pg_stat_statements shows it, gives a warning to check the value),
 session advisory locks, `LISTEN`, temp tables without `ON COMMIT DROP`, `WITH HOLD`
-cursors, SQL-level `PREPARE`, `DISCARD`, and query strings that start a transaction and
-run more statements in it.
+cursors, SQL-level `PREPARE`, `DISCARD`, `DEALLOCATE ALL`, `LOAD`, and query strings that
+start a transaction and run more statements in it.
 
 ## Writing a scenario
 
