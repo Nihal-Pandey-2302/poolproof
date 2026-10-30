@@ -5,6 +5,8 @@ on:
   push:
     branches: [main]
   pull_request:
+    # ready_for_review: undrafting a PR starts the suite it skipped as a draft.
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 
 # Jobs get read access only; a job that needs more says so itself.
@@ -56,6 +58,8 @@ jobs:
   # Every scenario against every pooler, once per Postgres version.
   suite:
     needs: test
+    # Not on draft PRs: it takes 30-40 runner minutes. Pages depends on it, so it skips too.
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
