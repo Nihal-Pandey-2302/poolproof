@@ -6,6 +6,8 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 use crate::output::sarif::sarif;
 use crate::output::scan::print_scan;
+use crate::output::text::{Style, color_enabled};
+use crate::runner::suite::FailOn;
 use crate::runner::{self, Verdict};
 use crate::scenario::{self, PoolMode};
 use crate::targets::Targets;
@@ -43,6 +45,9 @@ enum Command {
         /// Only run scenarios whose name contains this.
         #[arg(short, long)]
         filter: Option<String>,
+        /// Only run this target from the targets file. Repeat for several.
+        #[arg(long = "target", value_name = "NAME")]
+        only: Vec<String>,
         /// Run scenarios in reverse order. Verdicts should not change; if they do,
         /// state is leaking between scenarios.
         #[arg(long)]
@@ -53,6 +58,14 @@ enum Command {
         verbose: bool,
         #[arg(long, value_enum, default_value_t = RunFormat::Text)]
         format: RunFormat,
+        /// Run each scenario's Postgres side twice first. A scenario whose results
+        /// differ between the two runs is an ERROR: it tests timing, not the pooler.
+        #[arg(long)]
+        check_scenarios: bool,
+        /// Which failures make the exit code 1. An ERROR (nothing to compare) counts
+        /// unless this is `none`.
+        #[arg(long, value_enum, default_value_t = FailOn::Any)]
+        fail_on: FailOn,
     },
     /// Scan queries (pg_stat_statements CSV or a .sql file) for patterns that
     /// break under transaction pooling.
@@ -126,9 +139,12 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
             mode,
             scenarios,
             filter,
+            only,
             reverse,
             verbose,
             format,
+            check_scenarios,
+            fail_on,
         } => {
             let targets = match (pooler, direct) {
                 (Some(pooler), Some(direct)) => Targets::single(pooler, direct, mode),
@@ -140,12 +156,22 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
             }
 
             let text = matches!(format, RunFormat::Text);
-            let (target_infos, results) =
-                runner::suite::run(&targets.targets, &scenarios, filter.as_deref(), text, verbose).await?;
+            let opts = runner::suite::RunOptions {
+                filter: filter.as_deref(),
+                targets: &only,
+                text,
+                style: Style {
+                    verbose,
+                    color: color_enabled(),
+                },
+                check_scenarios,
+            };
+            let (target_infos, results) = runner::suite::run(&targets.targets, &scenarios, &opts).await?;
 
             let count = |f: fn(&Verdict) -> bool| results.iter().filter(|r| f(&r.verdict)).count();
             let failed = count(|v| matches!(v, Verdict::Fail { .. }));
             let errors = count(|v| matches!(v, Verdict::Error { .. }));
+            let exit_failure = results.iter().any(|r| fail_on.fails(&r.verdict));
             if matches!(format, RunFormat::Text) {
                 let passed = count(|v| matches!(v, Verdict::Pass));
                 let skipped = count(|v| matches!(v, Verdict::Skip { .. }));
@@ -175,7 +201,7 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
                     RunFormat::Text => unreachable!(),
                 }
             }
-            Ok(if failed + errors > 0 {
+            Ok(if exit_failure {
                 ExitCode::FAILURE
             } else {
                 ExitCode::SUCCESS

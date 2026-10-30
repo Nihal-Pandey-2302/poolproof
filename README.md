@@ -45,6 +45,10 @@ ERROR means there was nothing to compare: a target URL didn't answer before the 
 step on the Postgres side got no reply (timeout, connection failure), or setup, teardown
 or reset failed. It only stops that scenario, and `run` exits 1 as for a FAIL.
 
+`--fail-on` picks which failures make the exit code 1: `silent` (only silent ones),
+`error` (silent and error), `any` (the default, hangs too) or `none`. ERROR counts for all
+but `none`. A pooler with known hangs can still gate CI on wrong results.
+
 ```text
 $ poolproof run --filter multi-statement
 FAIL  pgdog-0.1.62             multi-statement-begin (silent)
@@ -96,9 +100,13 @@ mode = "transaction"
 reset = ["SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'"]
 ```
 
+`--target NAME` runs only that target from the file (repeat it for several).
+
 To share the outcome with your team, `--format html` writes one self-contained page with
 the grid and every step's trace. `--format json` saves the raw results;
-`poolproof report a.json b.json --format html` (or `markdown`) combines saved runs.
+`poolproof report a.json b.json --format html` (or `markdown`) combines saved runs. In
+these formats, a progress line per result goes to stderr. Text output is colored on a
+terminal unless `NO_COLOR` is set.
 
 Scenarios create and drop their own objects (prefixed `pp_`), so use a scratch database.
 That matters even more with `reset`, which kills every session on it. Without `reset`,
