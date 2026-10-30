@@ -1,0 +1,66 @@
+# Django (django.db.backends.postgresql) on psycopg 2 and 3.
+
+[[query]]
+sql = 'SELECT set_config($1, $2, $3)'
+form = "pgss"
+expect = ["session-set-config"]
+note = "ensure_timezone on connect (Django 4.2+): set_config('TimeZone', %s, false). pg_stat_statements turns false into $3"
+
+[[query]]
+sql = "SELECT set_config('TimeZone', 'UTC', false)"
+form = "log"
+expect = ["session-set-config"]
+note = "same, client-side binding (the default with psycopg 3)"
+
+[[query]]
+sql = "SET TIME ZONE 'UTC'"
+form = "pgss"
+expect = ["session-set"]
+note = "ensure_timezone before Django 4.2 (psycopg2)"
+
+[[query]]
+sql = 'DECLARE "_django_curs_140230_sync_1" NO SCROLL CURSOR WITH HOLD FOR SELECT "shop_order"."id", "shop_order"."total" FROM "shop_order" WHERE "shop_order"."created" >= $1'
+form = "pgss"
+expect = ["with-hold-cursor"]
+note = "QuerySet.iterator() in autocommit, psycopg 3. Django docs: set DISABLE_SERVER_SIDE_CURSORS with transaction pooling"
+
+[[query]]
+sql = 'DECLARE "_django_curs_140230_sync_2" CURSOR WITH HOLD FOR SELECT "shop_order"."id" FROM "shop_order"'
+form = "log"
+expect = ["with-hold-cursor"]
+note = "same, psycopg2"
+
+[[query]]
+sql = 'DECLARE "_django_curs_140230_sync_3" NO SCROLL CURSOR FOR SELECT "shop_order"."id" FROM "shop_order"'
+form = "pgss"
+expect = []
+note = "iterator() inside atomic(): no WITH HOLD, ends with the transaction"
+
+[[query]]
+sql = 'FETCH FORWARD 2000 FROM "_django_curs_140230_sync_1"'
+form = "pgss"
+expect = []
+note = "iterator() chunks"
+
+[[query]]
+sql = 'CLOSE "_django_curs_140230_sync_1"'
+form = "pgss"
+expect = []
+
+[[query]]
+sql = 'SET CONSTRAINTS ALL IMMEDIATE'
+form = "pgss"
+expect = []
+note = "schema editor; transaction-scoped, not a session SET"
+
+[[query]]
+sql = 'SELECT "django_session"."session_key", "django_session"."session_data", "django_session"."expire_date" FROM "django_session" WHERE ("django_session"."expire_date" > $1 AND "django_session"."session_key" = $2) LIMIT $3'
+form = "pgss"
+expect = []
+note = "session middleware"
+
+[[query]]
+sql = 'SELECT $1 AS "a" FROM "shop_order" WHERE NOT "shop_order"."archived" LIMIT $2'
+form = "pgss"
+expect = []
+note = "exists()"
