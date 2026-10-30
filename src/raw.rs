@@ -122,6 +122,9 @@ enum Next {
 pub struct RawConn {
     stream: TcpStream,
     buf: BytesMut,
+    pub url: String,
+    /// From BackendKeyData: the backend pid, or the pooler's stand-in for it.
+    pub pid: Option<i32>,
 }
 
 impl RawConn {
@@ -139,7 +142,7 @@ impl RawConn {
         let stream = timeout(connect_timeout, TcpStream::connect((host.as_str(), port)))
             .await
             .context("connect timed out")??;
-        let mut conn = RawConn { stream, buf: BytesMut::new() };
+        let mut conn = RawConn { stream, buf: BytesMut::new(), url: url.to_string(), pid: None };
         let mut out = BytesMut::new();
         frontend::startup_message([("user", user.as_str()), ("database", dbname.as_str())], &mut out)?;
         conn.send(&out).await?;
@@ -154,7 +157,11 @@ impl RawConn {
             };
             let mut out = BytesMut::new();
             match message {
-                Message::AuthenticationOk | Message::ParameterStatus(_) | Message::BackendKeyData(_) => continue,
+                Message::BackendKeyData(body) => {
+                    conn.pid = Some(body.process_id());
+                    continue;
+                }
+                Message::AuthenticationOk | Message::ParameterStatus(_) => continue,
                 Message::NoticeResponse(_) => continue,
                 Message::ReadyForQuery(_) => return Ok(conn),
                 Message::AuthenticationCleartextPassword => frontend::password_message(&password, &mut out)?,

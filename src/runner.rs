@@ -100,6 +100,37 @@ struct Conn {
     /// The query started by a `background` step, if not yet waited for.
     pending: Option<JoinHandle<Outcome>>,
     notices: Notices,
+    /// Backend pid when connected straight to Postgres, so a disconnect can wait for
+    /// the backend to exit.
+    pid: Option<i32>,
+}
+
+/// The backend pid of a direct connection.
+async fn backend_pid(client: &Client) -> Option<i32> {
+    let messages = timeout(STEP_TIMEOUT, client.simple_query("SELECT pg_backend_pid()")).await.ok()?.ok()?;
+    messages.into_iter().find_map(|m| match m {
+        SimpleQueryMessage::Row(row) => row.get(0)?.parse().ok(),
+        _ => None,
+    })
+}
+
+/// Waits until a Postgres backend has exited. Closing the socket returns before the
+/// backend is gone, and until then its session state (locks, temp tables) is still
+/// visible, which would make the baseline racy.
+async fn wait_backend_gone(direct: &str, pid: i32) {
+    let Ok((client, driver, _)) = connect(direct).await else { return };
+    let deadline = tokio::time::Instant::now() + STEP_TIMEOUT;
+    let sql = format!("SELECT 1 FROM pg_stat_activity WHERE pid = {pid}");
+    while tokio::time::Instant::now() < deadline {
+        match client.simple_query(&sql).await {
+            Ok(rows) if rows.iter().any(|m| matches!(m, SimpleQueryMessage::Row(_))) => {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            _ => break,
+        }
+    }
+    drop(client);
+    let _ = timeout(STEP_TIMEOUT, driver).await;
 }
 
 impl Conn {
@@ -206,7 +237,12 @@ pub async fn run_steps(scenario: &Scenario, pooled: &str, direct: &str) -> Resul
                 }
                 Action::Disconnect => {
                     if let Some(conn) = raw.remove(step.client.as_str()) {
+                        let pid = conn.pid;
+                        let was_direct = conn.url == direct;
                         conn.terminate().await;
+                        if let (true, Some(pid)) = (was_direct, pid) {
+                            wait_backend_gone(direct, pid).await;
+                        }
                     }
                     Outcome::empty()
                 }
@@ -219,6 +255,7 @@ pub async fn run_steps(scenario: &Scenario, pooled: &str, direct: &str) -> Resul
             let url = if step.direct { direct } else { pooled };
             match connect(url).await {
                 Ok((client, driver, notices)) => {
+                    let pid = if url == direct { backend_pid(&client).await } else { None };
                     conns.insert(
                         &step.client,
                         Conn {
@@ -228,6 +265,7 @@ pub async fn run_steps(scenario: &Scenario, pooled: &str, direct: &str) -> Resul
                             statements: HashMap::new(),
                             pending: None,
                             notices,
+                            pid,
                         },
                     );
                 }
@@ -297,7 +335,11 @@ pub async fn run_steps(scenario: &Scenario, pooled: &str, direct: &str) -> Resul
             }
             Action::Disconnect => {
                 if let Some(conn) = conns.remove(step.client.as_str()) {
+                    let pid = conn.pid;
                     conn.close().await;
+                    if let Some(pid) = pid {
+                        wait_backend_gone(direct, pid).await;
+                    }
                 }
                 Outcome::empty()
             }

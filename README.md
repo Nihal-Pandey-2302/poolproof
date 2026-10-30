@@ -89,7 +89,7 @@ direct = "postgres://user:pass@postgres-host:5432/db"
 mode = "transaction"
 # Run on `direct` before every run so one scenario's leaked state can't change the next
 # one's result. This terminates every other session on the database.
-reset = ["SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'"]
+reset = ["SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'"]
 ```
 
 To share the outcome with your team, `--format html` writes one self-contained page with
