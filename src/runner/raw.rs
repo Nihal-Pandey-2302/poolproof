@@ -325,6 +325,10 @@ fn summary(message: &Message, parameter_status: bool) -> Result<Option<String>> 
         Message::PortalSuspended => "PortalSuspended".to_string(),
         Message::EmptyQueryResponse => "EmptyQueryResponse".to_string(),
         Message::CopyInResponse(_) => "CopyInResponse".to_string(),
+        Message::CopyOutResponse(_) => "CopyOutResponse".to_string(),
+        // Escaped so a row's trailing newline doesn't split the line.
+        Message::CopyData(body) => format!("CopyData {}", String::from_utf8_lossy(body.data()).escape_debug()),
+        Message::CopyDone => "CopyDone".to_string(),
         Message::CommandComplete(body) => format!("CommandComplete {}", body.tag()?),
         Message::ParameterDescription(body) => format!("ParameterDescription {}", body.parameters().count()?),
         Message::RowDescription(body) => {
@@ -366,6 +370,14 @@ mod tests {
         buf.extend_from_slice(&(body.len() as u32 + 4).to_be_bytes());
         buf.extend_from_slice(body);
         Message::parse(&mut buf).unwrap().unwrap()
+    }
+
+    #[test]
+    fn records_copy_out() {
+        let line = |m: Message| summary(&m, false).unwrap().unwrap();
+        assert_eq!(line(backend(b'H', b"\0\0\x02\0\0\0\0")), "CopyOutResponse");
+        assert_eq!(line(backend(b'd', b"1\ta\n")), "CopyData 1\\ta\\n");
+        assert_eq!(line(backend(b'c', b"")), "CopyDone");
     }
 
     #[test]
