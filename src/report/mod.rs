@@ -421,7 +421,7 @@ mod tests {
         // Each failure is listed once, in its own section.
         assert_eq!(md.matches("### p / bug (silent)").count(), 1);
         assert!(md[bugs..documented].contains("### p / bug (silent)"));
-        assert!(md[documented..].contains("### p / doc (silent)"));
+        assert!(md[documented..].contains("### doc (silent)\n\nd doc\n\n- on p\n"));
         assert!(md[documented..].contains(r#"- documented: "SET | Never", https://d/ (documentation for pb 1.2)"#));
         assert!(md[documented..].contains("- note: n\n"));
     }

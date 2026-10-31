@@ -206,6 +206,8 @@ footer { color: var(--muted); font-size: 12px; max-width: 1400px; margin: 0 auto
   // A FAIL that a pooler's documentation explains. Still a failure, never a pass.
   const expected = (x) => !!(x && x.result === "fail" && x.expected);
   const bug = (x) => ["silent", "error", "hang"].includes(state(x)) && !expected(x);
+  // Only silent and error failures can be expected; anything else keeps its own look.
+  const expClass = (x) => expected(x) && ["silent", "error"].includes(state(x)) ? "exp-" + state(x) : state(x);
   const symbol = { pass: "✓", silent: "✕", error: "!", hang: "⏱", skip: "–", none: "·", error_run: "?" };
   const word = { pass: "pass", silent: "silent failure", error: "pooler error", hang: "no reply", skip: "skipped", none: "not run" };
 
@@ -263,11 +265,11 @@ footer { color: var(--muted); font-size: 12px; max-width: 1400px; margin: 0 auto
     const q = document.getElementById("q").value.trim().toLowerCase();
     const diffOnly = document.getElementById("diffonly").checked;
     const hideExp = document.getElementById("hideexp").checked;
-    const rows = scenarios.filter(s => (!q || (s.name + " " + s.description).toLowerCase().includes(q)) &&
-      (!diffOnly || visible.some(c => {
-        const x = results.get(c.key + "/" + s.name);
-        return bug(x) || (!hideExp && expected(x));
-      })));
+    const matching = scenarios.filter(s => !q || (s.name + " " + s.description).toLowerCase().includes(q));
+    const rows = matching.filter(s => !diffOnly || visible.some(c => {
+      const x = results.get(c.key + "/" + s.name);
+      return bug(x) || (!hideExp && expected(x));
+    }));
 
     // Stats for what is on screen: passes, expected failures and bugs, each on its own.
     const all = visible.flatMap(c => rows.map(s => results.get(c.key + "/" + s.name)));
@@ -283,9 +285,12 @@ footer { color: var(--muted); font-size: 12px; max-width: 1400px; margin: 0 auto
         el("small", {}, "documented limitations"))),
       el("div", { class: "stat" }, el("b", {}, String(all.filter(x => state(x) === "pass").length)), el("span", {}, "passes")),
     );
+    // Counted before "Only scenarios with failures", which drops rows whose only failures
+    // are hidden expected ones: the banner must still say they're there.
+    const nHidden = hideExp ? visible.flatMap(c => matching.map(s => results.get(c.key + "/" + s.name))).filter(expected).length : 0;
     const note = document.getElementById("hidden-note");
-    note.hidden = !(hideExp && nExpected);
-    note.textContent = `${nExpected} expected ${nExpected === 1 ? "failure" : "failures"} hidden. Hidden cells show ≈.`;
+    note.hidden = !nHidden;
+    note.textContent = `${nHidden} expected ${nHidden === 1 ? "failure" : "failures"} hidden. Hidden cells show ≈.`;
 
     const grid = document.getElementById("grid");
     if (!visible.length || !rows.length) { grid.replaceChildren(el("div", { class: "empty" }, "Nothing matches these filters.")); return; }
@@ -316,7 +321,7 @@ footer { color: var(--muted); font-size: 12px; max-width: 1400px; margin: 0 auto
         const flaky = x && x.runs > 1 && x.failures > 0 ? ` in ${x.failures} of ${x.runs} runs` : "";
         let what = x && x.result === "error" ? "could not run" : word[st];
         if (expected(x) && hideExp) { cls = "exp-hidden"; sym = "≈"; what = "expected failure, hidden"; }
-        else if (expected(x)) { cls = "exp-" + st; what += ", expected: documented limitation"; }
+        else if (expected(x)) { cls = expClass(x); what += ", expected: documented limitation"; }
         const label = `${s.name} on ${c.t.name}, Postgres ${c.pg}: ${what}${flaky}`;
         tr.append(el("td", { class: "cell" + (c.first ? " first" : "") },
           el("button", { class: "chip " + cls, title: label, "aria-label": label, onclick: () => x && show(s, c, x) }, sym)));
@@ -351,7 +356,7 @@ footer { color: var(--muted); font-size: 12px; max-width: 1400px; margin: 0 auto
       el("div", {},
         el("h2", { id: "dlg-title" }, el("span", { class: "mono" }, s.name)),
         el("p", {}, `${c.t.name} · Postgres ${c.pg} · `,
-          el("span", { class: "badge " + (x.result === "error" ? "skip" : expected(x) ? "exp-" + st : st) }, badge))),
+          el("span", { class: "badge " + (x.result === "error" ? "skip" : expClass(x)) }, badge))),
       el("button", { class: "close", "aria-label": "Close", onclick: () => dlg.close() }, "×"));
     const body = el("div", { class: "dlg-body" }, el("p", {}, s.description));
     if (s.refs.length) body.append(el("p", {}, "From: ", s.refs.flatMap((r, i) => [i ? ", " : null, refLink(r)])));
