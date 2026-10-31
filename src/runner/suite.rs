@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 
-use super::{Verdict, check, preflight, server_version};
+use super::{Timeouts, Verdict, check, preflight, server_version};
 use crate::output::text::print_result;
 use crate::report::{ResultRow, StepOutcomes, TargetInfo};
 use crate::scenario::Scenario;
@@ -27,6 +27,8 @@ pub async fn run(
     scenarios: &[Scenario],
     opts: &RunOptions<'_>,
 ) -> Result<(Vec<TargetInfo>, Vec<ResultRow>)> {
+    // Not configurable yet; F2 adds the flags.
+    let timeouts = Timeouts::default();
     let mut results = Vec::new();
     let mut target_infos = Vec::new();
     for target in targets {
@@ -36,7 +38,7 @@ pub async fn run(
             version: target.version.clone(),
             config: target.config.clone(),
             mode: target.mode,
-            postgres: server_version(&target.direct).await.ok(),
+            postgres: server_version(&target.direct, &timeouts).await.ok(),
         });
         if target.reset.is_empty() {
             eprintln!(
@@ -47,7 +49,7 @@ pub async fn run(
         let applies = |s: &Scenario| opts.filter.is_none_or(|f| s.name.contains(f)) && s.modes.contains(&target.mode);
         // Without both URLs answering, every scenario would compare two failures.
         let unreachable = if scenarios.iter().any(applies) {
-            preflight(&target.pooler, &target.direct).await.err()
+            preflight(&target.pooler, &target.direct, &timeouts).await.err()
         } else {
             None
         };
@@ -64,7 +66,15 @@ pub async fn run(
             } else if let Some(reason) = &unreachable {
                 (Verdict::Error { reason: reason.clone() }, vec![], 0, 0)
             } else {
-                let checked = check(s, &target.pooler, &target.direct, &target.reset, opts.check_scenarios).await;
+                let checked = check(
+                    s,
+                    &target.pooler,
+                    &target.direct,
+                    &target.reset,
+                    &timeouts,
+                    opts.check_scenarios,
+                )
+                .await;
                 (checked.verdict, checked.steps, checked.runs, checked.failures)
             };
             if opts.text {

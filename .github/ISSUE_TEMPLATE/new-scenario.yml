@@ -1,0 +1,38 @@
+name: New scenario
+description: A pooler behavior poolproof should test.
+labels: [scenario]
+body:
+  - type: textarea
+    id: property
+    attributes:
+      label: What must hold
+      description: The property, in one sentence, as Postgres guarantees it.
+      placeholder: A temp table created by one client must not be visible to another client.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps
+      description: >
+        The smallest sequence that shows the problem, per client. SQL, or protocol messages
+        for driver-level bugs. A scenario TOML file is even better.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: What Postgres does and what the pooler does
+    validations:
+      required: true
+  - type: input
+    id: pooler
+    attributes:
+      label: Pooler, version and pooling mode
+      placeholder: pgbouncer 1.26.1, transaction mode
+  - type: input
+    id: refs
+    attributes:
+      label: Related issue or discussion
+      placeholder: https://github.com/...

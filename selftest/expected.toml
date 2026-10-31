@@ -1,0 +1,67 @@
+# Expected verdicts for the self-test targets (tools/pp-proxy). Checked with
+#   pp-selftest-check selftest/expected.toml report.json scenarios
+# Any other verdict is a harness bug, a scenario bug or a proxy bug, and fails CI.
+#
+# Values: pass | silent | error | hang | harness-error | skip, or a table with
+# `result`, optional `reason_prefix` (matched with starts_with) and `why`.
+# Every target has `default = "pass"`, so a new scenario that a fault breaks has to be
+# listed here, which keeps each fault's effect narrow and explained.
+
+# One server connection per client, bytes copied unchanged. Anything but PASS means
+# the harness or the scenario is wrong.
+[targets.selftest-passthrough]
+default = "pass"
+
+# Drops client messages sent after a Sync until that Sync's ReadyForQuery.
+[targets.selftest-drop-pipelined]
+default = "pass"
+protocol-four-pipelined-requests = { result = "hang", why = "requests 2-4 never reach the server" }
+protocol-pipeline-recovers-after-error = { result = "hang", why = "the second request never reaches the server" }
+# protocol-pipelined-statements passes: its steps have a single Sync each.
+
+# Drops every ErrorResponse after startup. Every scenario where Postgres answers with
+# an error fails; the client gets ReadyForQuery and no hint, so all are silent.
+[targets.selftest-swallow-error]
+default = "pass"
+aborted-transaction-not-reused = { result = "silent", why = "57014 from the statement timeout is dropped" }
+cancel-reaches-running-query = { result = "silent", why = "57014 from the cancel is dropped" }
+cancel-under-saturated-pool = { result = "silent", why = "57014 from the cancel is dropped" }
+cursor-isolated-between-clients = { result = "silent", why = "the other client's 34000 is dropped" }
+discard-all-in-transaction-fails = { result = "silent", why = "25001 is dropped" }
+prepare-in-aborted-transaction = { result = "silent", why = "22012 that aborts the transaction is dropped" }
+protocol-error-after-flush = { result = "hang", why = "42601 is dropped; with Flush nothing else comes back" }
+protocol-pipeline-recovers-after-error = { result = "silent", why = "22012 is dropped" }
+sql-prepare-isolated-between-clients = { result = "silent", why = "the other client's 26000 is dropped" }
+temp-table-isolated-between-clients = { result = "silent", why = "the other client's 42P01 is dropped" }
+
+# Drops the client's CopyDone, so the server waits for more data.
+[targets.selftest-no-copydone]
+default = "pass"
+copy-from-stdin = { result = "hang", why = "COPY never completes" }
+
+# Reports one row more in every INSERT command tag.
+[targets.selftest-wrong-tag]
+default = "pass"
+multi-statement-begin = { result = "silent", why = "INSERT tag says 2 rows" }
+
+# One server connection for all clients, no reset, every client gets its
+# BackendKeyData. Fails the documented transaction-pooling limits like PgBouncer, plus
+# cancel routing (pgdog#1505 class) and a blocked pool behind an abandoned query.
+[targets.selftest-shared-server]
+default = "pass"
+abandoned-query-does-not-block-pool = { result = "hang", why = "the server stays busy until pg_sleep ends" }
+aborted-transaction-not-reused = { result = "error", why = "the next client inherits the aborted transaction (25P02)" }
+advisory-lock-released-on-disconnect = { result = "silent", why = "the lock stays on the shared session" }
+cancel-from-idle-client-is-harmless = { result = "error", why = "both clients share one cancel key, so the idle client cancels the other's query" }
+cursor-isolated-between-clients = { result = "silent", why = "the WITH HOLD cursor is visible to the other client" }
+empty-search-path-from-set-config = { result = "silent", why = "set_config leaks to the next client" }
+listen-notify-delivered = { result = "silent", why = "the notification arrives while no client holds the server" }
+protocol-statement-names-isolated = { result = "error", why = "the second Parse of s1 gets 42P05" }
+protocol-unnamed-statement-survives-other-clients = { result = "error", why = "the other client's query replaces the unnamed statement (26000)" }
+search-path-isolated-between-clients = { result = "silent", why = "SET search_path leaks" }
+set-does-not-leak-after-disconnect = { result = "silent", why = "SET survives the disconnect" }
+set-isolated-between-clients = { result = "silent", why = "SET leaks" }
+set-role-isolated-between-clients = { result = "silent", why = "SET ROLE leaks" }
+set-role-reset-after-pinned-disconnect = { result = "silent", why = "SET ROLE survives the disconnect" }
+sql-prepare-isolated-between-clients = { result = "silent", why = "the SQL PREPARE is visible to the other client" }
+temp-table-isolated-between-clients = { result = "silent", why = "the temp table is visible to the other client" }
