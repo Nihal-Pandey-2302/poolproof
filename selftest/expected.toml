@@ -80,12 +80,12 @@ temp-table-isolated-between-clients = { result = "silent", why = "the temp table
 # got its own connection back and the scenario tested nothing.
 [targets.selftest-pool-of-two]
 default = "pass"
-abandoned-query-does-not-block-pool = { result = "skip", why = "needs one server connection (probe: several)" }
+abandoned-query-does-not-block-pool = { result = "skip", reason_prefix = "needs one server connection", why = "the probes saw several server connections" }
 aborted-transaction-not-reused = { result = "error", why = "the next client gets the released connection, still in the aborted transaction (25P02)" }
 advisory-lock-released-on-disconnect = { result = "silent", why = "the lock stays on the released connection's session" }
 cancel-from-idle-client-is-harmless = { result = "error", why = "a's key is the top free slot at its startup, the slot b then takes, so a cancels b's query" }
 cancel-reaches-running-query = { result = "pass", why = "a lone client's key is the top free slot at startup, which its query then gets" }
-cancel-under-saturated-pool = { result = "skip", why = "needs one server connection (probe: several)" }
+cancel-under-saturated-pool = { result = "skip", reason_prefix = "needs one server connection", why = "the probes saw several server connections" }
 cursor-isolated-between-clients = { result = "silent", why = "b gets a's released connection, with the WITH HOLD cursor" }
 deallocate-all-isolated = { result = "error", why = "b's DEALLOCATE ALL runs on a's released connection (26000)" }
 empty-search-path-from-set-config = { result = "silent", why = "set_config leaks to the next client on the same connection" }
