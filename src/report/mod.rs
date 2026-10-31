@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::runner::{Outcome, Verdict};
 use crate::scenario::PoolMode;
 
+pub mod compare;
 mod html;
 mod markdown;
 
@@ -34,6 +35,9 @@ pub struct Report {
     pub targets: Vec<TargetInfo>,
     pub scenarios: Vec<ScenarioInfo>,
     pub results: Vec<ResultRow>,
+    /// With `run --compare-to`: what changed since that report.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comparison: Option<compare::Comparison>,
 }
 
 #[derive(Serialize, Deserialize)]
