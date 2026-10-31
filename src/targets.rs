@@ -377,7 +377,7 @@ impl Endpoint {
 /// rather than ignored: `h1,h2?target_session_attrs=read-write` would otherwise test
 /// whichever host comes first, maybe a standby.
 fn check_supported(config: &Config) -> Result<()> {
-    use tokio_postgres::config::{LoadBalanceHosts, TargetSessionAttrs};
+    use tokio_postgres::config::{LoadBalanceHosts, SslNegotiation, TargetSessionAttrs};
     if config.get_hosts().len() > 1 {
         bail!("not supported: more than one host");
     }
@@ -392,6 +392,10 @@ fn check_supported(config: &Config) -> Result<()> {
     }
     if config.get_load_balance_hosts() != LoadBalanceHosts::Disable {
         bail!("not supported: load_balance_hosts");
+    }
+    // tokio-postgres would start TLS directly, but send clients always send SSLRequest.
+    if config.get_ssl_negotiation() != SslNegotiation::Postgres {
+        bail!("not supported yet: sslnegotiation=direct");
     }
     Ok(())
 }
@@ -876,6 +880,9 @@ mod tests {
         assert!(err("postgres://u@h/db?target_session_attrs=read-write").contains("target_session_attrs"));
         assert!(err("postgres://u@h/db?load_balance_hosts=random").contains("load_balance_hosts"));
         assert!(Endpoint::resolve("postgres://u@h/db?target_session_attrs=any", &env_of(&[])).is_ok());
+        assert!(err("postgres://u@h/db?sslnegotiation=direct").contains("not supported yet: sslnegotiation=direct"));
+        assert!(err("host=h user=u sslnegotiation=direct").contains("sslnegotiation=direct"));
+        assert!(Endpoint::resolve("postgres://u@h/db?sslnegotiation=postgres", &env_of(&[])).is_ok());
     }
 
     #[test]
