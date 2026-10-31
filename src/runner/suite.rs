@@ -9,7 +9,7 @@ use super::check::Isolation;
 use super::exact::Exact;
 use super::probe::{ProbeResult, Probes, probe_target};
 use super::{
-    DIRECT_UNREACHABLE, FailKind, Privileges, Timeouts, Verdict, check, deterministic, preflight, privileges,
+    DIRECT_UNREACHABLE, FailKind, Privileges, Timeouts, Verdict, check_reuse, deterministic, preflight, privileges,
     resolve_reset, server_version,
 };
 use crate::limitations::Limitations;
@@ -193,8 +193,8 @@ pub async fn run(
         let has_precondition = |s: &Scenario| s.steps.iter().any(|st| st.precondition);
         for s in scenarios.iter().filter(wanted) {
             let checks = before_run(s, target, unreachable.as_deref(), &privs, probes.as_ref());
-            let (verdict, steps, runs, failures, varied, unmet) = match checks {
-                Some(verdict) => (verdict, vec![], 0, 0, false, 0),
+            let (verdict, steps, runs, failures, varied, (unmet, reuse_unmet)) = match checks {
+                Some(verdict) => (verdict, vec![], 0, 0, false, (0, 0)),
                 None => {
                     let seen = |(name, direct, statements, _): &&Determinism| {
                         *name == s.name && *direct == &target.direct && *statements == reset
@@ -205,11 +205,20 @@ pub async fn run(
                     }
                     match determinism.iter().find(seen) {
                         Some((_, _, _, Err(reason))) => {
-                            (Verdict::Error { reason: reason.clone() }, vec![], 0, 0, false, 0)
+                            (Verdict::Error { reason: reason.clone() }, vec![], 0, 0, false, (0, 0))
                         }
                         _ => {
-                            let c = check(s, &target.pooler, &target.direct, &reset, &for_scenario(&timeouts, s)).await;
-                            (c.verdict, c.steps, c.runs, c.failures, c.varied, c.unmet)
+                            let reuse = !target.ignore_server_requirements;
+                            let t = for_scenario(&timeouts, s);
+                            let c = check_reuse(s, &target.pooler, &target.direct, &reset, reuse, &t).await;
+                            (
+                                c.verdict,
+                                c.steps,
+                                c.runs,
+                                c.failures,
+                                c.varied,
+                                (c.unmet, c.reuse_unmet),
+                            )
                         }
                     }
                 }
@@ -227,6 +236,7 @@ pub async fn run(
                 failures,
                 varied: (runs > 1).then_some(varied),
                 precondition_unmet: has_precondition(s).then_some(unmet),
+                reuse_unmet: (!s.same_backend.is_empty()).then_some(reuse_unmet),
                 expected: None,
             };
             if let (Some(limitations), Some(info)) = (opts.limitations, target_infos.last()) {

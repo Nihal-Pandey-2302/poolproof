@@ -207,6 +207,7 @@ fn scenario(driver: &Driver, variant: &Variant, case: &Case) -> Scenario {
         timeout_ms: None,
         setup: case.setup.clone(),
         teardown: case.teardown.clone(),
+        same_backend: vec![],
         program: Some(Program {
             image: image(&driver.name),
             driver: driver.name.clone(),

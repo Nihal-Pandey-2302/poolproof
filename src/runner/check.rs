@@ -114,6 +114,9 @@ pub struct Checked {
     pub varied: bool,
     /// Runs whose precondition wasn't met. They aren't in `runs` or `failures`.
     pub unmet: u32,
+    /// Runs that passed, but where an evidence pair showed the clients on different
+    /// backends (or one backend's start couldn't be read). They don't count either.
+    pub reuse_unmet: u32,
 }
 
 impl Checked {
@@ -126,6 +129,7 @@ impl Checked {
             failures: 0,
             varied: false,
             unmet: 0,
+            reuse_unmet: 0,
         }
     }
 }
@@ -273,6 +277,19 @@ pub async fn check(
     reset: &Isolation,
     t: &Timeouts,
 ) -> Checked {
+    check_reuse(scenario, pooled, direct, reset, true, t).await
+}
+
+/// `check`; with `reuse` false, `same_backend` pairs aren't checked and every run
+/// counts (Postgres standing in for its own pooler).
+pub async fn check_reuse(
+    scenario: &Scenario,
+    pooled: &Endpoint,
+    direct: &Endpoint,
+    reset: &Isolation,
+    reuse: bool,
+    t: &Timeouts,
+) -> Checked {
     let expected = match run_once(scenario, direct, direct, reset, Side::Baseline, t).await.all() {
         Ok(expected) => expected,
         Err(reason) => return Checked::error(reason),
@@ -287,15 +304,26 @@ pub async fn check(
     // Runs whose precondition wasn't met don't count; the first is kept in case no run met it.
     let mut unmet = 0;
     let mut first_unmet: Option<Checked> = None;
+    // The same for runs that never reached the shared server connection.
+    let mut reuse_unmet = 0;
+    let mut first_apart: Option<Checked> = None;
     for _ in 0..scenario.repeat {
         let run = run_once(scenario, pooled, direct, reset, Side::Target, t).await;
         let checked = match run.outcomes {
-            Ok(actual) => after_teardown(compare(scenario, &expected, actual, run.broken), run.teardown),
+            Ok(actual) => after_teardown(
+                compare_with(scenario, &expected, actual, run.broken, reuse),
+                run.teardown,
+            ),
             Err(reason) => Checked::error(reason),
         };
         if checked.unmet > 0 {
             unmet += 1;
             first_unmet.get_or_insert(checked);
+            continue;
+        }
+        if checked.reuse_unmet > 0 {
+            reuse_unmet += 1;
+            first_apart.get_or_insert(checked);
             continue;
         }
         let failed = !matches!(checked.verdict, Verdict::Pass);
@@ -313,7 +341,7 @@ pub async fn check(
         }
     }
     // Loading rejects repeat = 0, so the loop ran at least once.
-    let mut checked = match (kept, first_unmet) {
+    let mut checked = match (kept, first_apart.or(first_unmet)) {
         (Some(kept), _) => kept,
         (None, Some(mut skipped)) => {
             if let (Verdict::Skip { reason }, true) = (&mut skipped.verdict, scenario.repeat > 1) {
@@ -323,10 +351,11 @@ pub async fn check(
         }
         (None, None) => Checked::error("repeat is 0".into()),
     };
-    checked.runs = scenario.repeat - unmet;
+    checked.runs = scenario.repeat - unmet - reuse_unmet;
     checked.failures = failures;
     checked.varied = varied;
     checked.unmet = unmet;
+    checked.reuse_unmet = reuse_unmet;
     checked
 }
 
@@ -376,11 +405,41 @@ pub async fn deterministic(
     problem.map_or(Ok(()), Err)
 }
 
+#[cfg(test)]
+fn compare(scenario: &Scenario, expected: &[Outcome], actual: Vec<Outcome>, broken: Option<Broken>) -> Checked {
+    compare_with(scenario, expected, actual, broken, true)
+}
+
+/// What an evidence step showed: the pid and, if read, the backend's start (None when
+/// direct may not see it). Err when the backend was gone before its start was read.
+/// None when the step didn't name a backend at all.
+fn evidence_of(outcome: &Outcome) -> Option<Result<(&str, Option<&str>), ()>> {
+    let Outcome::Ok { rows, .. } = outcome else {
+        return None;
+    };
+    match rows.as_slice() {
+        [row] => match row.as_slice() {
+            [Some(pid), start] => Some(Ok((pid.as_str(), start.as_deref()))),
+            [Some(_)] => Some(Err(())),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 /// Compare one pooler-side run with the baseline outcomes. `broken` is what went wrong
 /// with a driver program beyond its outcomes: a FAIL the steps found keeps its step and
 /// kind and says it too; steps that would pass become a FAIL (error) at the last step,
 /// with the program's state as the pooler outcome, while `steps` keeps what it reported.
-fn compare(scenario: &Scenario, expected: &[Outcome], actual: Vec<Outcome>, broken: Option<Broken>) -> Checked {
+/// With `reuse`, a run that passed only counts if every `same_backend` pair was on one
+/// backend.
+fn compare_with(
+    scenario: &Scenario,
+    expected: &[Outcome],
+    actual: Vec<Outcome>,
+    broken: Option<Broken>,
+    reuse: bool,
+) -> Checked {
     // The first precondition that wasn't met: the steps after it never ran.
     let unmet = scenario
         .steps
@@ -441,6 +500,55 @@ fn compare(scenario: &Scenario, expected: &[Outcome], actual: Vec<Outcome>, brok
             failures: 0,
             varied: false,
             unmet: 0,
+            reuse_unmet: 0,
+        };
+    }
+    // An evidence step that named no backend is the pooler failing a plain SELECT. Not
+    // after an unmet precondition: those steps never ran.
+    let mismatch = mismatch.or_else(|| {
+        if unmet.is_some() {
+            return None;
+        }
+        let (i, step) = scenario
+            .steps
+            .iter()
+            .enumerate()
+            .find(|(i, s)| s.evidence && evidence_of(&actual[*i]).is_none())?;
+        Some(Mismatch {
+            step: i + 1,
+            action: step.describe(),
+            kind: FailKind::of(&Outcome::NotRun, &actual[i]),
+            expected: Outcome::NotRun,
+            actual: actual[i].clone(),
+        })
+    });
+    // A run that passed without the clients sharing a backend tested nothing.
+    let apart = (mismatch.is_none() && unmet.is_none() && broken.is_none() && reuse)
+        .then(|| {
+            scenario.same_backend.iter().find_map(|&[i, j]| {
+                let (a, b) = (evidence_of(&actual[i - 1])?, evidence_of(&actual[j - 1])?);
+                let (client_a, client_b) = (&scenario.steps[i - 1].client, &scenario.steps[j - 1].client);
+                match (a, b) {
+                    (Err(()), _) | (_, Err(())) => Some(format!(
+                        "passed, but a backend was gone before its start time was read (steps {i} and {j})"
+                    )),
+                    (Ok((pa, sa)), Ok((pb, sb))) => {
+                        let same = pa == pb && (sa.is_none() || sb.is_none() || sa == sb);
+                        (!same).then(|| format!("passed, but {client_b} never reached {client_a}'s server connection"))
+                    }
+                }
+            })
+        })
+        .flatten();
+    if let (None, None, Some(reason)) = (&mismatch, unmet, apart) {
+        return Checked {
+            verdict: Verdict::Skip { reason },
+            steps: expected.iter().cloned().zip(actual).collect(),
+            runs: 1,
+            failures: 0,
+            varied: false,
+            unmet: 0,
+            reuse_unmet: 1,
         };
     }
     // Driver scenarios (the only ones with `broken`) have no preconditions.
@@ -485,6 +593,7 @@ fn compare(scenario: &Scenario, expected: &[Outcome], actual: Vec<Outcome>, brok
         failures: 0,
         varied: false,
         unmet,
+        reuse_unmet: 0,
     }
 }
 
@@ -600,6 +709,68 @@ mod tests {
         // A step before it that differs is the FAIL, not the precondition.
         let earlier = compare(&s, &expected, vec![one("9"), one("f"), Outcome::NotRun], None);
         assert!(matches!(earlier.verdict, Verdict::Fail { mismatch } if mismatch.step == 1));
+    }
+
+    #[test]
+    fn evidence_decides_whether_a_passing_run_counts() {
+        let s = scenario(
+            "name = 't'\ndescription = 't'\nsame_backend = [[2, 4]]\n\
+             [[step]]\nclient = 'a'\nsimple = 'SELECT 1'\n[[step]]\nclient = 'a'\nevidence = true\n\
+             [[step]]\nclient = 'b'\nsimple = 'SELECT 1'\n[[step]]\nclient = 'b'\nevidence = true\n",
+        );
+        let one = Outcome::Ok {
+            rows: vec![vec![Some("1".into())]],
+            tags: vec![1],
+        };
+        let backend = |pid: &str, start: Option<&str>| Outcome::Ok {
+            rows: vec![vec![Some(pid.into()), start.map(str::to_string)]],
+            tags: vec![1],
+        };
+        let gone = |pid: &str| Outcome::Ok {
+            rows: vec![vec![Some(pid.into())]],
+            tags: vec![1],
+        };
+        let expected = [one.clone(), Outcome::NotRun, one.clone(), Outcome::NotRun];
+        let run = |b_saw: Outcome, a_ev: Outcome, b_ev: Outcome, reuse: bool| {
+            compare_with(&s, &expected, vec![one.clone(), a_ev, b_saw, b_ev], None, reuse)
+        };
+        let same = run(one.clone(), backend("7", Some("t1")), backend("7", Some("t1")), true);
+        assert!(matches!(same.verdict, Verdict::Pass));
+        // Another backend, or the same pid restarted: the run doesn't count.
+        for b_ev in [backend("8", Some("t1")), backend("7", Some("t2"))] {
+            let apart = run(one.clone(), backend("7", Some("t1")), b_ev, true);
+            assert_eq!(apart.reuse_unmet, 1);
+            match apart.verdict {
+                Verdict::Skip { reason } => assert_eq!(reason, "passed, but b never reached a's server connection"),
+                _ => panic!("not a skip"),
+            }
+        }
+        // A start direct may not see compares on the pid.
+        let unknown = run(one.clone(), backend("7", None), backend("7", Some("t1")), true);
+        assert!(matches!(unknown.verdict, Verdict::Pass));
+        // A backend gone before its start was read: not the pooler's fault, not counted.
+        let vanished = run(one.clone(), gone("7"), backend("7", Some("t1")), true);
+        assert_eq!(vanished.reuse_unmet, 1);
+        assert!(matches!(vanished.verdict, Verdict::Skip { ref reason } if reason.contains("was gone")));
+        // A real difference stands, whatever the evidence says.
+        let mismatch = run(
+            Outcome::empty(),
+            backend("7", Some("t1")),
+            backend("8", Some("t1")),
+            true,
+        );
+        assert!(matches!(mismatch.verdict, Verdict::Fail { ref mismatch } if mismatch.step == 3));
+        // The pooler failing the evidence query itself is a FAIL.
+        let kind = |b_ev: Outcome| match run(one.clone(), backend("7", Some("t1")), b_ev, true).verdict {
+            Verdict::Fail { mismatch } => (mismatch.step, mismatch.kind),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(kind(Outcome::error("08P01", "x")), (4, FailKind::Error));
+        assert_eq!(kind(Outcome::error("TIMEOUT", "x")), (4, FailKind::Hang));
+        assert_eq!(kind(Outcome::empty()), (4, FailKind::Silent));
+        // Off for Postgres standing in for its own pooler.
+        let off = run(one.clone(), backend("7", Some("t1")), backend("8", Some("t1")), false);
+        assert!(matches!(off.verdict, Verdict::Pass));
     }
 
     #[test]
@@ -944,6 +1115,55 @@ mod tests {
         // side still runs the precondition.
         let passthrough = check(&with("SELECT false", 1), &direct, &direct, &Isolation::None, &t).await;
         assert!(matches!(passthrough.verdict, Verdict::Skip { .. }));
+    }
+
+    #[tokio::test]
+    #[ignore = "needs POOLPROOF_TEST_PG"]
+    async fn evidence_tells_whether_clients_shared_a_backend() {
+        let direct = Endpoint::parse(&test_pg()).unwrap();
+        let sep = if test_pg().contains('?') { '&' } else { '?' };
+        let pooled = Endpoint::parse(&format!("{}{sep}application_name=pp_pooled", test_pg())).unwrap();
+        let s = |pairs: &str, b: &str| {
+            scenario(&format!(
+                "name = 't'\ndescription = 't'\nrepeat = 2\nsame_backend = [{pairs}]\n\
+                 [[step]]\nclient = 'a'\nsimple = 'SELECT 1'\n[[step]]\nclient = 'a'\nevidence = true\n\
+                 [[step]]\nclient = '{b}'\nsimple = 'SELECT 1'\n[[step]]\nclient = '{b}'\nevidence = true\n"
+            ))
+        };
+        let t = Timeouts::default();
+        // Postgres gives every client its own backend.
+        let apart = check(&s("[2, 4]", "b"), &pooled, &direct, &Isolation::None, &t).await;
+        assert_eq!((apart.runs, apart.reuse_unmet), (0, 2));
+        match &apart.verdict {
+            Verdict::Skip { reason } => {
+                assert_eq!(
+                    reason,
+                    "passed, but b never reached a's server connection (in all 2 runs)"
+                )
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(apart.steps[1].0, Outcome::NotRun);
+        let off = check_reuse(&s("[2, 4]", "b"), &pooled, &direct, &Isolation::None, false, &t).await;
+        assert!(matches!(off.verdict, Verdict::Pass));
+        assert_eq!((off.runs, off.reuse_unmet), (2, 0));
+        // One client stays on its backend.
+        let own = check(&s("[2, 4]", "a"), &pooled, &direct, &Isolation::None, &t).await;
+        assert!(matches!(own.verdict, Verdict::Pass), "{:?}", own.verdict);
+        assert_eq!(own.runs, 2);
+        // A raw protocol client asks with a Query message.
+        let raw = scenario(
+            "name = 't'\ndescription = 't'\nsame_backend = [[2, 4]]\n\
+             [[step]]\nclient = 'r'\nsend = ['query SELECT 1', 'sync']\n[[step]]\nclient = 'r'\nevidence = true\n\
+             [[step]]\nclient = 'r'\nsend = ['query SELECT 2', 'sync']\n[[step]]\nclient = 'r'\nevidence = true\n",
+        );
+        let raw = check(&raw, &pooled, &direct, &Isolation::None, &t).await;
+        assert!(matches!(raw.verdict, Verdict::Pass), "{:?}", raw.verdict);
+        assert!(
+            matches!(&raw.steps[1].1, Outcome::Ok { rows, .. } if rows[0].len() == 2),
+            "{:?}",
+            raw.steps[1]
+        );
     }
 
     #[tokio::test]

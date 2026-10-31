@@ -114,6 +114,11 @@ pub struct Scenario {
     /// driver's own program instead of poolproof's clients.
     #[serde(skip)]
     pub program: Option<crate::drivers::Program>,
+    /// Pairs of `evidence` steps (1-based) that must name the same backend for a run
+    /// through the pooler to count: proof that the second client really reached the
+    /// first one's server connection. A run where a pair differs doesn't count.
+    #[serde(default)]
+    pub same_backend: Vec<[usize; 2]>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -166,6 +171,11 @@ pub struct Step {
     /// the run as a SKIP; anything but true or false is a FAIL.
     #[serde(default)]
     pub precondition: bool,
+    /// Record which backend this pooled client is on: poolproof asks the pooler for
+    /// `pg_backend_pid()` and reads the backend's start time on direct. Not run on
+    /// Postgres and never compared; `same_backend` checks it.
+    #[serde(default)]
+    pub evidence: bool,
     #[serde(default)]
     pub compare: Compare,
     /// How a driver step describes itself. Never from a file: driver steps have no
@@ -198,6 +208,7 @@ pub enum Action<'a> {
     Wait,
     Cancel,
     Notifications,
+    Evidence,
 }
 
 impl Step {
@@ -220,6 +231,7 @@ impl Step {
             compare_parameter_status: false,
             delay_ms: None,
             precondition: false,
+            evidence: false,
             compare,
             label: Some(label),
         }
@@ -235,13 +247,14 @@ impl Step {
             self.cancel,
             self.notifications,
             self.send.is_some(),
+            self.evidence,
         ]
         .iter()
         .filter(|s| **s)
         .count();
         if set != 1 {
             bail!(
-                "step for client '{}' must have exactly one of simple, prepare, execute, disconnect, wait, cancel, notifications, send",
+                "step for client '{}' must have exactly one of simple, prepare, execute, disconnect, wait, cancel, notifications, send, evidence",
                 self.client
             );
         }
@@ -290,6 +303,8 @@ impl Step {
             Action::Cancel
         } else if self.notifications {
             Action::Notifications
+        } else if self.evidence {
+            Action::Evidence
         } else {
             Action::Disconnect
         })
@@ -311,15 +326,16 @@ impl Step {
             Ok(Action::Wait) => "wait".to_string(),
             Ok(Action::Cancel) => "cancel".to_string(),
             Ok(Action::Notifications) => "notifications".to_string(),
+            Ok(Action::Evidence) => "evidence: backend".to_string(),
             Err(e) => e.to_string(),
         };
         let precondition = if self.precondition { "precondition " } else { "" };
         format!("[{}{via}] {precondition}{what}", self.client)
     }
 
-    /// How the step is compared: a precondition never is.
+    /// How the step is compared: a precondition or evidence step never is.
     pub fn compare_mode(&self) -> Compare {
-        if self.precondition {
+        if self.precondition || self.evidence {
             Compare::Ignore
         } else {
             self.compare
@@ -387,6 +403,7 @@ fn parse(origin: &str, text: &str) -> Result<Scenario> {
     if scenario.timeout_ms == Some(0) {
         bail!("{origin}: timeout_ms must be at least 1");
     }
+    check_evidence(origin, &scenario)?;
     for (i, step) in scenario.steps.iter().enumerate().filter(|(_, s)| s.precondition) {
         let simple = matches!(
             step.action().with_context(|| format!("in {origin}"))?,
@@ -419,6 +436,48 @@ fn parse(origin: &str, text: &str) -> Result<Scenario> {
     }
     scenario.check_clients().with_context(|| format!("in {origin}"))?;
     Ok(scenario)
+}
+
+/// Evidence steps are pooled and follow an earlier step of their client; a raw client's
+/// only after a step that ended with `sync`, since a Query mid-exchange would change
+/// the test. `same_backend` names pairs of them, in order.
+fn check_evidence(origin: &str, scenario: &Scenario) -> Result<()> {
+    for (i, step) in scenario.steps.iter().enumerate().filter(|(_, s)| s.evidence) {
+        let n = i + 1;
+        if step.direct {
+            bail!("{origin}: the evidence at step {n} must be a pooled client's");
+        }
+        let Some(before) = scenario.steps[..i].iter().rev().find(|s| s.client == step.client) else {
+            bail!(
+                "{origin}: the evidence at step {n} is client '{}''s first step; it must follow one",
+                step.client
+            );
+        };
+        let raw = scenario
+            .steps
+            .iter()
+            .any(|s| s.client == step.client && s.send.is_some());
+        if raw && !before.evidence {
+            let synced = before
+                .send
+                .as_ref()
+                .and_then(|m| m.last())
+                .is_some_and(|m| m.trim() == "sync");
+            if !synced {
+                bail!(
+                    "{origin}: the evidence at step {n} must follow a send step of client '{}' that ends with sync",
+                    step.client
+                );
+            }
+        }
+    }
+    for &[i, j] in &scenario.same_backend {
+        let is_evidence = |k: usize| k >= 1 && k <= scenario.steps.len() && scenario.steps[k - 1].evidence;
+        if !(i < j && is_evidence(i) && is_evidence(j)) {
+            bail!("{origin}: same_backend [{i}, {j}] must name two evidence steps, the earlier first");
+        }
+    }
+    Ok(())
 }
 
 /// The scenarios built into the binary.
@@ -516,6 +575,69 @@ mod tests {
         let s = parse("ok", &steps("precondition = true\nsimple = 'SELECT true'")).unwrap();
         assert_eq!(s.compare_modes(), [Compare::Full, Compare::Ignore]);
         assert_eq!(s.steps[1].describe(), "[c] precondition simple: SELECT true");
+    }
+
+    #[test]
+    fn evidence_follows_a_step_of_its_pooled_client() {
+        let with = |steps: &str, pairs: &str| {
+            parse(
+                "e",
+                &format!("name = 'e'\ndescription = ''\nsame_backend = [{pairs}]\n{steps}"),
+            )
+            .map(|_| ())
+            .map_err(|e| format!("{e:#}"))
+        };
+        let step = |client: &str, what: &str| format!("[[step]]\nclient = '{client}'\n{what}\n");
+        let q = "simple = 'SELECT 1'";
+        let ok = [
+            step("a", q),
+            step("a", "evidence = true"),
+            step("b", q),
+            step("b", "evidence = true"),
+        ]
+        .concat();
+        assert_eq!(with(&ok, "[2, 4]"), Ok(()));
+        for (steps, wanted) in [
+            (step("a", "evidence = true"), "first step"),
+            (
+                [
+                    step("pg", &format!("direct = true\n{q}")),
+                    step("pg", "direct = true\nevidence = true"),
+                ]
+                .concat(),
+                "pooled",
+            ),
+            (
+                [step("a", q), step("a", &format!("evidence = true\n{q}"))].concat(),
+                "exactly one of",
+            ),
+            (
+                [
+                    step("r", "send = ['parse s1 SELECT 1', 'flush']"),
+                    step("r", "evidence = true"),
+                ]
+                .concat(),
+                "ends with sync",
+            ),
+        ] {
+            let err = with(&steps, "").unwrap_err();
+            assert!(err.contains(wanted), "{err}");
+        }
+        let raw = [
+            step("r", "send = ['query SELECT 1', 'sync']"),
+            step("r", "evidence = true"),
+        ]
+        .concat();
+        assert_eq!(with(&raw, ""), Ok(()));
+        for pairs in ["[4, 2]", "[1, 4]", "[2, 9]"] {
+            assert!(
+                with(&ok, pairs).unwrap_err().contains("must name two evidence steps"),
+                "{pairs}"
+            );
+        }
+        let s = parse("e", &format!("name = 'e'\ndescription = ''\n{ok}")).unwrap();
+        assert_eq!(s.steps[1].describe(), "[a] evidence: backend");
+        assert_eq!(s.compare_modes()[1], Compare::Ignore);
     }
 
     /// Validated on session PgBouncer 1.26.1 with a pool of 1: exactly these hang there

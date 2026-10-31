@@ -557,6 +557,17 @@ async fn run_suite(
                 r.precondition_unmet.unwrap_or(0)
             );
         }
+        for r in results
+            .iter()
+            .filter(|r| r.runs == 0 && r.reuse_unmet.is_some_and(|u| u > 0))
+        {
+            println!(
+                "never shared a server connection: {} / {} ({} runs); the scenario tested nothing there",
+                r.target,
+                r.scenario,
+                r.reuse_unmet.unwrap_or(0)
+            );
+        }
         for stale in &report.stale_expectations {
             println!(
                 "stale expectation: {} / {}: {} ({})",

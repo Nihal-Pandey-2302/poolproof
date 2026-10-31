@@ -629,6 +629,29 @@ Through the pooler, `t` goes on; `f` stops the run, which then doesn't count (a 
 no run met it); anything else (an error, a hang, no row) is a FAIL like any other step.
 With `repeat`, only the runs that met it count, and the output says how many did.
 
+A step with `evidence = true` (and nothing else) records which backend a pooled client
+is on: poolproof asks the pooler for `pg_backend_pid()` (a Query message for a `send`
+client) and reads that backend's start time on direct right away. It doesn't run on
+Postgres and is never compared. `same_backend = [[2, 5]]` names pairs of evidence steps
+that must be on one backend for a run through the pooler to count: a scenario about one
+client's state reaching another only tests that when the second client really got the
+first one's server connection. A difference at another step is a FAIL as always, and so
+is an evidence step the pooler answers with an error, a hang or no pid. A run that passed
+with a pair on different backends, or where a backend was gone before its start time
+could be read, doesn't count; if no run counts, the result is a SKIP saying the second
+client never reached the first one's connection. A start time direct may not see is
+compared by pid alone. `ignore_server_requirements` turns the pair check off. Put
+evidence steps right after the steps whose server connection matters; in transaction
+mode a client can still move between its step and the evidence after it, which a
+`BEGIN`..`COMMIT` around both rules out where that doesn't change what is tested. An
+evidence step of a `send` client must follow one that ends with `sync`. Two more rules
+for where evidence goes:
+
+- Never on a client inside an aborted transaction (after an error inside `BEGIN`, before
+  `ROLLBACK`): its SELECT gets 25P02, which reads as a FAIL of the pooler.
+- Never between a Parse of the unnamed statement and its use: the evidence query
+  replaces the unnamed statement.
+
 `poolproof run -v --filter <name>` prints every step's result on Postgres and through the
 pooler. Use it on a new scenario: a PASS only means something if Postgres did what you
 expected.

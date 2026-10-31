@@ -16,7 +16,9 @@ mod steps;
 pub mod suite;
 pub(crate) mod tls;
 
-pub use check::{Checked, DIRECT_UNREACHABLE, Isolation, POOLER_UNREACHABLE, check, deterministic, preflight};
+pub use check::{
+    Checked, DIRECT_UNREACHABLE, Isolation, POOLER_UNREACHABLE, check, check_reuse, deterministic, preflight,
+};
 pub use compare::{FailKind, Mismatch, Verdict, differing, from_harness, same_failure};
 pub use pg::{Privileges, privileges, resolve_reset, server_version};
 pub use raw::RawMessage;
