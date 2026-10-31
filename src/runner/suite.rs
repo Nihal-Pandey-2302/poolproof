@@ -317,8 +317,11 @@ mod tests {
     #[ignore = "needs POOLPROOF_TEST_PG"]
     async fn check_scenarios_runs_once_per_postgres_server() {
         let url = std::env::var("POOLPROOF_TEST_PG").expect("set POOLPROOF_TEST_PG to a Postgres URL");
-        let (client, driver) = tokio_postgres::connect(&url, tokio_postgres::NoTls).await.unwrap();
-        tokio::spawn(driver);
+        // The crate's own connect, so the URL's sslmode works here too.
+        let endpoint = crate::targets::Endpoint::parse(&url).unwrap();
+        let (client, _driver, _) = crate::runner::pg::connect(&endpoint, &Timeouts::default())
+            .await
+            .unwrap();
         client
             .batch_execute("DROP TABLE IF EXISTS pp_runs; CREATE TABLE pp_runs ()")
             .await
