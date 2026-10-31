@@ -31,12 +31,21 @@ csv = "1.4.0"
 fallible-iterator = "0.2.0"
 pg_query = "18.1.0"
 postgres-protocol = "0.6.12"
+# TLS on ring, not aws-lc-rs: aws-lc-sys needs cmake and nasm, which makes the
+# cross-platform release builds harder.
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-native-certs = "0.8.5"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sha2 = "0.11.1"
 tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "time", "net", "io-util"] }
 tokio-postgres = "0.7.18"
+tokio-postgres-rustls = "0.14.0"
+tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12"] }
 toml = "1.1.8"
+
+[dev-dependencies]
+rcgen = { version = "0.14.10", default-features = false, features = ["crypto", "pem", "ring"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.191"

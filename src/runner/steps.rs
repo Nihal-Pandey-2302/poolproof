@@ -4,9 +4,8 @@ use std::time::Duration;
 
 use anyhow::{Result, bail};
 use tokio::time::timeout;
-use tokio_postgres::NoTls;
 
-use super::pg::{Conn, backend_pid, connect, db_error, row_value, simple_outcome, wait_backend_gone};
+use super::pg::{Conn, backend_pid, cancel, connect, db_error, row_value, simple_outcome, wait_backend_gone};
 use super::raw::{ExchangeOpts, RawConn, ServerError};
 use super::{Outcome, Timeouts};
 use crate::scenario::{Action, Scenario};
@@ -76,7 +75,7 @@ pub async fn run_steps(
                 Action::Send(messages) => {
                     if !raw.contains_key(step.client.as_str()) {
                         let url = if step.direct { direct } else { pooled };
-                        match RawConn::connect(url.config(), t.connect).await {
+                        match RawConn::connect(url, t.connect).await {
                             Ok(conn) => {
                                 raw.insert(&step.client, conn);
                             }
@@ -234,7 +233,8 @@ pub async fn run_steps(
             }
             Action::Cancel => {
                 let token = conn.client.cancel_token();
-                match timeout(t.step, token.cancel_query(NoTls)).await {
+                let endpoint = if step.direct { direct } else { pooled };
+                match timeout(t.step, cancel(&token, endpoint)).await {
                     Err(_) => Outcome::error("TIMEOUT", format!("no reply within {:?}", t.step)),
                     Ok(Err(e)) => db_error(&e),
                     Ok(Ok(())) => Outcome::empty(),

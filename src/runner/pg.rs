@@ -3,10 +3,13 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
-use tokio_postgres::{AsyncMessage, Client, NoTls, SimpleQueryMessage, Statement};
+use tokio_postgres::{AsyncMessage, CancelToken, Client, Connection, NoTls, SimpleQueryMessage, Statement};
+use tokio_postgres_rustls::MakeRustlsConnect;
 
+use super::tls::wants_client_certificate;
 use super::{Outcome, Timeouts};
 use crate::scenario::Requirement;
 use crate::targets::Endpoint;
@@ -72,21 +75,58 @@ impl Conn {
 }
 
 pub(super) async fn connect(endpoint: &Endpoint, t: &Timeouts) -> Result<(Client, JoinHandle<()>, Notices)> {
-    let (client, mut connection) = timeout(t.connect, endpoint.config().connect(NoTls))
-        .await
-        .context("connect timed out")??;
+    let config = endpoint.config();
     let notices = Notices::default();
-    let sink = notices.clone();
+    let (client, driver) = match &endpoint.tls().config {
+        None => {
+            let (client, connection) = timeout(t.connect, config.connect(NoTls))
+                .await
+                .context("connect timed out")??;
+            (client, spawn_driver(connection, notices.clone()))
+        }
+        Some(tls) => {
+            let tls = MakeRustlsConnect::new((**tls).clone());
+            let (client, connection) = match timeout(t.connect, config.connect(tls))
+                .await
+                .context("connect timed out")?
+            {
+                Ok(connected) => connected,
+                Err(e) if wants_client_certificate(&e) => {
+                    return Err(anyhow::Error::from(e)
+                        .context("the server wants a client certificate, which poolproof doesn't support yet"));
+                }
+                Err(e) => return Err(e.into()),
+            };
+            (client, spawn_driver(connection, notices.clone()))
+        }
+    };
+    Ok((client, driver, notices))
+}
+
+/// Sends a CancelRequest for the query running on the client's connection, over TLS
+/// when the endpoint uses it.
+pub(super) async fn cancel(token: &CancelToken, endpoint: &Endpoint) -> Result<(), tokio_postgres::Error> {
+    match &endpoint.tls().config {
+        None => token.cancel_query(NoTls).await,
+        Some(tls) => token.cancel_query(MakeRustlsConnect::new((**tls).clone())).await,
+    }
+}
+
+/// Drives a connection until it closes, keeping the NOTIFYs it receives in `sink`.
+fn spawn_driver<S, T>(mut connection: Connection<S, T>, sink: Notices) -> JoinHandle<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
     // Polling messages instead of just awaiting the connection keeps the NOTIFYs.
-    let driver = tokio::spawn(async move {
+    tokio::spawn(async move {
         while let Some(Ok(message)) = std::future::poll_fn(|cx| connection.poll_message(cx)).await {
             if let AsyncMessage::Notification(n) = message {
                 let row = vec![Some(n.channel().to_string()), Some(n.payload().to_string())];
                 sink.lock().unwrap().push(row);
             }
         }
-    });
-    Ok((client, driver, notices))
+    })
 }
 
 pub(super) fn db_error(e: &tokio_postgres::Error) -> Outcome {
@@ -157,9 +197,9 @@ pub async fn privileges(direct: &Endpoint, t: &Timeouts) -> Result<Privileges> {
     let (client, driver, _) = connect(direct, t).await?;
     let sql = "SELECT rolsuper, rolcreaterole, pg_has_role(current_user, 'pg_signal_backend', 'MEMBER') \
                FROM pg_roles WHERE rolname = current_user";
-    let res = timeout(t.step, client.simple_query(sql)).await;
+    let res = timeout(t.housekeeping, client.simple_query(sql)).await;
     drop(client);
-    let _ = timeout(t.step, driver).await;
+    let _ = timeout(t.housekeeping, driver).await;
     let row = res
         .context("privilege check timed out")??
         .into_iter()
@@ -254,5 +294,16 @@ mod tests {
         );
         assert_eq!(createrole.missing(&[Requirement::Createrole]), None);
         assert_eq!(superuser.missing(&all), None);
+    }
+
+    #[tokio::test]
+    #[ignore = "needs POOLPROOF_TEST_PG"]
+    async fn the_step_timeout_does_not_limit_the_privilege_check() {
+        let url = std::env::var("POOLPROOF_TEST_PG").expect("set POOLPROOF_TEST_PG to a Postgres URL");
+        let t = Timeouts {
+            step: Duration::from_nanos(1),
+            ..Timeouts::default()
+        };
+        privileges(&Endpoint::parse(&url).unwrap(), &t).await.unwrap();
     }
 }

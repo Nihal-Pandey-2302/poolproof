@@ -112,6 +112,15 @@ a Unix socket matches as `localhost`, and only the first of several hosts is loo
 In a URL, percent-encode special characters in the password (`@` is `%40`). Output
 never shows passwords.
 
+TLS works as in psql: `sslmode` is `disable`, `prefer` (the default: TLS if the server
+offers it, else plaintext without a word), `require`, `verify-ca` or `verify-full`, from
+the URL or `PGSSLMODE`. `prefer` never checks certificates, even with a root certificate
+present, so it is encrypted but not authenticated: use `verify-full` for anything not on
+localhost. `sslrootcert` (or `PGSSLROOTCERT`) names the CA file, or `system` for the
+operating system's store (which needs `verify-full`, and makes it the default); without it, `~/.postgresql/root.crt` is used when it exists, and
+`require` then checks the chain like `verify-ca`. `send` steps and cancel requests use the
+same settings. Not supported yet: client certificates and `sslnegotiation=direct`.
+
 For several poolers, or to reset state between scenarios, use a targets file
 (`--targets`, default `targets.toml`):
 
@@ -302,8 +311,9 @@ the workflow.
 
 ## Status
 
-Not covered yet: RDS Proxy and PgCat in the test bed, session-mode targets, TLS, and
-COPY TO STDOUT (`send` steps record its replies, but no scenario uses it yet).
+Not covered yet: RDS Proxy and PgCat in the test bed, session-mode targets, a TLS pooler
+in the test bed, and COPY TO STDOUT (`send` steps record its replies, but no scenario
+uses it yet).
 
 ## License
 
