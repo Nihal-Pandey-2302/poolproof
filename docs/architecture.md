@@ -147,8 +147,10 @@ Details that matter when changing this:
 - A `drivers` scenario has `program` set: `run_once` runs that driver program instead of
   `run_steps`, once with both of its connections on Postgres and once on the pooler.
   Everything around it (reset, setup, teardown, the comparison) is the same. The
-  program's output must name the version `drivers.toml` pins, report every step in
-  order, and open no more connections than it has clients; anything else is ERROR.
+  program's output must name the version `drivers.toml` pins and report its steps in
+  order, or the scenario is ERROR. A program that stops early or reconnects gets
+  `DRIVER:Stopped` or `DRIVER:Reconnected` on its steps instead, so through the pooler
+  that is a FAIL and on Postgres an ERROR.
 - Anything that stops a comparison is `Verdict::Error` for that scenario only, and the
   run goes on: a failing reset, setup or teardown, a pooler that doesn't answer after a
   reset, or a direct step on the pooler run that can't connect (unless the pooler

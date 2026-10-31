@@ -64,10 +64,14 @@ raised without one (pgjdbc adds its own SQLSTATE: `DRIVER:PSQLException:08006`).
 the message: its wording isn't compared. A `DRIVER:` error on Postgres makes the case
 ERROR; through the pooler it is a FAIL.
 
-poolproof refuses output that could hide a failure, and the case is ERROR: a version
-that isn't the one in `drivers.toml`, steps missing or out of order, more connections
-than clients, or a program that runs past every step's timeout plus 30 s (then the
-container is removed).
+poolproof never lets a broken program pass. Output it can't trust is the harness's
+problem, and the case is ERROR: lines it can't read, a version that isn't the one in
+`drivers.toml`, steps out of order, or a program that runs past every step's timeout
+plus 30 s (then the container is removed). A program that stops early, exits with an
+error or opens more connections than it has clients was broken by what it talked to:
+every step it didn't report becomes `DRIVER:Stopped` (its last step, if it reported
+them all), or its last step `DRIVER:Reconnected`. On Postgres that makes the case ERROR;
+through the pooler it is a FAIL.
 
 ## Changing a driver version
 

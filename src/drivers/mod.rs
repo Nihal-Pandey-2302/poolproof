@@ -150,6 +150,10 @@ fn check_case(case: &Case) -> Result<()> {
     if case.rounds == 0 || case.step.iter().any(|s| s.times == 0) {
         bail!("rounds and times must be at least 1");
     }
+    // A program that stops early is marked on a step, so every case needs one.
+    if case.step.is_empty() {
+        bail!("a case needs at least one step");
+    }
     for step in &case.step {
         if step.client.is_empty() || !step.client.chars().all(|c| c.is_ascii_lowercase()) {
             bail!("client '{}' must be lowercase letters", step.client);
@@ -239,7 +243,9 @@ pub fn check_images(drivers: &[String]) -> Result<()> {
 }
 
 /// The connection settings a program gets, as environment variables. Never as
-/// arguments: those show up in `ps` and in `docker inspect`.
+/// arguments, which any local user sees in `ps`. The running container's environment
+/// (PP_PASSWORD too) shows in `docker inspect`, but only to users with docker access,
+/// which is root-equivalent anyway, and `--rm` removes the container when it ends.
 fn connection_env(endpoint: &Endpoint) -> Result<Vec<(&'static str, String)>> {
     let config = endpoint.config();
     let host = match config.get_hosts().first() {
@@ -380,20 +386,35 @@ impl Program {
         }
         let status = child.wait().context("waiting for docker")?;
         let stderr = stderr.join().unwrap_or_default();
-        if !status.success() {
-            bail!(
+        let (outcomes, broken) = self.parse(&lines, status.success()).with_context(|| {
+            format!(
                 "the {} program exited with {status} after printing {}: {}",
                 self.driver,
                 printed(&lines),
                 tail(&stderr)
+            )
+        })?;
+        if let Some(what) = broken {
+            eprintln!(
+                "warning: the {} program {what} (exit {status}): {}",
+                self.driver,
+                tail(&stderr)
             );
         }
-        self.parse(&lines)
+        Ok(outcomes)
     }
 
     /// The program's output: a header with the driver and version it loaded, one line
     /// per step, then a line saying it finished and how many connections it opened.
-    fn parse(&self, lines: &[String]) -> Result<Vec<Outcome>> {
+    ///
+    /// Output that can't be read, or that comes from another driver version, is the
+    /// harness's problem: an error, so the scenario is ERROR. A program that stops early,
+    /// exits with an error or opens more connections than it has clients was broken by
+    /// what it talked to. Then every step it didn't report is `DRIVER:Stopped` (the last
+    /// step, if it reported them all), or the last step is `DRIVER:Reconnected`, and the
+    /// second value says what happened. A driver code on Postgres makes the scenario
+    /// ERROR; through the pooler it is a FAIL.
+    fn parse(&self, lines: &[String], exited_ok: bool) -> Result<(Vec<Outcome>, Option<String>)> {
         let mut lines = lines
             .iter()
             .map(|l| serde_json::from_str::<Line>(l).with_context(|| format!("bad line: {l}")));
@@ -410,29 +431,64 @@ impl Program {
             _ => bail!("the {} program printed no header", self.driver),
         }
         let mut outcomes = Vec::new();
+        let mut connections = None;
         for line in lines {
             match line? {
                 Line::Step(step) => {
-                    if step.step != outcomes.len() + 1 {
-                        bail!("step {} came after step {}", step.step, outcomes.len());
+                    if connections.is_some() {
+                        bail!("step {} came after the end", step.step);
+                    }
+                    if step.step != outcomes.len() + 1 || step.step > self.steps {
+                        bail!(
+                            "step {} came after step {} of {}",
+                            step.step,
+                            outcomes.len(),
+                            self.steps
+                        );
                     }
                     outcomes.push(step.outcome()?);
                 }
-                Line::Done(Done { connections }) => {
-                    if outcomes.len() != self.steps {
-                        bail!("the program finished after {} of {} steps", outcomes.len(), self.steps);
+                Line::Done(Done { connections: n }) => {
+                    if connections.replace(n).is_some() {
+                        bail!("a second end line");
                     }
-                    // A driver that reconnected behind the program's back could hide a
-                    // dropped connection.
-                    if connections != self.clients {
-                        bail!("the program opened {connections} connections, not {}", self.clients);
-                    }
-                    return Ok(outcomes);
                 }
                 Line::Header(_) => bail!("a second header"),
             }
         }
-        bail!("the program stopped after {} of {} steps", outcomes.len(), self.steps)
+        if exited_ok && connections.is_some() && outcomes.len() == self.steps {
+            return Ok(match connections {
+                Some(n) if n < self.clients => bail!("the program opened {n} connections for {} clients", self.clients),
+                // A driver that reconnected behind the program's back could hide a dropped
+                // connection. Where it happened is unknown, so the last step carries it.
+                Some(n) if n > self.clients => {
+                    outcomes.pop();
+                    outcomes.push(driver_error(RECONNECTED));
+                    let what = format!("opened {n} connections for {} clients", self.clients);
+                    (outcomes, Some(what))
+                }
+                _ => (outcomes, None),
+            });
+        }
+        let what = format!("stopped after {} of {} steps", outcomes.len(), self.steps);
+        if outcomes.len() == self.steps {
+            outcomes.pop();
+        }
+        outcomes.resize(self.steps, driver_error(STOPPED));
+        Ok((outcomes, Some(what)))
+    }
+}
+
+/// A program that stopped before it reported every step and said it was done.
+const STOPPED: &str = "DRIVER:Stopped";
+/// A program that opened more connections than it has clients.
+const RECONNECTED: &str = "DRIVER:Reconnected";
+
+fn driver_error(code: &str) -> Outcome {
+    Outcome::Error {
+        code: code.to_string(),
+        message: String::new(),
+        connect: false,
     }
 }
 
@@ -590,15 +646,19 @@ mod tests {
 
     #[test]
     fn parses_rows_errors_and_driver_codes() {
-        let out = program(3)
-            .parse(&lines(
-                r#"{"driver":"psycopg","version":"3.3.6"}
+        let (out, broken) = program(3)
+            .parse(
+                &lines(
+                    r#"{"driver":"psycopg","version":"3.3.6"}
 {"step":1,"rows":[["42",null]]}
 {"step":2,"error":"26000"}
 {"step":3,"error":"DRIVER:OperationalError"}
 {"connections":2}"#,
-            ))
+                ),
+                true,
+            )
             .unwrap();
+        assert!(broken.is_none());
         assert_eq!(
             out[0],
             Outcome::Ok {
@@ -611,33 +671,78 @@ mod tests {
     }
 
     #[test]
-    fn output_that_could_hide_a_failure_is_refused() {
+    fn unreadable_output_is_an_error() {
         let header = r#"{"driver":"psycopg","version":"3.3.6"}"#;
         let step1 = r#"{"step":1,"rows":[]}"#;
+        let end = r#"{"connections":2}"#;
         let bad = [
             // Wrong version: the image and the manifest drifted apart.
-            format!("{{\"driver\":\"psycopg\",\"version\":\"3.3.5\"}}\n{step1}\n{{\"connections\":2}}"),
+            format!("{{\"driver\":\"psycopg\",\"version\":\"3.3.5\"}}\n{step1}\n{end}"),
             // No header.
-            format!("{step1}\n{{\"connections\":2}}"),
-            // Stopped before the end.
-            format!("{header}\n{step1}"),
-            // Reconnected.
-            format!("{header}\n{step1}\n{{\"connections\":3}}"),
-            // Steps out of order.
-            format!("{header}\n{{\"step\":2,\"rows\":[]}}\n{{\"connections\":2}}"),
+            format!("{step1}\n{end}"),
+            // Steps out of order, or more than the case has.
+            format!("{header}\n{{\"step\":2,\"rows\":[]}}\n{end}"),
+            format!("{header}\n{step1}\n{{\"step\":2,\"rows\":[]}}\n{end}"),
+            // A step after the end.
+            format!("{header}\n{end}\n{step1}"),
             // Both a result and an error.
-            format!("{header}\n{{\"step\":1,\"rows\":[],\"error\":\"X\"}}\n{{\"connections\":2}}"),
+            format!("{header}\n{{\"step\":1,\"rows\":[],\"error\":\"X\"}}\n{end}"),
             // Unknown field.
-            format!("{header}\n{{\"step\":1,\"rows\":[],\"message\":\"m\"}}\n{{\"connections\":2}}"),
+            format!("{header}\n{{\"step\":1,\"rows\":[],\"message\":\"m\"}}\n{end}"),
+            // Fewer connections than clients: not something a pooler can cause.
+            format!("{header}\n{step1}\n{{\"connections\":1}}"),
         ];
         for text in bad {
-            assert!(program(1).parse(&lines(&text)).is_err(), "{text}");
+            assert!(program(1).parse(&lines(&text), true).is_err(), "{text}");
         }
         assert!(
             program(1)
-                .parse(&lines(&format!("{header}\n{step1}\n{{\"connections\":2}}")))
+                .parse(&lines(&format!("{header}\n{step1}\n{end}")), true)
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn a_program_the_pooler_broke_fails_the_steps_it_missed() {
+        use crate::runner::{FailKind, from_harness};
+        let header = r#"{"driver":"psycopg","version":"3.3.6"}"#;
+        let step1 = r#"{"step":1,"rows":[]}"#;
+        let codes = |text: &str, exited_ok| {
+            let (out, broken) = program(3).parse(&lines(text), exited_ok).unwrap();
+            assert!(broken.is_some(), "{text}");
+            out.iter()
+                .map(|o| match o {
+                    Outcome::Error { code, .. } => code.clone(),
+                    _ => "ok".to_string(),
+                })
+                .collect::<Vec<_>>()
+        };
+        // Stopped after one step, with or without an error exit.
+        let stopped = ["ok", STOPPED, STOPPED];
+        assert_eq!(codes(&format!("{header}\n{step1}"), true), stopped);
+        assert_eq!(codes(&format!("{header}\n{step1}"), false), stopped);
+        // Every step reported, but it failed on the way out: the last step carries it.
+        let all = format!("{header}\n{step1}\n{{\"step\":2,\"rows\":[]}}\n{{\"step\":3,\"rows\":[]}}");
+        assert_eq!(
+            codes(&format!("{all}\n{{\"connections\":2}}"), false),
+            ["ok", "ok", STOPPED]
+        );
+        assert_eq!(codes(&all, true), ["ok", "ok", STOPPED]);
+        // Reconnected.
+        assert_eq!(
+            codes(&format!("{all}\n{{\"connections\":3}}"), true),
+            ["ok", "ok", RECONNECTED]
+        );
+
+        // On Postgres these make the scenario ERROR; through the pooler they are a FAIL.
+        let ok = Outcome::Ok {
+            rows: vec![],
+            tags: vec![],
+        };
+        for code in [STOPPED, RECONNECTED] {
+            assert!(from_harness(&driver_error(code)));
+            assert_eq!(FailKind::of(&ok, &driver_error(code)), FailKind::Error);
+        }
     }
 
     #[test]
