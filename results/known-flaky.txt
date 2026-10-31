@@ -29,3 +29,16 @@ supavisor-2.10.0-rc.1 driver/node-postgres-default/set-leak kind
 supavisor-2.10.0-rc.1 driver/node-postgres-named/set-leak kind
 supavisor-2.10.0-rc.1 driver/pgjdbc-default/set-leak kind
 supavisor-2.10.0-rc.1 driver/pgjdbc-no-prepare/set-leak kind
+
+# Same mechanism: a named statement prepared on one server, reused after Supavisor moved
+# the client to another, gives 26000. Seen in CI on pgx-default/transaction (both
+# targets); the others are exposed the same way. Committed PASS. Drop these with the
+# ones above.
+supavisor-2.10.0-rc.1 driver/pgx-default/transaction verdict
+supavisor-2.10.0-rc.1 driver/pgx-default/same-names-different-sql verdict
+supavisor-2.10.0-rc.1 driver/node-postgres-named/same-names-different-sql verdict
+supavisor-2.10.0-rc.1 driver/node-postgres-named/transaction verdict
+supavisor-2.10.0-rc.1-strict driver/pgx-default/transaction verdict
+supavisor-2.10.0-rc.1-strict driver/pgx-default/same-names-different-sql verdict
+supavisor-2.10.0-rc.1-strict driver/node-postgres-named/same-names-different-sql verdict
+supavisor-2.10.0-rc.1-strict driver/node-postgres-named/transaction verdict
