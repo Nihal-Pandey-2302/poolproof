@@ -97,7 +97,10 @@ direct = "postgres://postgres:postgres@127.0.0.1:55432/app?sslmode=disable"
 mode = "transaction"
 reset = "all"
 
-# Supavisor finds the tenant from the user name: <user>.<tenant>.
+# Supavisor finds the tenant from the user name: <user>.<tenant>. Supavisor runs with its
+# defaults: named_prepared_statements off. Its FAQ says transaction mode needs the flag
+# for named prepared statements; the named-prepared variant column shows Supavisor with
+# it on.
 [[target]]
 name = "supavisor-2.9.13"
 product = "supavisor"
