@@ -87,6 +87,10 @@ First release.
   pooler), PgDog 0.1.50, 0.1.56, 0.1.62 (also with pub/sub), Supavisor 2.9.13,
   2.10.0-rc.1 (also in strict mode), PgCat 1.2.0 and Odyssey 1.5.2 on Postgres 17.11 and
   18.4, built into the binary.
+- Session-mode targets for PgBouncer 1.26.1, PgDog 0.1.62 and Supavisor 2.10.0-rc.1 in
+  `targets-variants.toml`, started with the test bed's `variants` profile
+  (`COMPOSE_PROFILES=variants`). Their results are not published yet.
+  `scripts/testbed.sh targets OFFSET FILE` shifts the ports in any targets file.
 - `run --compare-to BASE.json`: compares the run with a saved JSON report and fails only
   on regressions (PASS to FAIL or ERROR, a FAIL getting worse, FAIL to ERROR or back),
   as far as `--fail-on` counts them. Fixed, milder and one-sided results are listed but
