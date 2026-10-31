@@ -1,0 +1,35 @@
+name = "cursor-survives-own-transactions"
+description = "A WITH HOLD cursor must stay usable by the client that declared it, across its later transactions."
+
+[[step]]
+client = "a"
+simple = "DECLARE pp_own_cur CURSOR WITH HOLD FOR SELECT generate_series(1, 3)::text"
+
+[[step]]
+client = "a"
+simple = "SELECT 1"
+
+[[step]]
+client = "a"
+simple = "FETCH 1 FROM pp_own_cur"
+
+[[step]]
+client = "a"
+simple = "BEGIN"
+
+[[step]]
+client = "a"
+simple = "SELECT 1"
+
+[[step]]
+client = "a"
+simple = "COMMIT"
+
+[[step]]
+client = "a"
+simple = "FETCH 1 FROM pp_own_cur"
+
+# Clean up, so nothing is left on the pooler's server connection for a later run.
+[[step]]
+client = "a"
+simple = "CLOSE pp_own_cur"
