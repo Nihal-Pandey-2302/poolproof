@@ -333,6 +333,11 @@ mod tests {
         let mut second = Targets::single(&url, &url, PoolMode::Transaction).unwrap().targets;
         second[0].name = "b".into();
         targets.append(&mut second);
+        // Same server, other options: may behave differently, so it's checked again.
+        let other = format!("{url}{}application_name=pp", if url.contains('?') { '&' } else { '?' });
+        let mut third = Targets::single(&url, &other, PoolMode::Transaction).unwrap().targets;
+        third[0].name = "c".into();
+        targets.append(&mut third);
         let opts = RunOptions {
             check_scenarios: true,
             ..RunOptions::default()
@@ -340,8 +345,9 @@ mod tests {
         let (_, results) = run(&targets, std::slice::from_ref(&s), &opts).await.unwrap();
         assert!(results.iter().all(|r| matches!(r.verdict, Verdict::Pass)));
         let rows = client.query_one("SELECT count(*) FROM pp_runs", &[]).await.unwrap();
-        // 2 for the shared check, then baseline + target run on each target.
-        assert_eq!(rows.get::<_, i64>(0), 2 + 2 * 2);
+        // 2 for the check shared by a and b, 2 for c's, then baseline + target run on
+        // each target.
+        assert_eq!(rows.get::<_, i64>(0), 2 + 2 + 3 * 2);
         client.batch_execute("DROP TABLE pp_runs").await.unwrap();
     }
 
