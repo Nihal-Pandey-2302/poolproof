@@ -38,8 +38,12 @@ cancel-reaches-running-query = { result = "silent", why = "57014 from the cancel
 cancel-under-saturated-pool = { result = "silent", why = "57014 from the cancel is dropped" }
 cursor-isolated-between-clients = { result = "silent", why = "the other client's 34000 is dropped" }
 discard-all-in-transaction-fails = { result = "silent", why = "25001 is dropped" }
+multi-statement-begin-error = { result = "silent", why = "42P01 inside BEGIN; ...; COMMIT is dropped" }
+multi-statement-begin-variants = { result = "silent", why = "25006 from the INSERT in a READ ONLY transaction is dropped" }
+multi-statement-error-aborts-transaction = { result = "silent", why = "42P01 that aborts the transaction is dropped" }
 prepare-in-aborted-transaction = { result = "silent", why = "22012 that aborts the transaction is dropped" }
 protocol-error-after-flush = { result = "hang", why = "42601 is dropped; with Flush nothing else comes back" }
+protocol-multi-statement-transaction = { result = "silent", why = "42601 for the multi-statement Parse is dropped" }
 protocol-pipeline-recovers-after-error = { result = "silent", why = "22012 is dropped" }
 sql-prepare-isolated-between-clients = { result = "silent", why = "the other client's 26000 is dropped" }
 temp-table-isolated-between-clients = { result = "silent", why = "the other client's 42P01 is dropped" }
@@ -65,6 +69,11 @@ protocol-prepare-survives-server-change = { result = "silent", why = "the INSERT
 set-survives-server-change = { result = "silent", why = "the INSERT that records a's backend gets a tag saying 2 rows" }
 sql-prepare-survives-server-change = { result = "silent", why = "the INSERT that records a's backend gets a tag saying 2 rows" }
 temp-table-survives-server-change = { result = "silent", why = "the INSERT that records a's backend gets a tag saying 2 rows" }
+multi-statement-begin-left-open = { result = "silent", why = "INSERT tag says 2 rows" }
+multi-statement-begin-not-first = { result = "silent", why = "INSERT tag says 2 rows" }
+multi-statement-begin-variants = { result = "silent", why = "INSERT tag says 2 rows" }
+multi-statement-commit-first = { result = "silent", why = "INSERT tag says 2 rows" }
+protocol-multi-statement-transaction = { result = "silent", why = "INSERT tag says 2 rows" }
 
 # One server connection for all clients, no reset, every client gets its
 # BackendKeyData. Fails the documented transaction-pooling limits like PgBouncer, plus

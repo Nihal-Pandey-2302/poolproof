@@ -1,0 +1,26 @@
+name = "multi-statement-error-aborts-transaction"
+description = "A simple query that opens a transaction and fails inside it must leave that transaction aborted. Otherwise the app's next statements are committed one by one instead of rejected."
+setup = ["DROP TABLE IF EXISTS pp_multi", "CREATE TABLE pp_multi (x int)"]
+teardown = ["DROP TABLE IF EXISTS pp_multi"]
+# BEGIN is not first, so a pooler that answers BEGIN itself sends the whole string to the server.
+
+[[step]]
+client = "app"
+simple = "SELECT 1; BEGIN; INSERT INTO pp_multi VALUES (1); INSERT INTO pp_multi_missing VALUES (1); COMMIT"
+
+[[step]]
+client = "app"
+simple = "INSERT INTO pp_multi VALUES (2)"
+
+[[step]]
+client = "app"
+simple = "ROLLBACK"
+
+[[step]]
+client = "app"
+disconnect = true
+
+[[step]]
+client = "check"
+direct = true
+simple = "SELECT coalesce(array_agg(x ORDER BY x)::text, '{}') FROM pp_multi"

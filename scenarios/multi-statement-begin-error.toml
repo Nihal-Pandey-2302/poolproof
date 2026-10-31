@@ -1,0 +1,50 @@
+name = "multi-statement-begin-error"
+description = "An error in BEGIN; ...; COMMIT must return the error and leave the transaction aborted, as Postgres does. Otherwise the app's next statements run outside any transaction."
+refs = ["https://github.com/pgdogdev/pgdog/issues/1849"]
+setup = ["DROP TABLE IF EXISTS pp_multi", "CREATE TABLE pp_multi (x int)"]
+teardown = ["DROP TABLE IF EXISTS pp_multi"]
+
+[[step]]
+client = "app"
+simple = "BEGIN; INSERT INTO pp_multi_missing VALUES (1); COMMIT"
+
+[[step]]
+client = "app"
+simple = "SELECT 1"
+
+[[step]]
+client = "app"
+simple = "ROLLBACK"
+
+[[step]]
+client = "app"
+simple = "BEGIN; INSERT INTO pp_multi VALUES (1); SELECT 1/0; COMMIT"
+
+[[step]]
+client = "app"
+simple = "SELECT 1"
+
+[[step]]
+client = "app"
+simple = "COMMIT"
+
+[[step]]
+client = "app"
+simple = "BEGIN READ ONLY; INSERT INTO pp_multi VALUES (2); COMMIT"
+
+[[step]]
+client = "app"
+simple = "SELECT 1"
+
+[[step]]
+client = "app"
+simple = "ROLLBACK"
+
+[[step]]
+client = "app"
+disconnect = true
+
+[[step]]
+client = "check"
+direct = true
+simple = "SELECT coalesce(array_agg(x ORDER BY x)::text, '{}') FROM pp_multi"
