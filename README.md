@@ -31,7 +31,7 @@ releases page. The scenarios and the latest results are built into the binary.
 **[Results site](https://nihal-pandey-2302.github.io/poolproof/)**: every scenario against
 PgBouncer 1.24 to 1.26, PgDog 0.1.50 to 0.1.62 and Supavisor 2.9 and 2.10, on Postgres 17
 and 18, with the full step-by-step trace for each cell. It also marks the version where a
-behavior broke or got fixed. The site goes live with the first public release.
+behavior broke or got fixed.
 [RESULTS.md](RESULTS.md) has the same data as a table. Both are built from `results/`,
 which `scripts/update-results.sh` regenerates and CI checks.
 
