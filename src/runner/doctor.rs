@@ -42,7 +42,7 @@ pub async fn inspect(target: &Target, scenarios: &[Scenario], yes: bool, t: &Tim
             (Ok(p), Ok(d)) => checks.push(same_server(&p, &d)),
             (p, d) => {
                 let e = p.err().or(d.err()).unwrap();
-                checks.push(Check::new("same server", Status::Fail, format!("{e:#}")));
+                checks.push(Check::new("same server", Status::Fail, format!("{e:#}")).public(failed("query", &e)));
             }
         }
         pooler_session = row(p, "SELECT host(inet_client_addr()), session_user", t).await.ok();
@@ -59,7 +59,7 @@ pub async fn inspect(target: &Target, scenarios: &[Scenario], yes: bool, t: &Tim
                 checks.push(requirements(target, scenarios, have));
                 checks.push(reset(target, yes, have, d, pooler_session.as_deref(), t).await);
             }
-            Err(e) => checks.push(Check::new("privileges", Status::Fail, format!("{e:#}"))),
+            Err(e) => checks.push(Check::new("privileges", Status::Fail, format!("{e:#}")).public(failed("query", &e))),
         }
     }
     if let Some(direct) = direct {
@@ -73,7 +73,7 @@ pub async fn inspect(target: &Target, scenarios: &[Scenario], yes: bool, t: &Tim
         };
         checks.push(match probe_mode(connect, t.housekeeping).await {
             Ok(observed) => mode_check(observed, target.mode),
-            Err(e) => Check::new("mode", Status::Warn, format!("probe failed: {e:#}")),
+            Err(e) => Check::new("mode", Status::Warn, format!("probe failed: {e:#}")).public(failed("probe", &e)),
         });
     }
     TargetReport {
@@ -106,7 +106,7 @@ async fn open_side(
         match timeout(t.housekeeping, client.simple_query(first)).await {
             Ok(Ok(_)) => Ok((client, driver)),
             Ok(Err(e)) => Err(anyhow::Error::from(e)),
-            Err(_) => Err(anyhow::anyhow!("no reply within {:?}", t.housekeeping)),
+            Err(elapsed) => Err(anyhow::Error::from(elapsed).context(format!("no reply within {:?}", t.housekeeping))),
         }
     };
     match connected.await {
@@ -116,7 +116,10 @@ async fn open_side(
             Some((client, driver))
         }
         Err(e) => {
-            checks.push(Check::new(side, Status::Fail, format!("{unreachable} {e:#}")));
+            checks.push(
+                Check::new(side, Status::Fail, format!("{unreachable} {e:#}"))
+                    .public(format!("{unreachable} {}", failed("connect", &e))),
+            );
             None
         }
     }
@@ -163,7 +166,8 @@ async fn tls(side: &'static str, endpoint: &Endpoint, client: &Client, t: &Timeo
             Status::Warn,
             "plaintext: sslmode=prefer and the server declined TLS; set sslmode=require to insist",
         ),
-        Err(e) => Check::new(check, Status::Warn, format!("couldn't tell: {e:#}")),
+        Err(e) => Check::new(check, Status::Warn, format!("couldn't tell: {e:#}"))
+            .public(format!("couldn't tell: {}", error_class(&e))),
     }
 }
 
@@ -184,7 +188,7 @@ async fn offers_tls(endpoint: &Endpoint, t: &Timeouts) -> Result<bool> {
     };
     timeout(t.housekeeping, asking)
         .await
-        .map_err(|_| anyhow::anyhow!("no answer to SSLRequest within {:?}", t.housekeeping))?
+        .with_context(|| format!("no answer to SSLRequest within {:?}", t.housekeeping))?
 }
 
 /// The scenarios that would SKIP for privileges the direct user lacks.
@@ -215,6 +219,7 @@ async fn reset(
     t: &Timeouts,
 ) -> Check {
     let fail = |detail: String| Check::new("reset", Status::Fail, detail);
+    let query_failed = |e: anyhow::Error| fail(format!("{e:#}")).public(failed("query", &e));
     let line = match &target.reset {
         Reset::None => {
             return Check::new(
@@ -240,7 +245,7 @@ async fn reset(
     .await;
     let sees = match sees {
         Ok(r) => have.superuser || cell(&r, 0) == "t",
-        Err(e) => return fail(format!("{e:#}")),
+        Err(e) => return query_failed(e),
     };
     let missing: Vec<&str> = [
         (have.pg_signal_backend, "pg_signal_backend"),
@@ -265,7 +270,7 @@ async fn reset(
         .await;
         let (total, others, superusers) = match counts {
             Ok(r) => (cell(&r, 0), cell(&r, 1), cell(&r, 2)),
-            Err(e) => return fail(format!("{e:#}")),
+            Err(e) => return query_failed(e),
         };
         let now = format!("other sessions now: {total}");
         // Privileges first: once those are fine, the only refusal left is `run --yes`.
@@ -315,8 +320,10 @@ async fn reset(
             r.get::<_, String>(1) == "true",
             r.get::<_, String>(2) == "true",
         ),
-        Ok(Err(e)) => return fail(format!("{e:#}")),
-        Err(_) => return fail(format!("no reply within {:?}", t.housekeeping)),
+        Ok(Err(e)) => return query_failed(e.into()),
+        Err(elapsed) => {
+            return query_failed(anyhow::Error::from(elapsed).context(format!("no reply within {:?}", t.housekeeping)));
+        }
     };
     if superuser && !have.superuser {
         return fail(format!(
@@ -342,6 +349,48 @@ async fn reset(
         format!("{}; matching sessions now: {count}", summary(&line)),
     )
     .public(format!("{AUTO_PUBLIC}; matching sessions now: {count}"))
+}
+
+/// "<what> failed: <class>", the JSON form of an error.
+fn failed(what: &str, e: &anyhow::Error) -> String {
+    format!("{what} failed: {}", error_class(e))
+}
+
+/// What kind of error this is, without its message: server and TLS errors can name
+/// users, hosts and every name on a certificate, and JSON goes into issues.
+pub fn error_class(e: &anyhow::Error) -> String {
+    for cause in e.chain() {
+        if let Some(db) = cause
+            .downcast_ref::<tokio_postgres::Error>()
+            .and_then(|e| e.as_db_error())
+        {
+            let code = db.code().code();
+            return if code.starts_with("28") {
+                format!("authentication ({code})")
+            } else {
+                format!("SQLSTATE {code}")
+            };
+        }
+        if cause.is::<tokio::time::error::Elapsed>() {
+            return "timeout".into();
+        }
+        let io = cause.downcast_ref::<std::io::Error>();
+        let tls = cause.downcast_ref::<rustls::Error>().or_else(|| {
+            io.and_then(|io| io.get_ref())
+                .and_then(|inner| inner.downcast_ref::<rustls::Error>())
+        });
+        match tls {
+            Some(rustls::Error::InvalidCertificate(_)) => return "TLS certificate".into(),
+            Some(_) => return "TLS".into(),
+            None => {}
+        }
+        match io.map(std::io::Error::kind) {
+            Some(std::io::ErrorKind::ConnectionRefused) => return "refused".into(),
+            Some(std::io::ErrorKind::TimedOut) => return "timeout".into(),
+            _ => {}
+        }
+    }
+    "other".into()
 }
 
 /// What `auto` ends, for JSON: without the user, address and host it names in text.
@@ -370,6 +419,26 @@ mod tests {
     use super::*;
     use crate::scenario::PoolMode;
     use crate::targets::Targets;
+
+    #[tokio::test]
+    async fn error_classes_hide_the_message() {
+        let refused = std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "10.0.0.7:5432");
+        assert_eq!(
+            error_class(&anyhow::Error::from(refused).context("connecting")),
+            "refused"
+        );
+        let elapsed = timeout(std::time::Duration::ZERO, std::future::pending::<()>())
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error_class(&anyhow::Error::from(elapsed).context("connect timed out")),
+            "timeout"
+        );
+        let name = rustls::Error::InvalidCertificate(rustls::CertificateError::NotValidForName);
+        let io = std::io::Error::new(std::io::ErrorKind::InvalidData, name);
+        assert_eq!(error_class(&anyhow::Error::from(io)), "TLS certificate");
+        assert_eq!(error_class(&anyhow::anyhow!("internal.host.example")), "other");
+    }
 
     #[test]
     fn summary_drops_the_target_prefix() {

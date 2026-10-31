@@ -4,6 +4,7 @@
 use std::future::Future;
 use std::time::Duration;
 
+use anyhow::Context;
 use serde::Serialize;
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
@@ -274,7 +275,7 @@ async fn backend_pid(client: &Client, within: Duration) -> anyhow::Result<String
 pub async fn first_row(client: &Client, sql: &str, within: Duration) -> anyhow::Result<Vec<Option<String>>> {
     let messages = timeout(within, client.simple_query(sql))
         .await
-        .map_err(|_| anyhow::anyhow!("no reply within {within:?}"))??;
+        .with_context(|| format!("no reply within {within:?}"))??;
     messages
         .into_iter()
         .find_map(|m| match m {
