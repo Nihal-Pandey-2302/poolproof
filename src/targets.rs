@@ -69,7 +69,7 @@ enum ResetFile {
 
 /// A SQL statement to run on Postgres. Errors show it as written, with `${NAME}`
 /// unexpanded, so a value substituted from the environment never reaches output.
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Statement {
     sql: String,
     written: String,
