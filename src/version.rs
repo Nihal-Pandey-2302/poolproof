@@ -4,7 +4,8 @@
 
 use std::cmp::Ordering;
 
-#[derive(Debug, PartialEq, Eq)]
+/// Equal when the order says so: `17` equals `17.0`.
+#[derive(Debug)]
 pub struct Version {
     core: Vec<u64>,
     pre: Vec<Ident>,
@@ -64,6 +65,14 @@ impl Ord for Version {
             })
     }
 }
+
+impl PartialEq for Version {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other).is_eq()
+    }
+}
+
+impl Eq for Version {}
 
 impl PartialOrd for Version {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {

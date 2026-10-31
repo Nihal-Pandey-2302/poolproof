@@ -12,4 +12,4 @@ since = "1.24.1"
 differs = [{ step = 3, pooler = { status = "ok", rows = [["9MB"]], tags = [0] } }]
 doc = "https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes"
 quote = "SET/RESET | Yes | Never"
-note = "Row of the table \"SQL feature map for pooling modes\" (columns: Feature, Session pooling, Transaction pooling)."
+note = "Row of the table \"SQL feature map for pooling modes\" (columns: Feature, Session pooling, Transaction pooling), with the table's padding spaces collapsed."
