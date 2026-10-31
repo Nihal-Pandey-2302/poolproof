@@ -12,7 +12,7 @@ pub mod raw;
 mod steps;
 pub mod suite;
 
-pub use check::{Checked, DIRECT_UNREACHABLE, POOLER_UNREACHABLE, check, preflight};
+pub use check::{Checked, DIRECT_UNREACHABLE, POOLER_UNREACHABLE, check, deterministic, preflight};
 pub use compare::{FailKind, Mismatch, Verdict};
 pub use pg::server_version;
 
