@@ -1,5 +1,9 @@
 name = "protocol-unnamed-statement-survives-other-clients"
 description = "The unnamed statement stays usable until the same client replaces it, even if other clients ran queries."
+# b's evidence Query replaces the backend's unnamed statement, as b's own query
+# just did: that is what this scenario is about, so it changes nothing.
+# Counts only when b really reached a's server connection.
+same_backend = [[3, 5]]
 
 [[step]]
 client = "a"
@@ -10,5 +14,13 @@ client = "b"
 send = ["query SELECT 1"]
 
 [[step]]
+client = "b"
+evidence = true
+
+[[step]]
 client = "a"
 send = ["bind - -", "execute -", "sync"]
+
+[[step]]
+client = "a"
+evidence = true

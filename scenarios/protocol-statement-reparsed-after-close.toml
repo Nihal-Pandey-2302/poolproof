@@ -3,14 +3,24 @@ description = "After Close, a statement name can be prepared again with differen
 # Supavisor 2.10.0-rc.1 sometimes answers the re-Parse with 42P05 (a race, like the
 # other statement-name races): run the pooler side several times.
 repeat = 5
+# Counts only when b really reached a's server connection.
+same_backend = [[2, 4]]
 
 [[step]]
 client = "a"
 send = ["parse s1 SELECT 'old'::text", "sync"]
 
 [[step]]
+client = "a"
+evidence = true
+
+[[step]]
 client = "b"
 send = ["query SELECT 1"]
+
+[[step]]
+client = "b"
+evidence = true
 
 [[step]]
 client = "a"
