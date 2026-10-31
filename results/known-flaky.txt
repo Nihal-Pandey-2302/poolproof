@@ -14,6 +14,7 @@
 # queries run where its SET, cursor, temp table or lock isn't. Seen 1 in 16 CI runs on
 # cursor-survives-own-transactions, never locally; the others are exposed the same way.
 # set-local-reverts-after-commit failed 3 in 40 runs, all before the settle fix (#35).
+# set-local-default-after-set-local went PASS -> FAIL silent in run 41235706707 (17.11).
 # The drivers suite's set-leak cases are exposed the same way: which client gets moved
 # decides between silent and error. Seen once in CI on pgx-default (silent -> error).
 # Drop these once a Supavisor release no longer does this.
@@ -21,6 +22,7 @@ supavisor-2.10.0-rc.1 set-local-reverts-after-commit verdict
 supavisor-2.10.0-rc.1 cursor-survives-own-transactions verdict
 supavisor-2.10.0-rc.1 temp-table-survives-own-transactions verdict
 supavisor-2.10.0-rc.1 advisory-lock-survives-own-transactions verdict
+supavisor-2.10.0-rc.1 set-local-default-after-set-local verdict
 supavisor-2.10.0-rc.1 driver/psycopg-default/set-leak kind
 supavisor-2.10.0-rc.1 driver/psycopg-no-prepare/set-leak kind
 supavisor-2.10.0-rc.1 driver/pgx-default/set-leak kind
@@ -29,6 +31,15 @@ supavisor-2.10.0-rc.1 driver/node-postgres-default/set-leak kind
 supavisor-2.10.0-rc.1 driver/node-postgres-named/set-leak kind
 supavisor-2.10.0-rc.1 driver/pgjdbc-default/set-leak kind
 supavisor-2.10.0-rc.1 driver/pgjdbc-no-prepare/set-leak kind
+
+# Two-client scenarios that the same overflow connection can turn from FAIL silent to
+# PASS: client b lands on a server connection where client a's state isn't, so the leak
+# they check for doesn't show. Committed FAIL silent. Temporary: remove when the
+# evidence placement fix lands.
+# Seen in run 41235706707 (17.11, FAIL silent -> PASS).
+supavisor-2.10.0-rc.1 set-role-reset-after-pinned-disconnect verdict
+# Seen in main run 41233260898 (18.4, FAIL silent -> PASS).
+supavisor-2.10.0-rc.1 cursor-isolated-between-clients verdict
 
 # Same mechanism: a named statement prepared on one server, reused after Supavisor moved
 # the client to another, gives 26000. Seen in CI on pgx-default/transaction (both
