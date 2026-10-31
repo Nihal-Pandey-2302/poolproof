@@ -6,8 +6,17 @@ requires = ["createrole"]
 # (createrole_self_grant is empty by default), so grant it explicitly.
 setup = ["DROP ROLE IF EXISTS pp_role", "CREATE ROLE pp_role", "GRANT pp_role TO CURRENT_USER"]
 teardown = ["DROP ROLE IF EXISTS pp_role"]
-# Counts only when b really reached a's server connection.
-same_backend = [[2, 4]]
+# Counts only when a's SET ROLE and b's query ran on one server connection: evidence
+# right before and after each, and all four the same.
+same_backend = [[2, 4], [4, 6], [6, 8]]
+
+[[step]]
+client = "a"
+simple = "SELECT 1"
+
+[[step]]
+client = "a"
+evidence = true
 
 [[step]]
 client = "a"
@@ -15,6 +24,14 @@ simple = "SET ROLE pp_role"
 
 [[step]]
 client = "a"
+evidence = true
+
+[[step]]
+client = "b"
+simple = "SELECT 1"
+
+[[step]]
+client = "b"
 evidence = true
 
 [[step]]

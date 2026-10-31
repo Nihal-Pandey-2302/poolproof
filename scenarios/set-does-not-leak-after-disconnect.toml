@@ -1,8 +1,18 @@
 name = "set-does-not-leak-after-disconnect"
 description = "Settings from a client that disconnected must not show up for the next client."
 refs = ["https://github.com/pgdogdev/pgdog/issues/1850"]
-# Counts when b got a's server connection, or when the pooler closed it instead.
-same_backend_or_closed = [[2, 5]]
+# Counts when b's query ran on the server connection a left, or when the pooler closed
+# it instead: evidence right before and after a's state step and b's query.
+same_backend = [[2, 4], [7, 9]]
+same_backend_or_closed = [[4, 7]]
+
+[[step]]
+client = "a"
+simple = "SELECT 1"
+
+[[step]]
+client = "a"
+evidence = true
 
 [[step]]
 client = "a"
@@ -15,6 +25,14 @@ evidence = true
 [[step]]
 client = "a"
 disconnect = true
+
+[[step]]
+client = "b"
+simple = "SELECT 1"
+
+[[step]]
+client = "b"
+evidence = true
 
 [[step]]
 client = "b"

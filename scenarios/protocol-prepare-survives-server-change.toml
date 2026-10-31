@@ -7,15 +7,17 @@ repeat = 5
 setup = ["DROP TABLE IF EXISTS pp_hog_pid", "CREATE TABLE pp_hog_pid (who text PRIMARY KEY, pid int)"]
 teardown = ["DROP TABLE IF EXISTS pp_hog_pid"]
 
+# a's backend before its Parse, and again after it: the precondition checks c holds
+# the backend both name, so the Parse ran there too.
+[[step]]
+client = "a"
+simple = "INSERT INTO pp_hog_pid VALUES ('a-pre', pg_backend_pid()) ON CONFLICT (who) DO UPDATE SET pid = excluded.pid"
+
 [[step]]
 client = "a"
 prepare = "SELECT 'from a'::text"
 name = "q"
 
-# a's backend, so c can check it took it. This INSERT runs after a's Parse as its own
-# query: on a pool that doesn't hand a client back the connection it just released, the
-# two can run on different backends, and the precondition then checks the wrong one. A
-# protocol Parse can't share a query with the INSERT.
 [[step]]
 client = "a"
 simple = "INSERT INTO pp_hog_pid VALUES ('a', pg_backend_pid()) ON CONFLICT (who) DO UPDATE SET pid = excluded.pid"
@@ -28,7 +30,7 @@ simple = "BEGIN"
 
 [[step]]
 client = "c"
-simple = "SELECT pg_backend_pid() = (SELECT pid FROM pp_hog_pid WHERE who = 'a')"
+simple = "SELECT count(*) = 2 FROM pp_hog_pid WHERE who IN ('a-pre', 'a') AND pid = pg_backend_pid()"
 precondition = true
 
 [[step]]
