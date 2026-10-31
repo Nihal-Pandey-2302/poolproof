@@ -64,9 +64,10 @@ Only regressions fail the run: PASS to FAIL or ERROR, a FAIL getting worse (hang
 error, then silent), and FAIL to ERROR or back. `--fail-on` still decides which of those
 count. Fixed results, milder failures, and scenarios or targets only one side has are
 listed but never fail it. A repeated (timing-sensitive) scenario gates on PASS and FAIL
-only, so one failing run in five against a baseline that passed all five fails it. A target whose product, version, config or Postgres differs
-gets a warning; a different pool mode is an error. With `--format json` the comparison
-is in the report under `comparison`.
+only, so one failing run in five against a baseline that passed all five fails it. A
+target whose product, version, config or Postgres differs gets a warning; a different
+pool mode is an error. With `--format json` the comparison is in the report under
+`comparison`.
 
 ```text
 $ poolproof run --filter multi-statement
@@ -127,10 +128,10 @@ offers it, else plaintext without a word), `require`, `verify-ca` or `verify-ful
 the URL or `PGSSLMODE`. `prefer` never checks certificates, even with a root certificate
 present, so it is encrypted but not authenticated: use `verify-full` for anything not on
 localhost. `sslrootcert` (or `PGSSLROOTCERT`) names the CA file, or `system` for the
-operating system's store (which needs `verify-full`, and makes it the default); without it, `~/.postgresql/root.crt` is used when it exists, and
-`require` then checks the chain like `verify-ca`. `send` steps and cancel requests use the
-same settings. Not supported yet: client certificates and `sslnegotiation=direct`.
-A URL names one host: several hosts or ports, `hostaddr`, `target_session_attrs` and
+operating system's store (which needs `verify-full`, and makes it the default); without
+it, `~/.postgresql/root.crt` is used when it exists, and `require` then checks the chain
+like `verify-ca`. `send` steps and cancel requests use the same settings. Not supported
+yet: client certificates and `sslnegotiation=direct`. A URL names one host: several hosts or ports, `hostaddr`, `target_session_attrs` and
 `load_balance_hosts` are refused, since poolproof would otherwise pick a host on its own.
 
 For several poolers, or to reset state between scenarios, use a targets file
