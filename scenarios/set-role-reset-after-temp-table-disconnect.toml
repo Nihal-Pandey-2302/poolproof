@@ -7,8 +7,10 @@ requires = ["createrole"]
 # (createrole_self_grant is empty by default), so grant it explicitly.
 setup = ["DROP ROLE IF EXISTS pp_role", "CREATE ROLE pp_role", "GRANT pp_role TO CURRENT_USER"]
 teardown = ["DROP ROLE IF EXISTS pp_role"]
-# Counts when b got a's server connection, or when the pooler closed it instead.
-same_backend_or_closed = [[3, 6]]
+# Counts when b's query ran on the server connection a left, or when the pooler closed
+# it instead: evidence right before and after a's state step and b's query.
+same_backend = [[2, 4], [7, 9]]
+same_backend_or_closed = [[4, 7]]
 
 # Like set-role-reset-after-pinned-disconnect, but the temp table pins the server
 # connection instead of an advisory lock. A pooler that cleans up with DISCARD TEMP and
@@ -16,6 +18,10 @@ same_backend_or_closed = [[3, 6]]
 [[step]]
 client = "a"
 simple = "CREATE TEMP TABLE pp_role_tmp (x int)"
+
+[[step]]
+client = "a"
+evidence = true
 
 [[step]]
 client = "a"
@@ -28,6 +34,14 @@ evidence = true
 [[step]]
 client = "a"
 disconnect = true
+
+[[step]]
+client = "b"
+simple = "SELECT 1"
+
+[[step]]
+client = "b"
+evidence = true
 
 [[step]]
 client = "b"

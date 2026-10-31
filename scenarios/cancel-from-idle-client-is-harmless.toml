@@ -2,8 +2,9 @@ name = "cancel-from-idle-client-is-harmless"
 description = "A CancelRequest from a client with no running query must not cancel another client's query."
 # Deterministic form of a race: the server connection a just used now runs b's query.
 refs = ["https://github.com/pgdogdev/pgdog/issues/1505"]
-# Counts only when b really reached a's server connection.
-same_backend = [[2, 6]]
+# Counts only when b's query ran on the server connection a just used: evidence
+# right before and after it, and all three the same.
+same_backend = [[2, 4], [4, 8]]
 
 [[step]]
 client = "a"
@@ -11,6 +12,14 @@ simple = "SELECT 'a done'::text"
 
 [[step]]
 client = "a"
+evidence = true
+
+[[step]]
+client = "b"
+simple = "SELECT 1"
+
+[[step]]
+client = "b"
 evidence = true
 
 [[step]]

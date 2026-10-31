@@ -1,13 +1,22 @@
 name = "search-path-isolated-between-clients"
 description = "A client's empty search_path must still be empty after another client changed it."
-# Counts only when b really reached a's server connection.
-same_backend = [[3, 5]]
+# Counts only when b's SET and a's SHOW ran on one server connection: evidence right
+# before and after each, and all four the same.
+same_backend = [[3, 5], [5, 6], [6, 8]]
+
 # Empty is the value pg_dump sets. On Postgres 18 with more than one server connection,
 # PgBouncer 1.26 replays it as `SET search_path=;` (pgbouncer#1663); the test bed is 17.
-
 [[step]]
 client = "a"
 simple = "SET search_path = ''"
+
+[[step]]
+client = "b"
+simple = "SELECT 1"
+
+[[step]]
+client = "b"
+evidence = true
 
 [[step]]
 client = "b"
@@ -17,6 +26,10 @@ simple = "SET search_path = public"
 # applies SET lazily send it to the server.
 [[step]]
 client = "b"
+evidence = true
+
+[[step]]
+client = "a"
 evidence = true
 
 [[step]]

@@ -1,7 +1,17 @@
 name = "protocol-statement-names-isolated"
 description = "Two clients can prepare protocol-level statements with the same name, and each runs its own."
-# Counts only when b really reached a's server connection.
-same_backend = [[2, 4]]
+# Counts only when b's Parse and Bind ran on the server connection a prepared on:
+# a's Parse shares a transaction with its evidence, b's run between two evidence
+# steps, and all three name the same backend.
+same_backend = [[2, 6], [6, 9]]
+
+[[step]]
+client = "a"
+send = ["query BEGIN"]
+
+[[step]]
+client = "a"
+evidence = true
 
 [[step]]
 client = "a"
@@ -9,6 +19,14 @@ send = ["parse s1 SELECT 'from a'::text", "sync"]
 
 [[step]]
 client = "a"
+send = ["query COMMIT"]
+
+[[step]]
+client = "b"
+send = ["query SELECT 1"]
+
+[[step]]
+client = "b"
 evidence = true
 
 [[step]]
@@ -17,11 +35,11 @@ send = ["parse s1 SELECT 'from b'::text", "sync"]
 
 [[step]]
 client = "b"
-evidence = true
+send = ["bind - s1", "execute -", "sync"]
 
 [[step]]
 client = "b"
-send = ["bind - s1", "execute -", "sync"]
+evidence = true
 
 [[step]]
 client = "a"

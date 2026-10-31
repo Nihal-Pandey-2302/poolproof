@@ -1,12 +1,21 @@
 name = "set-isolated-between-clients"
 description = "A plain SET from one client must not change the setting another client sees."
 refs = ["https://github.com/pgdogdev/pgdog/issues/1850"]
-# Counts only when b really reached a's server connection.
-same_backend = [[3, 5]]
+# Counts only when b's SET and a's SHOW ran on one server connection: evidence right
+# before and after each, and all four the same.
+same_backend = [[3, 5], [5, 6], [6, 8]]
 
 [[step]]
 client = "a"
 simple = "SET work_mem = '7MB'"
+
+[[step]]
+client = "b"
+simple = "SELECT 1"
+
+[[step]]
+client = "b"
+evidence = true
 
 [[step]]
 client = "b"
@@ -16,6 +25,10 @@ simple = "SET work_mem = '9MB'"
 # applies SET lazily send it to the server.
 [[step]]
 client = "b"
+evidence = true
+
+[[step]]
+client = "a"
 evidence = true
 
 [[step]]

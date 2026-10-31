@@ -7,14 +7,20 @@ requires = ["createrole"]
 # (createrole_self_grant is empty by default), so grant it explicitly.
 setup = ["DROP ROLE IF EXISTS pp_role", "CREATE ROLE pp_role", "GRANT pp_role TO CURRENT_USER"]
 teardown = ["DROP ROLE IF EXISTS pp_role"]
-# Counts when b got a's server connection, or when the pooler closed it instead.
-same_backend_or_closed = [[3, 6]]
+# Counts when b's query ran on the server connection a left, or when the pooler closed
+# it instead: evidence right before and after a's state step and b's query.
+same_backend = [[2, 4], [7, 9]]
+same_backend_or_closed = [[4, 7]]
 
 # The advisory lock pins the server connection, so the pooler cleans it up on disconnect.
 # RESET ALL does not reset the role.
 [[step]]
 client = "a"
 simple = "SELECT pg_advisory_lock(707519)::text"
+
+[[step]]
+client = "a"
+evidence = true
 
 [[step]]
 client = "a"
@@ -27,6 +33,14 @@ evidence = true
 [[step]]
 client = "a"
 disconnect = true
+
+[[step]]
+client = "b"
+simple = "SELECT 1"
+
+[[step]]
+client = "b"
+evidence = true
 
 [[step]]
 client = "b"
