@@ -116,6 +116,8 @@ jobs:
         run: |
           nohup tools/pp-proxy/target/debug/pp-proxy > pp-proxy.log 2>&1 &
           echo $! > pp-proxy.pid
+          # pp-proxy binds its listeners one by one in PROXY_LISTEN order, so once the last
+          # one answers, all are bound.
           for _ in $(seq 50); do (exec 3<>/dev/tcp/127.0.0.1/56478) 2>/dev/null && exit 0; sleep 0.1; done
           cat pp-proxy.log
           exit 1
@@ -127,11 +129,20 @@ jobs:
         run: |
           p='postgres://postgres:postgres@127.0.0.1:56478/app?sslmode=disable'
           d='postgres://postgres:postgres@127.0.0.1:55432/app?sslmode=disable'
-          doctor() { ./target/debug/poolproof doctor --pooler "$p" --direct "$d" --mode transaction --reset exact --pool-size "$1" || true; }
-          doctor 2 | tee doctor-2.txt
-          grep -q 'exact: held 2 transactions, client 3 waited' doctor-2.txt
-          doctor 1 | tee doctor-1.txt
-          grep -q 'exact: pool_size = 1, but client 2 got its own server connection' doctor-1.txt
+          doctor() {
+            set +e
+            ./target/debug/poolproof doctor --pooler "$p" --direct "$d" --mode transaction --reset exact --pool-size "$1" > "doctor-$1.txt"
+            echo $? > "doctor-$1.code"
+            set -e
+            cat "doctor-$1.txt"
+          }
+          doctor 2
+          doctor 1
+          # The exit code and the reset check's own line: status, target, check name.
+          [ "$(cat doctor-2.code)" = 0 ]
+          grep -Eq '^ok +[^ ]+ +reset +exact: held 2 transactions, client 3 waited' doctor-2.txt
+          [ "$(cat doctor-1.code)" = 1 ]
+          grep -Eq '^fail +[^ ]+ +reset +exact: pool_size = 1, but client 2 got its own server connection' doctor-1.txt
 
       - name: Run the self-test
         run: |
