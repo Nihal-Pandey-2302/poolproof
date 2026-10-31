@@ -255,7 +255,10 @@ fn parse(origin: &str, text: &str) -> Result<Scenario> {
 
 /// The scenarios built into the binary.
 pub fn bundled() -> Result<Vec<Scenario>> {
-    BUNDLED.iter().map(|(name, text)| parse(name, text)).collect()
+    let parsed = BUNDLED
+        .iter()
+        .map(|(name, text)| Ok((name.to_string(), parse(name, text)?)));
+    unique_names(parsed.collect::<Result<_>>()?)
 }
 
 pub fn load_dir(dir: &Path) -> Result<Vec<Scenario>> {
@@ -269,9 +272,23 @@ pub fn load_dir(dir: &Path) -> Result<Vec<Scenario>> {
     let mut scenarios = Vec::with_capacity(paths.len());
     for path in paths {
         let text = std::fs::read_to_string(&path)?;
-        scenarios.push(parse(&path.display().to_string(), &text)?);
+        let origin = path.display().to_string();
+        let scenario = parse(&origin, &text)?;
+        scenarios.push((origin, scenario));
     }
-    Ok(scenarios)
+    unique_names(scenarios)
+}
+
+/// Results, reports, deep links, `--filter` and the determinism cache all go by name,
+/// so two files with the same name would mix up their results.
+fn unique_names(scenarios: Vec<(String, Scenario)>) -> Result<Vec<Scenario>> {
+    let mut seen = std::collections::HashMap::new();
+    for (origin, s) in &scenarios {
+        if let Some(first) = seen.insert(s.name.as_str(), origin.as_str()) {
+            bail!("{origin}: scenario name '{}' is already used by {first}", s.name);
+        }
+    }
+    Ok(scenarios.into_iter().map(|(_, s)| s).collect())
 }
 
 #[cfg(test)]
@@ -285,6 +302,21 @@ mod tests {
         let bundled = names(bundled().unwrap());
         assert!(!bundled.is_empty());
         assert_eq!(bundled, names(load_dir(&dir).unwrap()));
+    }
+
+    #[test]
+    fn scenario_names_are_unique() {
+        let dir = std::env::temp_dir().join(format!("pp-unique-names-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let one = "name = 'x'\ndescription = 't'\nstep = []\n";
+        std::fs::write(dir.join("a.toml"), one).unwrap();
+        std::fs::write(dir.join("b.toml"), one.replace("'x'", "'y'")).unwrap();
+        assert_eq!(load_dir(&dir).unwrap().len(), 2);
+        std::fs::write(dir.join("c.toml"), one).unwrap();
+        let err = format!("{:#}", load_dir(&dir).unwrap_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(err.contains("c.toml: scenario name 'x' is already used by"), "{err}");
+        assert!(err.contains("a.toml"), "{err}");
     }
 
     #[test]
