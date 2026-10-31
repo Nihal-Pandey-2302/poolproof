@@ -10,7 +10,8 @@
 #   verdict  PASS and FAIL (any kind) match each other; ERROR, SKIP or a missing
 #            result still differ
 #   kind     a FAIL matches a FAIL of any kind
-# Exits 1 when verdicts differ, 2 on a bad or stale known-flaky line.
+# Exits 1 when verdicts differ, 2 on a bad or stale known-flaky line, 3 when a JSON file
+# it reads isn't a readable report.
 set -euo pipefail
 # One collation for sort and comm.
 export LC_ALL=C
@@ -19,6 +20,15 @@ if [ "${1:-}" = --common-only ]; then common_only=true; shift; fi
 committed=$1 new=$2
 flaky_file=results/known-flaky.txt
 summary=${GITHUB_STEP_SUMMARY:-/dev/null}
+
+# Every report read below, checked first: a file jq can't read would otherwise end the
+# script with jq's own exit code, which can look like 1 or 2.
+for f in "$committed" "$new" results/*.json; do
+  if ! jq -e '.results | type == "array"' "$f" > /dev/null 2>&1; then
+    echo "::error file=$f::can't read $f as a poolproof report"
+    exit 3
+  fi
+done
 
 # "<target> <scenario> <verdict|kind>", one per line. sub() drops a trailing \r, so a
 # file saved with CRLF line ends still matches.
