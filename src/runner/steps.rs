@@ -39,17 +39,31 @@ fn connect_failure(e: &anyhow::Error) -> Outcome {
 
 /// Run a scenario's steps. `pooled` is where normal clients connect; `direct` is
 /// plain Postgres. For the baseline run both are the same endpoint.
+#[cfg(test)]
 pub async fn run_steps(
     scenario: &Scenario,
     pooled: &Endpoint,
     direct: &Endpoint,
     t: &Timeouts,
 ) -> Result<Vec<Outcome>> {
+    run_steps_on(scenario, pooled, direct, pooled == direct, t).await
+}
+
+/// `run_steps`, saying whether this is the baseline run. The pooler side can be the
+/// same endpoint as `direct` (Postgres standing in for its own pooler), and its
+/// preconditions still run.
+pub(super) async fn run_steps_on(
+    scenario: &Scenario,
+    pooled: &Endpoint,
+    direct: &Endpoint,
+    baseline: bool,
+    t: &Timeouts,
+) -> Result<Vec<Outcome>> {
     // Loading already checks this; scenarios built in code don't go through loading.
     scenario.check_clients()?;
     let mut conns = HashMap::new();
     let mut raw = HashMap::new();
-    let outcomes = run_until_done(scenario, pooled, direct, t, &mut conns, &mut raw).await;
+    let outcomes = run_until_done(scenario, pooled, direct, baseline, t, &mut conns, &mut raw).await;
     // Whatever stopped the steps, every client still open is closed and waited for.
     let closed = close_all(scenario, pooled == direct, conns, raw, t).await;
     let outcomes = outcomes?;
@@ -90,6 +104,7 @@ async fn run_until_done<'s>(
     scenario: &'s Scenario,
     pooled: &Endpoint,
     direct: &Endpoint,
+    baseline: bool,
     t: &Timeouts,
     conns: &mut HashMap<&'s str, Conn>,
     raw: &mut HashMap<&'s str, RawConn>,
@@ -111,7 +126,21 @@ async fn run_until_done<'s>(
         parameter_status: false,
     };
 
-    for step in &scenario.steps {
+    for (i, step) in scenario.steps.iter().enumerate() {
+        // Through the pooler, a precondition that wasn't met ends the run: the rest
+        // would test something else.
+        if let Some(prev) = i.checked_sub(1)
+            && scenario.steps[prev].precondition
+            && !baseline
+            && !precondition_met(&outcomes[prev])
+        {
+            outcomes.resize(scenario.steps.len(), Outcome::NotRun);
+            break;
+        }
+        if step.precondition && baseline {
+            outcomes.push(Outcome::NotRun);
+            continue;
+        }
         if raw_clients.contains(step.client.as_str()) {
             if let Some(ms) = step.delay_ms {
                 tokio::time::sleep(Duration::from_millis(ms)).await;
@@ -294,6 +323,11 @@ async fn run_until_done<'s>(
     }
 
     Ok(outcomes)
+}
+
+/// A precondition step's outcome that lets the run go on: one row, true.
+pub(super) fn precondition_met(outcome: &Outcome) -> bool {
+    matches!(outcome, Outcome::Ok { rows, .. } if rows == &[vec![Some("t".to_string())]])
 }
 
 #[cfg(test)]

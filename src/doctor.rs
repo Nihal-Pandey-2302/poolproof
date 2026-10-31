@@ -88,7 +88,7 @@ pub fn text(report: &TargetReport, width: usize) -> String {
     report
         .checks
         .iter()
-        .map(|c| format!("{:<5} {:<width$} {:<12} {}\n", c.status, report.name, c.check, c.detail))
+        .map(|c| format!("{:<5} {:<width$} {:<18} {}\n", c.status, report.name, c.check, c.detail))
         .collect()
 }
 
@@ -198,8 +198,8 @@ pub fn same_server(pooler: &ServerFacts, direct: &ServerFacts) -> Check {
 }
 
 /// What the mode probe saw: client a took a server connection, then client b asked for
-/// one while a stayed connected.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// one while a stayed connected (or, for the busy probe, inside a's open transaction).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Observed {
     /// b got a's backend: the pooler shares server connections between clients.
     Shared,
@@ -207,57 +207,213 @@ pub enum Observed {
     Separate,
     /// b got no reply in time: it waited for a's server connection.
     Waited,
+    /// The pooler refused b with a server error while a held its connection, and let
+    /// b in once a was gone: one client at a time. The SQLSTATE and message.
+    Refused(String),
+    /// b answered neither in time nor with a's backend once a was gone, so the probe
+    /// can't tell. Why.
+    Unclear(String),
+}
+
+impl Observed {
+    /// Whether b had to wait for a, or was turned away: a pool of one.
+    pub fn one_at_a_time(&self) -> bool {
+        matches!(self, Observed::Waited | Observed::Refused(_))
+    }
 }
 
 /// A connected client and the task driving its connection.
 pub type Connected = (Client, JoinHandle<()>);
 
-/// Runs the mode probe. `connect` opens a client through the pooler. b's connect and
-/// query are bounded by `within`, and a is closed before this returns.
-pub async fn probe_mode<F, Fut>(connect: F, within: Duration) -> anyhow::Result<Observed>
+/// Runs the mode probe with a idle. `connect` opens a client through the pooler. b's
+/// first answer is awaited for `within`, a late one for `late`, and both clients are
+/// closed before this returns.
+pub async fn probe_mode<F, Fut>(connect: F, within: Duration, late: Duration) -> anyhow::Result<Observed>
+where
+    F: Fn() -> Fut,
+    Fut: Future<Output = anyhow::Result<Connected>>,
+{
+    probe(connect, within, late, false).await.map(|(observed, _)| observed)
+}
+
+/// Runs the probe; with `in_transaction`, a holds an open transaction while b asks.
+/// Also returns a's backend pid. If b has no answer within `within`, a is closed and
+/// b's answer awaited for `late`: only a's own backend then says b waited for it.
+///
+/// A pool that opens server connections lazily can still look like that: b waits
+/// while the pooler opens a second one, and gets a's freed server first. So a b that
+/// waited is probed once more, right away, with that second server now idle: only a
+/// second wait says one server connection.
+pub async fn probe<F, Fut>(
+    connect: F,
+    within: Duration,
+    late: Duration,
+    in_transaction: bool,
+) -> anyhow::Result<(Observed, String)>
+where
+    F: Fn() -> Fut,
+    Fut: Future<Output = anyhow::Result<Connected>>,
+{
+    let first = probe_once(&connect, within, late, in_transaction).await?;
+    if !first.0.one_at_a_time() {
+        return Ok(first);
+    }
+    let (again, pid) = probe_once(&connect, within, late, in_transaction).await?;
+    Ok(match again {
+        // Sharing a backend inside a transaction is the pooler's bug whenever it shows.
+        Observed::Waited | Observed::Refused(_) | Observed::Shared => (again, pid),
+        _ => {
+            let once = if first.0 == Observed::Waited {
+                "waited"
+            } else {
+                "was refused"
+            };
+            (Observed::Unclear(format!("{once} once, then got another backend")), pid)
+        }
+    })
+}
+
+async fn probe_once<F, Fut>(
+    connect: &F,
+    within: Duration,
+    late: Duration,
+    in_transaction: bool,
+) -> anyhow::Result<(Observed, String)>
 where
     F: Fn() -> Fut,
     Fut: Future<Output = anyhow::Result<Connected>>,
 {
     let (a, a_driver) = connect().await?;
-    let a_pid = backend_pid(&a, within).await;
-    let b = timeout(within, async {
+    let a_pid = async {
+        if in_transaction {
+            timeout(within, a.simple_query("BEGIN"))
+                .await
+                .with_context(|| format!("BEGIN: no reply within {within:?}"))??;
+        }
+        backend_pid(&a, within).await
+    }
+    .await;
+    let close_a = async {
+        if in_transaction {
+            let _ = timeout(within, a.simple_query("ROLLBACK")).await;
+        }
+        drop(a);
+        let _ = timeout(within, a_driver).await;
+    };
+    let a_pid = match a_pid {
+        Ok(pid) => pid,
+        Err(e) => {
+            close_a.await;
+            return Err(e);
+        }
+    };
+    // b's connect and query as one future, kept across the first timeout so a late
+    // answer is still seen.
+    let b = async {
         let (b, b_driver) = connect().await?;
-        let pid = backend_pid(&b, within).await;
+        let reply = b.simple_query("SELECT pg_backend_pid()").await;
+        let pid = reply.map_err(anyhow::Error::from).and_then(first_value);
         drop(b);
         let _ = timeout(within, b_driver).await;
         pid
-    })
-    .await;
-    drop(a);
-    let _ = timeout(within, a_driver).await;
-    let a_pid = a_pid?;
-    let Ok(b_pid) = b else {
-        return Ok(Observed::Waited);
     };
-    Ok(if b_pid? == a_pid {
-        Observed::Shared
-    } else {
-        Observed::Separate
-    })
+    tokio::pin!(b);
+    let (b, late_answer) = match timeout(within, &mut b).await {
+        Ok(answer) => {
+            close_a.await;
+            (answer, false)
+        }
+        Err(_) => {
+            close_a.await;
+            match timeout(late, &mut b).await {
+                Ok(answer) => (answer, true),
+                Err(_) => {
+                    let reason = format!("b had no answer within {within:?}, nor {late:?} after a closed");
+                    return Ok((Observed::Unclear(reason), a_pid));
+                }
+            }
+        }
+    };
+    let observed = match b {
+        Ok(b_pid) if late_answer && b_pid == a_pid => Observed::Waited,
+        Ok(_) if late_answer => Observed::Unclear("b answered late, with another backend than a's".into()),
+        Ok(b_pid) if b_pid == a_pid => Observed::Shared,
+        Ok(_) => Observed::Separate,
+        Err(e) => {
+            // Only a server error that goes away once a is gone says "one at a time": a
+            // wrong password, TLS or a pooler that went down must not read as a pool size.
+            let Some(refusal) = server_refusal(&e).filter(|_| !late_answer) else {
+                return Err(e.context("second client"));
+            };
+            // Some poolers accept any connect and refuse only at the query, so a
+            // reconnect proves nothing: b must now get a's backend.
+            let again = async {
+                let (again, driver) = timeout(within, connect())
+                    .await
+                    .map_err(|_| anyhow::anyhow!("no reconnect within {within:?}"))??;
+                let pid = timeout(late, again.simple_query("SELECT pg_backend_pid()")).await;
+                drop(again);
+                let _ = timeout(within, driver).await;
+                pid.map_err(|_| anyhow::anyhow!("no answer within {late:?}"))?
+                    .map_err(anyhow::Error::from)
+                    .and_then(first_value)
+            };
+            let pid = again
+                .await
+                .with_context(|| format!("second client: {e:#}; then, after the first closed"))?;
+            if pid == a_pid {
+                Observed::Refused(refusal)
+            } else {
+                Observed::Unclear("was refused while a was connected, then got another backend".into())
+            }
+        }
+    };
+    Ok((observed, a_pid))
+}
+
+/// `SQLSTATE: message` for an error the server sent, except authentication errors
+/// (class 28).
+fn server_refusal(e: &anyhow::Error) -> Option<String> {
+    let db = e
+        .chain()
+        .find_map(|c| c.downcast_ref::<tokio_postgres::Error>())?
+        .as_db_error()?;
+    let code = db.code().code();
+    (!code.starts_with("28")).then(|| format!("{code}: {}", db.message()))
+}
+
+fn first_value(messages: Vec<SimpleQueryMessage>) -> anyhow::Result<String> {
+    messages
+        .into_iter()
+        .find_map(|m| match m {
+            SimpleQueryMessage::Row(row) => row.get(0).map(str::to_string),
+            _ => None,
+        })
+        .ok_or_else(|| anyhow::anyhow!("pg_backend_pid() returned no row"))
 }
 
 /// The mode check: what was seen, against the target's `mode`.
 pub fn mode_check(observed: Observed, configured: PoolMode) -> Check {
     let (seen, matches) = match observed {
         Observed::Shared => (
-            "transaction or statement pooling (b got a's server connection)",
+            "transaction or statement pooling (b got a's server connection)".to_string(),
             configured != PoolMode::Session,
         ),
         Observed::Waited => (
-            "session mode (b waited for a's server connection; a pool exhausted by other clients looks the same)",
+            "session mode (b waited for a's server connection; a pool exhausted by other clients looks the same)"
+                .into(),
             configured == PoolMode::Session,
         ),
-        Observed::Separate => ("not determined (b got another server connection)", true),
+        Observed::Refused(refusal) => (
+            format!("session mode (the pooler refused b while a was connected: {refusal})"),
+            configured == PoolMode::Session,
+        ),
+        Observed::Separate => ("not determined (b got another server connection)".into(), true),
+        Observed::Unclear(why) => (format!("not determined ({why})"), true),
     };
     let status = if matches { Status::Ok } else { Status::Warn };
     let detail = if matches {
-        seen.to_string()
+        seen
     } else {
         format!("{seen}, but the target says mode = {configured}")
     };
@@ -365,6 +521,34 @@ mod tests {
         Separate,
         /// One backend, held by a client until it disconnects, like a full session pool.
         SessionOfOne,
+        /// One backend; a client that asks while it's held is refused with this code
+        /// (XX000 like Supavisor's EMAXCONNSESSION, or 28P01 like a bad password).
+        RefusesWhileHeld(&'static str),
+        /// Only the first client ever gets in.
+        RefusesAllButFirst,
+        /// Later clients answer after `delay` ms, or never, with a backend of their own.
+        Slow(Option<u64>),
+        /// A pool of two that opens its second server only when a client has to wait,
+        /// 600 ms later. Waiters get servers first come, first served, so the first
+        /// one waiting gets a's freed server.
+        LazySecond,
+        /// Like `SessionOfOne` for the first two clients; after that every client gets
+        /// backend 7 at once, even inside another's transaction.
+        WaitsThenShares,
+        /// Accepts every connect, and answers a query with 58000 while another client
+        /// holds the one backend, like PgCat. Once it's free, a client gets `After`.
+        ErrorsWhileHeld(After),
+    }
+
+    /// What a client of `ErrorsWhileHeld` gets once the backend is free.
+    #[derive(Clone, Copy)]
+    enum After {
+        /// Backend 7, the one the first client had.
+        Same,
+        /// Another backend.
+        Other,
+        /// Another 58000: it can't open a server at all.
+        Error,
     }
 
     /// A Postgres server that knows only startup and `SELECT pg_backend_pid()`.
@@ -373,16 +557,61 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         let next = Arc::new(AtomicI32::new(100));
         let backend = Arc::new(Semaphore::new(1));
+        let idle = Arc::new(std::sync::Mutex::new(vec![7]));
+        let opened = Arc::new(std::sync::atomic::AtomicBool::new(false));
         tokio::spawn(async move {
+            let holder = Arc::new(std::sync::Mutex::new(None));
             while let Ok((socket, _)) = listener.accept().await {
+                if let Pool::ErrorsWhileHeld(after) = pool {
+                    let conn = next.fetch_add(1, Ordering::SeqCst);
+                    tokio::spawn(serve_holding(socket, conn, holder.clone(), after));
+                    continue;
+                }
+                if let Pool::LazySecond = pool {
+                    let (backend, idle, opened) = (backend.clone(), idle.clone(), opened.clone());
+                    tokio::spawn(async move {
+                        let permit = match backend.clone().try_acquire_owned() {
+                            Ok(permit) => permit,
+                            Err(_) => {
+                                if !opened.swap(true, Ordering::SeqCst) {
+                                    let (backend, idle) = (backend.clone(), idle.clone());
+                                    tokio::spawn(async move {
+                                        tokio::time::sleep(Duration::from_millis(600)).await;
+                                        idle.lock().unwrap().push(8);
+                                        backend.add_permits(1);
+                                    });
+                                }
+                                backend.clone().acquire_owned().await.unwrap()
+                            }
+                        };
+                        let pid = idle.lock().unwrap().pop().unwrap();
+                        let _ = serve(socket, pid).await;
+                        idle.lock().unwrap().push(pid);
+                        drop(permit);
+                    });
+                    continue;
+                }
+                let n = next.fetch_add(1, Ordering::SeqCst);
                 let pid = match pool {
-                    Pool::Shared => 7,
-                    _ => next.fetch_add(1, Ordering::SeqCst),
+                    // One backend, whoever holds it.
+                    Pool::Shared | Pool::SessionOfOne | Pool::WaitsThenShares | Pool::RefusesWhileHeld(_) => 7,
+                    _ => n,
                 };
                 let backend = backend.clone();
                 tokio::spawn(async move {
                     let _held = match pool {
                         Pool::SessionOfOne => Some(backend.acquire_owned().await.unwrap()),
+                        Pool::WaitsThenShares if n < 102 => Some(backend.acquire_owned().await.unwrap()),
+                        Pool::RefusesWhileHeld(code) => match backend.try_acquire_owned() {
+                            Ok(held) => Some(held),
+                            Err(_) => return drop(refuse(socket, code).await),
+                        },
+                        Pool::RefusesAllButFirst if pid > 100 => return drop(refuse(socket, "XX000").await),
+                        Pool::Slow(delay) if pid > 100 => {
+                            let wait = delay.map_or(Duration::from_secs(3600), Duration::from_millis);
+                            tokio::time::sleep(wait).await;
+                            None
+                        }
                         _ => None,
                     };
                     let _ = serve(socket, pid).await;
@@ -390,6 +619,116 @@ mod tests {
             }
         });
         format!("postgres://pp@127.0.0.1:{port}/pp?sslmode=disable")
+    }
+
+    /// One backend for `ErrorsWhileHeld`: the first client to query holds it until it
+    /// disconnects; meanwhile others get 58000 at query time.
+    async fn serve_holding(
+        mut socket: TcpStream,
+        conn: i32,
+        holder: Arc<std::sync::Mutex<Option<i32>>>,
+        after: After,
+    ) -> std::io::Result<()> {
+        let len = socket.read_i32().await?;
+        let mut startup = vec![0; len as usize - 4];
+        socket.read_exact(&mut startup).await?;
+        let mut out = BytesMut::new();
+        message(&mut out, b'R', |b| b.put_i32(0));
+        message(&mut out, b'K', |b| {
+            b.put_i32(conn);
+            b.put_i32(0);
+        });
+        message(&mut out, b'Z', |b| b.put_u8(b'I'));
+        socket.write_all(&out).await?;
+        let result = async {
+            loop {
+                let kind = socket.read_u8().await?;
+                let len = socket.read_i32().await?;
+                let mut body = vec![0; len as usize - 4];
+                socket.read_exact(&mut body).await?;
+                if kind != b'Q' {
+                    return Ok(());
+                }
+                let pid = {
+                    let mut held = holder.lock().unwrap();
+                    match (*held, after) {
+                        (Some(other), _) if other != conn => None,
+                        (Some(_), _) => Some(7),
+                        // The first client ever gets backend 7; later ones what `after` says.
+                        (None, _) if conn == 100 => Some(7),
+                        (None, After::Same) => Some(7),
+                        (None, After::Other) => Some(8),
+                        (None, After::Error) => None,
+                    }
+                    .inspect(|_| *held = Some(conn))
+                };
+                let mut out = BytesMut::new();
+                match pid {
+                    Some(pid) => {
+                        let value = pid.to_string();
+                        message(&mut out, b'T', |b| {
+                            b.put_i16(1);
+                            b.put_slice(b"pg_backend_pid\0");
+                            b.put_i32(0);
+                            b.put_i16(0);
+                            b.put_u32(23);
+                            b.put_i16(4);
+                            b.put_i32(-1);
+                            b.put_i16(0);
+                        });
+                        message(&mut out, b'D', |b| {
+                            b.put_i16(1);
+                            b.put_i32(value.len() as i32);
+                            b.put_slice(value.as_bytes());
+                        });
+                        message(&mut out, b'C', |b| b.put_slice(b"SELECT 1\0"));
+                    }
+                    None => message(&mut out, b'E', |b| {
+                        for (field, value) in [
+                            (b'S', "ERROR"),
+                            (b'V', "ERROR"),
+                            (b'C', "58000"),
+                            (b'M', "AllServersDown"),
+                        ] {
+                            b.put_u8(field);
+                            b.put_slice(value.as_bytes());
+                            b.put_u8(0);
+                        }
+                        b.put_u8(0);
+                    }),
+                }
+                message(&mut out, b'Z', |b| b.put_u8(b'I'));
+                socket.write_all(&out).await?;
+            }
+        }
+        .await;
+        let mut held = holder.lock().unwrap();
+        if *held == Some(conn) {
+            *held = None;
+        }
+        result
+    }
+
+    /// Reads the startup message and answers with a FATAL error.
+    async fn refuse(mut socket: TcpStream, code: &str) -> std::io::Result<()> {
+        let len = socket.read_i32().await?;
+        let mut startup = vec![0; len as usize - 4];
+        socket.read_exact(&mut startup).await?;
+        let mut out = BytesMut::new();
+        message(&mut out, b'E', |b| {
+            for (field, value) in [
+                (b'S', "FATAL"),
+                (b'V', "FATAL"),
+                (b'C', code),
+                (b'M', "max clients reached"),
+            ] {
+                b.put_u8(field);
+                b.put_slice(value.as_bytes());
+                b.put_u8(0);
+            }
+            b.put_u8(0);
+        });
+        socket.write_all(&out).await
     }
 
     async fn serve(mut socket: TcpStream, pid: i32) -> std::io::Result<()> {
@@ -443,20 +782,84 @@ mod tests {
         out.put_slice(&b);
     }
 
-    async fn probe(pool: Pool) -> Observed {
+    async fn run_probe(pool: Pool, in_transaction: bool) -> anyhow::Result<Observed> {
         let url = fake_pooler(pool).await;
         let connect = || async {
             let (client, connection) = tokio_postgres::connect(&url, tokio_postgres::NoTls).await?;
             Ok((client, tokio::spawn(async move { drop(connection.await) })))
         };
-        probe_mode(connect, Duration::from_millis(500)).await.unwrap()
+        let (within, late) = (Duration::from_millis(300), Duration::from_millis(1500));
+        if in_transaction {
+            probe(connect, within, late, true).await.map(|(observed, _)| observed)
+        } else {
+            probe_mode(connect, within, late).await
+        }
+    }
+
+    async fn probe_idle(pool: Pool) -> Observed {
+        run_probe(pool, false).await.unwrap()
     }
 
     #[tokio::test]
     async fn mode_probe_tells_shared_separate_and_waiting_apart() {
-        assert_eq!(probe(Pool::Shared).await, Observed::Shared);
-        assert_eq!(probe(Pool::Separate).await, Observed::Separate);
-        assert_eq!(probe(Pool::SessionOfOne).await, Observed::Waited);
+        assert_eq!(probe_idle(Pool::Shared).await, Observed::Shared);
+        assert_eq!(probe_idle(Pool::Separate).await, Observed::Separate);
+        assert_eq!(probe_idle(Pool::SessionOfOne).await, Observed::Waited);
+        for busy in [Pool::Shared, Pool::Separate, Pool::SessionOfOne] {
+            let idle = probe_idle(busy).await;
+            assert_eq!(run_probe(busy, true).await.unwrap(), idle);
+        }
+    }
+
+    #[tokio::test]
+    async fn only_a_late_answer_from_the_same_backend_means_b_waited() {
+        // The session pool of one answers b with a's backend once a is gone.
+        assert_eq!(run_probe(Pool::SessionOfOne, true).await.unwrap(), Observed::Waited);
+        // Slow to open a second server connection: not a pool of one.
+        let late = run_probe(Pool::Slow(Some(600)), true).await.unwrap();
+        assert_eq!(
+            late,
+            Observed::Unclear("b answered late, with another backend than a's".into())
+        );
+        let never = run_probe(Pool::Slow(None), true).await.unwrap();
+        assert!(
+            matches!(never, Observed::Unclear(ref why) if why.contains("no answer")),
+            "{never:?}"
+        );
+        // b got a's freed server while the second one was still opening: it waited once,
+        // and the second round finds two servers.
+        let lazy = run_probe(Pool::LazySecond, true).await.unwrap();
+        assert_eq!(lazy, Observed::Unclear("waited once, then got another backend".into()));
+        // Refused at query time, like PgCat: only a's backend afterwards says one.
+        let refused = Observed::Refused("58000: AllServersDown".into());
+        for busy in [false, true] {
+            assert_eq!(
+                run_probe(Pool::ErrorsWhileHeld(After::Same), busy).await.unwrap(),
+                refused
+            );
+            let other = run_probe(Pool::ErrorsWhileHeld(After::Other), busy).await.unwrap();
+            assert!(
+                matches!(other, Observed::Unclear(ref why) if why.contains("refused")),
+                "{other:?}"
+            );
+            let down = run_probe(Pool::ErrorsWhileHeld(After::Error), busy).await;
+            assert!(down.is_err(), "{down:?}");
+        }
+        // A backend shared inside a transaction in the second round stays visible.
+        assert_eq!(run_probe(Pool::WaitsThenShares, true).await.unwrap(), Observed::Shared);
+    }
+
+    #[tokio::test]
+    async fn a_refusal_counts_only_if_it_is_a_server_error_that_goes_away() {
+        let refused = Observed::Refused("XX000: max clients reached".into());
+        assert_eq!(probe_idle(Pool::RefusesWhileHeld("XX000")).await, refused);
+        assert_eq!(run_probe(Pool::RefusesWhileHeld("XX000"), true).await.unwrap(), refused);
+        assert!(refused.one_at_a_time());
+        // A bad password isn't a pool size, and neither is a refusal that stays.
+        for pool in [Pool::RefusesWhileHeld("28P01"), Pool::RefusesAllButFirst] {
+            let err = run_probe(pool, false).await.err().map(|e| format!("{e:#}")).unwrap();
+            assert!(err.starts_with("second client"), "{err}");
+        }
     }
 
     #[tokio::test]

@@ -1,0 +1,126 @@
+name: drivers
+
+# Real drivers through the newest version of each pooler (drivers/targets.txt), Postgres 17
+# only. It takes about 15 minutes, so on a PR it runs only when the PR touches the drivers
+# or their results, or has the `drivers` label. It always runs on main, where a red run
+# holds the next merge (CONTRIBUTING.md), and once a week.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
+  schedule:
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # A `paths` filter would also drop the `labeled` event, so the PR's files are checked
+  # here instead.
+  changes:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      drivers: ${{ steps.files.outputs.drivers }}
+    steps:
+      - id: files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          files=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --jq '.[].filename')
+          if grep -qE '^(drivers/|src/drivers/|\.github/workflows/drivers\.yml$|results/drivers-[^/]*\.json$)' <<<"$files"; then
+            echo "drivers=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "drivers=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  drivers:
+    needs: changes
+    # Outside PRs, always. On a PR: not as a draft, and only when its files match or it
+    # has the label. Adding another label doesn't start it again.
+    if: >-
+      !cancelled() && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (
+        github.event.action == 'labeled' && github.event.label.name == 'drivers' ||
+        github.event.action != 'labeled' && (needs.changes.outputs.drivers == 'true' ||
+          contains(github.event.pull_request.labels.*.name, 'drivers')))))
+    # On the job, not the workflow: a skipped run (another label) must not cancel this one.
+    concurrency:
+      group: drivers-${{ github.ref }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    env:
+      POSTGRES_IMAGE: postgres:17.11
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # Layers are cached in the Actions cache, one scope per driver (CACHE=gha in
+      # drivers/docker-bake.hcl). A cold build of all four takes about 90 seconds.
+      - name: Build driver images
+        uses: docker/bake-action@59cb1203cd42bcefd40a1b6d73b589e48c86040e # v7.5.0
+        env:
+          CACHE: gha
+        with:
+          source: .
+          files: drivers/docker-bake.hcl
+          load: true
+
+      # Postgres and the targets' services only, not the whole matrix.
+      - name: Start test bed
+        id: bed
+        run: |
+          services=$(awk 'NF && $1 !~ /^#/ { for (i = 2; i <= NF; i++) print $i }' drivers/targets.txt | sort -u)
+          # shellcheck disable=SC2086 # one word per service
+          docker compose -f docker/compose.yml up -d --wait --wait-timeout 300 postgres $services
+
+      - name: Run driver cases
+        id: run
+        run: |
+          cargo build --release
+          targets=$(awk 'NF && $1 !~ /^#/ { printf "--target %s ", $1 }' drivers/targets.txt)
+          # Exit 1 means some case failed, which is expected; 2 means poolproof itself broke.
+          set +e
+          # shellcheck disable=SC2086 # one word per flag and name
+          ./target/release/poolproof drivers --check-scenarios $targets --format json > drivers.json
+          code=$?
+          set -e
+          if [ "$code" -gt 1 ]; then exit "$code"; fi
+          ./target/release/poolproof report drivers.json >> "$GITHUB_STEP_SUMMARY"
+
+      # Verdicts only, as in the suite job, skipping the pairs in results/known-flaky.txt.
+      - name: Compare with committed results
+        run: |
+          flaky=$(awk '{ sub(/\r$/, "") } NF == 2 && $1 !~ /^#/ { print $1 " " $2 }' results/known-flaky.txt | jq -Rsc 'split("\n") | map(select(. != ""))')
+          verdicts='.results[] | select("\(.target) \(.scenario)" as $k | $flaky | index($k) | not)
+            | "\(.target) \(.scenario) \(.result) \(.mismatch.kind // "")"'
+          compare() { jq -r --argjson flaky "$flaky" "$verdicts" "$1" | sort; }
+          if ! diff <(compare results/drivers-postgres-17.11.json) <(compare drivers.json); then
+            echo "::error::Driver verdicts changed. Run scripts/update-driver-results.sh and commit."
+            exit 1
+          fi
+
+      - name: Cases are deterministic on Postgres
+        if: ${{ !cancelled() && steps.run.outcome == 'success' }}
+        run: |
+          jq -r '.results[] | select(.result == "error" and (.reason | startswith("nondeterministic scenario")))
+                 | "::error::\(.scenario): \(.reason)"' drivers.json | sort -u | tee nondeterministic.txt
+          if [ -s nondeterministic.txt ]; then exit 1; fi
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: drivers-postgres-17.11
+          path: drivers.json
+
+      - name: Pooler logs
+        if: failure()
+        run: docker compose -f docker/compose.yml logs

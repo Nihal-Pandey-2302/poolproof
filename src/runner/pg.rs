@@ -377,6 +377,8 @@ impl Privileges {
                         Requirement::Superuser => true,
                         Requirement::Createrole => !self.createrole,
                         Requirement::PgSignalBackend => !self.pg_signal_backend,
+                        // Judged by the pooler probes, not here.
+                        Requirement::OneServerConnection | Requirement::SeveralServerConnections => false,
                     }
             })
             .map(|r| r.to_string())

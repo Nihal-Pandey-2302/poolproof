@@ -76,6 +76,14 @@ pub struct TargetInfo {
     /// reports from before it was recorded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reset: Option<String>,
+    /// What a second client got while the first was connected and idle. Missing when
+    /// the target wasn't probed, and in older reports.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idle_probe: Option<crate::runner::probe::Probe>,
+    /// The same inside the first client's open transaction: whether the pooler has
+    /// one server connection or several.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub busy_probe: Option<crate::runner::probe::Probe>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -113,6 +121,10 @@ pub struct ResultRow {
     /// whose steps are kept here. Missing in older reports, and then unknown.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub varied: Option<bool>,
+    /// For a scenario with a precondition: runs where it wasn't met. They aren't in
+    /// `runs` or `failures`, so runs + unmet is how many ran.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub precondition_unmet: Option<u32>,
     /// Set on a FAIL the pooler's own documentation describes. It is still a FAIL.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected: Option<crate::limitations::Expected>,
@@ -380,9 +392,69 @@ mod tests {
     }
 
     #[test]
+    fn only_core_reports_are_bundled() {
+        // A drivers report reuses the core targets' names, so find_target would pick
+        // whichever report came last.
+        for (name, _) in BUNDLED {
+            assert!(name.starts_with("postgres-"), "{name} is bundled");
+        }
+        let results = Path::new(env!("CARGO_MANIFEST_DIR")).join("results");
+        let core = std::fs::read_dir(results)
+            .map(|d| {
+                d.filter_map(|e| e.ok()?.file_name().into_string().ok())
+                    .filter(|n| n.starts_with("postgres-") && n.ends_with(".json"))
+                    .count()
+            })
+            .unwrap_or(0);
+        assert_eq!(BUNDLED.len(), core);
+    }
+
+    #[test]
     fn markdown_has_a_row_per_scenario() {
         let md = markdown(&[sample()]);
         assert!(md.contains("| `s` | pass |"));
+    }
+
+    #[test]
+    fn markdown_says_how_often_a_precondition_held() {
+        let row = |scenario: &str, verdict: &str, runs: u32, unmet: u32| {
+            format!(
+                r#"{{"target":"p","scenario":"{scenario}",{verdict},"steps":[],"runs":{runs},"failures":0,
+                "precondition_unmet":{unmet}}}"#
+            )
+        };
+        let fail = r#""result":"fail","mismatch":{"step":1,"action":"x","kind":"silent",
+            "expected":{"status":"ok","rows":[],"tags":[]},"actual":{"status":"not_run"}}"#;
+        let scenario = |name: &str| format!(r#"{{"name":"{name}","description":"d","refs":[],"steps":["x"]}}"#);
+        let report: Report = serde_json::from_str(&format!(
+            r#"{{"poolproof":"0","targets":[{{"name":"p","mode":"transaction"}}],"scenarios":[{},{},{},{}],
+            "results":[{},{},{},{}]}}"#,
+            scenario("once"),
+            scenario("never"),
+            scenario("fails"),
+            scenario("always"),
+            row("once", r#""result":"pass""#, 1, 4),
+            row(
+                "never",
+                r#""result":"skip","reason":"precondition at step 2 not met""#,
+                0,
+                3
+            ),
+            row("fails", fail, 2, 1),
+            row("always", r#""result":"pass""#, 1, 0),
+        ))
+        .unwrap();
+        let md = markdown(&[report]);
+        assert!(md.contains("| `once` | pass (precondition 1/5) |"), "{md}");
+        assert!(md.contains("| `never` | skip (precondition 0/3) |"), "{md}");
+        assert!(md.contains("| `fails` | **FAIL** silent (precondition 2/3) |"), "{md}");
+        // Met in its only run: nothing to say.
+        assert!(md.contains("| `always` | pass |"), "{md}");
+        assert!(
+            md.contains("- precondition met in 2 of 3 runs\n- step 1: `x`\n"),
+            "{md}"
+        );
+        assert!(md.contains("- pooler: `not run`"), "{md}");
     }
 
     #[test]
