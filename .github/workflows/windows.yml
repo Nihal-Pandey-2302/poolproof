@@ -102,17 +102,25 @@ jobs:
           "$PGBIN/psql" -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE app" -c "SELECT version()"
 
       # Postgres as its own pooler: every client gets its own server connection, so
-      # anything but PASS or SKIP is a harness bug, on Windows.
+      # anything but PASS or an expected SKIP is a harness bug, on Windows.
+      # --ignore-server-requirements: the probes see several server connections here,
+      # and scenarios that need one would otherwise SKIP.
       - name: Run the scenarios
         run: |
           url=postgres://postgres:root@127.0.0.1:5432/app
           set +e
-          "$PP" run --pooler "$url" --direct "$url" --mode transaction --reset all --format json > windows.json
+          "$PP" run --pooler "$url" --direct "$url" --mode transaction --reset all --ignore-server-requirements --format json > windows.json
           code=$?
           set -e
           jq -r '.results[] | select(.result != "pass" and .result != "skip") | "::error::\(.scenario): \(.result) \(.reason // "")"' windows.json
           if [ "$code" != 0 ]; then echo "::error::run: exit $code, expected 0"; exit 1; fi
           jq -e '.results | length > 0 and all(.result == "pass" or .result == "skip")' windows.json
+          # The scenarios that may SKIP here, by name; any other SKIP fails the job.
+          expected_skips='[]'
+          skipped=$(jq -c '[.results[] | select(.result == "skip") | .scenario] | unique' windows.json)
+          if ! jq -n -e --argjson got "$skipped" --argjson want "$expected_skips" '$got == ($want | sort)'; then
+            echo "::error::SKIPped $skipped, expected $expected_skips"; exit 1
+          fi
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()

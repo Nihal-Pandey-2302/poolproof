@@ -1,6 +1,9 @@
 name = "cancel-under-saturated-pool"
 description = "A CancelRequest must still cancel the query when other clients are queued for a server connection."
 refs = ["https://github.com/pgdogdev/pgdog/issues/1362"]
+# Only means something when the pool has no spare server connection: with one, the
+# next client just gets another, and a pass would test nothing.
+requires = ["one_server_connection"]
 
 # a holds the only server connection in a transaction; b queues behind it.
 [[step]]
