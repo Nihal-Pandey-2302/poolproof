@@ -255,10 +255,12 @@ fn parse(origin: &str, text: &str) -> Result<Scenario> {
             // Otherwise the execute would fail the same way on both sides and pass.
             Action::Execute(name) if !prepared.contains(&(step.client.as_str(), name)) => {
                 bail!(
-                    "{origin}: client '{}' executes '{name}', which it never prepared before",
+                    "{origin}: client '{}' executes '{name}', which it never prepared on this connection",
                     step.client
                 );
             }
+            // The client's next step opens a new connection, without its statements.
+            Action::Disconnect | Action::Abandon { .. } => prepared.retain(|(client, _)| *client != step.client),
             _ => {}
         }
     }
@@ -308,6 +310,11 @@ mod tests {
         let err = parse("t", &format!("{head}{execute}{}", prepare("a"))).unwrap_err();
         assert!(format!("{err:#}").contains("never prepared"), "{err:#}");
         assert!(parse("t", &format!("{head}{}{execute}", prepare("b"))).is_err());
+        // A new connection after disconnect or abandon has no statements.
+        let disconnect = "[[step]]\nclient = 'a'\ndisconnect = true\n";
+        assert!(parse("t", &format!("{head}{}{disconnect}{execute}", prepare("a"))).is_err());
+        let abandon = "[[step]]\nclient = 'a'\nsimple = 'SELECT 1'\nabandon_after_ms = 100\n";
+        assert!(parse("t", &format!("{head}{}{abandon}{execute}", prepare("a"))).is_err());
     }
 
     #[test]

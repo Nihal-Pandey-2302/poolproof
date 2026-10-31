@@ -1,6 +1,8 @@
 # Test bed: one Postgres with several pooler versions in front of it. Every pooler
 # has a pool of ONE server connection, so state leaks between clients show up every
 # time instead of by chance. POSTGRES_IMAGE picks the server (CI runs 17 and 18).
+# Ports are published on 127.0.0.1 only. PP_PORT_<port> moves a host port, so several
+# test beds can run side by side; scripts/testbed.sh sets them all from one offset.
 name: poolproof
 
 x-pgbouncer: &pgbouncer
@@ -46,7 +48,7 @@ x-supavisor-env: &supavisor-env
 # One-shot: creates tenants (pool size 1, transaction mode) through the API.
 # Clients connect as `postgres.<tenant>`.
 x-supavisor-tenants: &supavisor-tenants
-  image: curlimages/curl:8.11.1
+  image: curlimages/curl:8.22.0
   entrypoint: ["/add-tenant.sh"]
   volumes:
     - ./supavisor/add-tenant.sh:/add-tenant.sh:ro
@@ -64,7 +66,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: app
     ports:
-      - "55432:5432"
+      - "127.0.0.1:${PP_PORT_55432:-55432}:5432"
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "postgres", "-d", "app"]
       interval: 1s
@@ -73,35 +75,35 @@ services:
   pgbouncer-1.24.1:
     <<: *pgbouncer
     image: edoburu/pgbouncer:v1.24.1-p1
-    ports: ["56441:6432"]
+    ports: ["127.0.0.1:${PP_PORT_56441:-56441}:6432"]
   pgbouncer-1.25.2:
     <<: *pgbouncer
     image: edoburu/pgbouncer:v1.25.2-p0
-    ports: ["56442:6432"]
+    ports: ["127.0.0.1:${PP_PORT_56442:-56442}:6432"]
   pgbouncer-1.26.1:
     <<: *pgbouncer
     image: edoburu/pgbouncer:v1.26.1-p0
-    ports: ["56443:6432"]
+    ports: ["127.0.0.1:${PP_PORT_56443:-56443}:6432"]
 
   pgdog-0.1.50:
     <<: *pgdog
     image: ghcr.io/pgdogdev/pgdog:v0.1.50
-    ports: ["56451:6432"]
+    ports: ["127.0.0.1:${PP_PORT_56451:-56451}:6432"]
   pgdog-0.1.56:
     <<: *pgdog
     image: ghcr.io/pgdogdev/pgdog:v0.1.56
-    ports: ["56452:6432"]
+    ports: ["127.0.0.1:${PP_PORT_56452:-56452}:6432"]
   pgdog-0.1.62:
     <<: *pgdog
     image: ghcr.io/pgdogdev/pgdog:v0.1.62
-    ports: ["56453:6432"]
+    ports: ["127.0.0.1:${PP_PORT_56453:-56453}:6432"]
   pgdog-0.1.62-pubsub:
     <<: *pgdog
     image: ghcr.io/pgdogdev/pgdog:v0.1.62
     volumes:
       - ./pgdog/pgdog-pubsub.toml:/pgdog/pgdog.toml:ro
       - ./pgdog/users.toml:/pgdog/users.toml:ro
-    ports: ["56454:6432"]
+    ports: ["127.0.0.1:${PP_PORT_56454:-56454}:6432"]
 
   supavisor-meta:
     image: postgres:17.11
@@ -121,7 +123,7 @@ services:
     environment:
       <<: *supavisor-env
       DATABASE_URL: ecto://postgres:postgres@supavisor-meta:5432/supavisor_2_9
-    ports: ["56461:6543"]
+    ports: ["127.0.0.1:${PP_PORT_56461:-56461}:6543"]
   supavisor-2.9.13-tenants:
     <<: *supavisor-tenants
     environment:
@@ -135,10 +137,34 @@ services:
     environment:
       <<: *supavisor-env
       DATABASE_URL: ecto://postgres:postgres@supavisor-meta:5432/supavisor_2_10
-    ports: ["56462:6543"]
+    ports: ["127.0.0.1:${PP_PORT_56462:-56462}:6543"]
   supavisor-2.10.0-rc.1-tenants:
     <<: *supavisor-tenants
     environment:
       SUPAVISOR: supavisor-2.10.0-rc.1:4000
       TENANTS: pp:default.json ppstrict:strict.json
     depends_on: [supavisor-2.10.0-rc.1]
+
+  # Self-test targets (selftest/targets.toml, selftest/expected.toml): one port per
+  # fault, see tools/pp-proxy. Only with --profile selftest.
+  pp-proxy:
+    profiles: [selftest]
+    build: ../tools/pp-proxy
+    environment:
+      PROXY_BIND: 0.0.0.0
+      PROXY_UPSTREAM: postgres:5432
+      PROXY_USER: postgres
+      PROXY_PASSWORD: postgres
+      PROXY_DATABASE: app
+      PROXY_LISTEN: 6501=none,6502=drop-pipelined,6503=swallow-error,6504=no-copydone,6505=wrong-tag,6506=shared-server,6507=refuse
+    ports:
+      - "127.0.0.1:${PP_PORT_56471:-56471}:6501"
+      - "127.0.0.1:${PP_PORT_56472:-56472}:6502"
+      - "127.0.0.1:${PP_PORT_56473:-56473}:6503"
+      - "127.0.0.1:${PP_PORT_56474:-56474}:6504"
+      - "127.0.0.1:${PP_PORT_56475:-56475}:6505"
+      - "127.0.0.1:${PP_PORT_56476:-56476}:6506"
+      - "127.0.0.1:${PP_PORT_56477:-56477}:6507"
+    depends_on:
+      postgres:
+        condition: service_healthy

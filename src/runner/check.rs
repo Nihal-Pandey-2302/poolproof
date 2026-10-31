@@ -118,26 +118,39 @@ impl std::fmt::Display for Side {
     }
 }
 
+/// What one run produced. Teardown is kept apart from the steps: on the target run,
+/// a teardown that fails (say, on a lock the pooler leaked) mustn't hide a FAIL.
+struct Run {
+    outcomes: Result<Vec<Outcome>, String>,
+    teardown: Result<(), String>,
+}
+
+impl Run {
+    /// The outcomes, or the first error of the run, teardown included.
+    fn all(self) -> Result<Vec<Outcome>, String> {
+        let outcomes = self.outcomes?;
+        self.teardown?;
+        Ok(outcomes)
+    }
+}
+
 /// One run of a scenario's steps with reset, setup and teardown around it. Teardown
-/// runs even when setup or a step fails; the first error is the one returned.
-async fn run_once(
-    scenario: &Scenario,
-    pooled: &str,
-    direct: &str,
-    reset: &[String],
-    side: Side,
-    t: &Timeouts,
-) -> Result<Vec<Outcome>, String> {
-    run_direct(direct, reset, t)
-        .await
-        .map_err(|e| format!("reset ({side}): {e:#}"))?;
+/// runs even when setup or a step fails.
+async fn run_once(scenario: &Scenario, pooled: &str, direct: &str, reset: &[String], side: Side, t: &Timeouts) -> Run {
+    let failed = |reason| Run {
+        outcomes: Err(reason),
+        teardown: Ok(()),
+    };
+    if let Err(e) = run_direct(direct, reset, t).await {
+        return failed(format!("reset ({side}): {e:#}"));
+    }
     // A reset kills the pooler's server connections, and it needs a moment to open new
     // ones. Without a reset there's nothing to wait for.
     if side == Side::Target
         && !reset.is_empty()
         && let Err(e) = wait_ready(pooled, t).await
     {
-        return Err(format!("{e:#}"));
+        return failed(format!("{e:#}"));
     }
     let outcomes = match run_direct(direct, &scenario.setup, t).await {
         Ok(()) => run_steps(scenario, pooled, direct, t)
@@ -148,47 +161,27 @@ async fn run_once(
     let teardown = run_direct(direct, &scenario.teardown, t)
         .await
         .map_err(|e| format!("teardown ({side}): {e:#}"));
-    let outcomes = outcomes?;
-    teardown?;
-    Ok(outcomes)
+    Run { outcomes, teardown }
 }
 
 /// Run a scenario against plain Postgres, then through the pooler, and compare.
 /// `reset` runs on `direct` before each run so state leaked on the pooler's server
 /// connections by an earlier scenario can't change this one's result. Anything that
 /// stops the comparison is a `Verdict::Error` for this scenario only.
-/// With `check_scenarios`, the baseline runs twice first: if Postgres gives different
-/// results on two runs, the scenario is broken, not the pooler.
-pub async fn check(
-    scenario: &Scenario,
-    pooled: &str,
-    direct: &str,
-    reset: &[String],
-    t: &Timeouts,
-    check_scenarios: bool,
-) -> Checked {
-    let expected = match run_once(scenario, direct, direct, reset, Side::Baseline, t).await {
+pub async fn check(scenario: &Scenario, pooled: &str, direct: &str, reset: &[String], t: &Timeouts) -> Checked {
+    let expected = match run_once(scenario, direct, direct, reset, Side::Baseline, t).await.all() {
         Ok(expected) => expected,
         Err(reason) => return Checked::error(reason),
     };
     if let Some(reason) = baseline_failure(&expected) {
         return Checked::error(reason);
     }
-    if check_scenarios {
-        let again = match run_once(scenario, direct, direct, reset, Side::Baseline, t).await {
-            Ok(again) => again,
-            Err(reason) => return Checked::error(reason),
-        };
-        if let Some(reason) = baseline_failure(&again).or_else(|| baseline_diff(scenario, &expected, &again)) {
-            return Checked::error(reason);
-        }
-    }
-
     let mut kept: Option<Checked> = None;
     let mut failures = 0;
     for _ in 0..scenario.repeat {
-        let checked = match run_once(scenario, pooled, direct, reset, Side::Target, t).await {
-            Ok(actual) => compare(scenario, &expected, actual),
+        let run = run_once(scenario, pooled, direct, reset, Side::Target, t).await;
+        let checked = match run.outcomes {
+            Ok(actual) => after_teardown(compare(scenario, &expected, actual), run.teardown),
             Err(reason) => Checked::error(reason),
         };
         let failed = !matches!(checked.verdict, Verdict::Pass);
@@ -202,6 +195,15 @@ pub async fn check(
     let mut checked = kept.unwrap_or_else(|| Checked::error("repeat is 0".into()));
     checked.runs = scenario.repeat;
     checked.failures = failures;
+    checked
+}
+
+/// A failed teardown on the target run only matters when the steps passed: a FAIL
+/// found before it is the real result.
+fn after_teardown(mut checked: Checked, teardown: Result<(), String>) -> Checked {
+    if let (Verdict::Pass, Err(reason)) = (&checked.verdict, teardown) {
+        checked.verdict = Verdict::Error { reason };
+    }
     checked
 }
 
@@ -220,23 +222,25 @@ fn baseline_diff(scenario: &Scenario, first: &[Outcome], second: &[Outcome]) -> 
     ))
 }
 
+/// Run the baseline twice. If Postgres gives different results, the scenario tests
+/// timing, not the pooler, and the error says where. Back-to-back runs catch random
+/// values, clocks and pids in results; they don't catch effects of the order scenarios
+/// run in (`run --reverse` is for that).
+pub async fn deterministic(scenario: &Scenario, direct: &str, reset: &[String], t: &Timeouts) -> Result<(), String> {
+    let first = run_once(scenario, direct, direct, reset, Side::Baseline, t)
+        .await
+        .all()?;
+    let second = run_once(scenario, direct, direct, reset, Side::Baseline, t)
+        .await
+        .all()?;
+    let problem = baseline_failure(&first)
+        .or_else(|| baseline_failure(&second))
+        .or_else(|| baseline_diff(scenario, &first, &second));
+    problem.map_or(Ok(()), Err)
+}
+
 /// Compare one pooler-side run with the baseline outcomes.
 fn compare(scenario: &Scenario, expected: &[Outcome], actual: Vec<Outcome>) -> Checked {
-    // A direct step that couldn't reach Postgres says nothing about the pooler. A
-    // TIMEOUT stays a failure: a lock the pooler leaked can block a direct observer.
-    let direct_failed = scenario.steps.iter().zip(&actual).position(|(step, outcome)| {
-        step.direct && matches!(outcome, Outcome::Error { code, .. } if code == "CONNECT" || code == "CLIENT")
-    });
-    if let Some(i) = direct_failed {
-        return Checked {
-            verdict: Verdict::Error {
-                reason: format!("postgres side failed at step {} (target run): {}", i + 1, actual[i]),
-            },
-            steps: expected.iter().cloned().zip(actual).collect(),
-            runs: 1,
-            failures: 0,
-        };
-    }
     let mismatch = scenario.steps.iter().enumerate().find_map(|(i, step)| {
         (!expected[i].matches(&actual[i], step.compare)).then(|| Mismatch {
             step: i + 1,
@@ -246,6 +250,25 @@ fn compare(scenario: &Scenario, expected: &[Outcome], actual: Vec<Outcome>) -> C
             actual: actual[i].clone(),
         })
     });
+    // A direct step that couldn't reach Postgres says nothing about the pooler, unless
+    // the pooler already went wrong at an earlier step. That includes direct steps with
+    // `compare = "ignore"`, which never show up as a mismatch. A TIMEOUT stays a
+    // failure: a lock the pooler leaked can block a direct observer.
+    let direct_failed = scenario.steps.iter().zip(&actual).position(|(step, outcome)| {
+        step.direct && matches!(outcome, Outcome::Error { code, .. } if code == "CONNECT" || code == "CLIENT")
+    });
+    if let Some(i) = direct_failed
+        && mismatch.as_ref().is_none_or(|m| m.step > i)
+    {
+        return Checked {
+            verdict: Verdict::Error {
+                reason: format!("postgres side failed at step {} (target run): {}", i + 1, actual[i]),
+            },
+            steps: expected.iter().cloned().zip(actual).collect(),
+            runs: 1,
+            failures: 0,
+        };
+    }
     let verdict = match mismatch {
         Some(mismatch) => Verdict::Fail { mismatch },
         None => Verdict::Pass,
@@ -280,7 +303,7 @@ mod tests {
     #[tokio::test]
     async fn unreachable_postgres_is_an_error_not_a_pass() {
         let s = scenario("name = 't'\ndescription = 't'\n[[step]]\nclient = 'a'\nsimple = 'SELECT 1'\n");
-        let checked = check(&s, CLOSED_PORT, CLOSED_PORT, &[], &Timeouts::default(), false).await;
+        let checked = check(&s, CLOSED_PORT, CLOSED_PORT, &[], &Timeouts::default()).await;
         let reason = reason(&checked);
         assert!(
             reason.starts_with("baseline failed at step 1: error CONNECT"),
@@ -293,7 +316,7 @@ mod tests {
         let s = scenario(
             "name = 't'\ndescription = 't'\nsetup = ['SELECT 1']\n[[step]]\nclient = 'a'\nsimple = 'SELECT 1'\n",
         );
-        let checked = check(&s, CLOSED_PORT, CLOSED_PORT, &[], &Timeouts::default(), false).await;
+        let checked = check(&s, CLOSED_PORT, CLOSED_PORT, &[], &Timeouts::default()).await;
         let reason = reason(&checked);
         assert!(reason.starts_with("setup (baseline): "), "{reason}");
     }
@@ -304,7 +327,7 @@ mod tests {
         let mut s = scenario("name = 't'\ndescription = 't'\nrepeat = 3\nstep = []\n");
         s.steps.clear();
         let started = Instant::now();
-        let checked = check(&s, CLOSED_PORT, CLOSED_PORT, &[], &Timeouts::default(), false).await;
+        let checked = check(&s, CLOSED_PORT, CLOSED_PORT, &[], &Timeouts::default()).await;
         assert!(matches!(checked.verdict, Verdict::Pass));
         assert!(
             started.elapsed() < Duration::from_secs(2),
@@ -326,6 +349,31 @@ mod tests {
                 "{reason}"
             );
         }
+        // A pooler bug at an earlier step isn't hidden by a later direct failure.
+        let s2 = scenario(
+            "name = 't'\ndescription = 't'\n[[step]]\nclient = 'app'\nsimple = 'SELECT 1'\n\
+             [[step]]\nclient = 'pg'\ndirect = true\nsimple = 'SELECT 1'\n",
+        );
+        let one = Outcome::Ok {
+            rows: vec![vec![Some("1".into())]],
+            tags: vec![1],
+        };
+        let checked = compare(
+            &s2,
+            &[one.clone(), one.clone()],
+            vec![Outcome::empty(), Outcome::error("CONNECT", "refused")],
+        );
+        assert!(matches!(&checked.verdict, Verdict::Fail { mismatch } if mismatch.step == 1));
+        // An ignored direct step that can't connect is still no result.
+        let s3 = scenario(
+            "name = 't'\ndescription = 't'\n[[step]]\nclient = 'pg'\ndirect = true\nsimple = 'SELECT 1'\ncompare = 'ignore'\n",
+        );
+        let checked = compare(&s3, &expected, vec![Outcome::error("CLIENT", "reset")]);
+        assert!(
+            reason(&checked).starts_with("postgres side failed at step 1 (target run)"),
+            "{}",
+            reason(&checked)
+        );
         // A direct observer blocked by a lock the pooler leaked is the pooler's fault.
         let checked = compare(&s, &expected, vec![Outcome::error("TIMEOUT", "no reply")]);
         assert!(matches!(checked.verdict, Verdict::Fail { .. }));
@@ -387,7 +435,7 @@ mod tests {
         let started = Instant::now();
         let checked = timeout(
             Duration::from_secs(30),
-            check(&s, &url, &url, &[], &Timeouts::default(), false),
+            check(&s, &url, &url, &[], &Timeouts::default()),
         )
         .await
         .expect("teardown hung");
@@ -437,14 +485,31 @@ mod tests {
                 "name = 't'\ndescription = 't'\n[[step]]\nclient = 'a'\nsimple = 'SELECT random()'\ncompare = '{compare}'\n"
             ))
         };
-        let checked = check(&toml("full"), &url, &url, &[], &Timeouts::default(), true).await;
-        assert!(
-            reason(&checked).starts_with("nondeterministic scenario: step 1"),
-            "{}",
-            reason(&checked)
-        );
-        let checked = check(&toml("status"), &url, &url, &[], &Timeouts::default(), true).await;
-        assert!(matches!(checked.verdict, Verdict::Pass));
+        let reason = deterministic(&toml("full"), &url, &[], &Timeouts::default())
+            .await
+            .unwrap_err();
+        assert!(reason.starts_with("nondeterministic scenario: step 1"), "{reason}");
+        deterministic(&toml("status"), &url, &[], &Timeouts::default())
+            .await
+            .unwrap();
+    }
+
+    #[test]
+    fn a_failed_target_teardown_keeps_a_fail() {
+        let s = scenario("name = 't'\ndescription = 't'\n[[step]]\nclient = 'a'\nsimple = 'SELECT 1'\n");
+        let one = Outcome::Ok {
+            rows: vec![vec![Some("1".into())]],
+            tags: vec![1],
+        };
+        let expected = [one.clone()];
+        let teardown = || Err("teardown (target): lock timeout".to_string());
+        let failed = after_teardown(compare(&s, &expected, vec![Outcome::empty()]), teardown());
+        assert!(matches!(failed.verdict, Verdict::Fail { .. }));
+        let passed = after_teardown(compare(&s, &expected, vec![one.clone()]), teardown());
+        assert_eq!(reason(&passed), "teardown (target): lock timeout");
+        assert_eq!(passed.steps.len(), 1);
+        let clean = after_teardown(compare(&s, &expected, vec![one]), Ok(()));
+        assert!(matches!(clean.verdict, Verdict::Pass));
     }
 
     #[tokio::test]
@@ -456,13 +521,13 @@ mod tests {
             step: Duration::from_secs(1),
             ..Timeouts::default()
         };
-        let checked = check(&s, &url, &url, &[], &short, false).await;
+        let checked = check(&s, &url, &url, &[], &short).await;
         let reason = reason(&checked);
         assert!(
             reason.starts_with("baseline failed at step 1: error TIMEOUT"),
             "{reason}"
         );
-        let checked = check(&s, &url, &url, &[], &Timeouts::default(), false).await;
+        let checked = check(&s, &url, &url, &[], &Timeouts::default()).await;
         assert!(matches!(checked.verdict, Verdict::Pass));
     }
 
@@ -474,7 +539,7 @@ mod tests {
             "name = 't'\ndescription = 't'\n[[step]]\nclient = 'a'\n\
              send = [\"query SET application_name = 'pp_c10'\"]\ncompare_parameter_status = true\n",
         );
-        let checked = check(&s, &url, &url, &[], &Timeouts::default(), false).await;
+        let checked = check(&s, &url, &url, &[], &Timeouts::default()).await;
         assert!(matches!(checked.verdict, Verdict::Pass));
         let Outcome::Messages { messages } = &checked.steps[0].0 else {
             panic!("expected send replies")

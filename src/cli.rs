@@ -67,16 +67,20 @@ enum Command {
         /// `500ms` (a bare number is seconds). A scenario's `timeout_ms` overrides it.
         #[arg(long, value_name = "DURATION", default_value = "10s", value_parser = parse_duration)]
         step_timeout: Duration,
-        /// Which failures make the exit code 1. An ERROR (nothing to compare) counts
-        /// unless this is `none`.
+        /// Which FAILs make the exit code 1, by kind. An ERROR verdict (nothing
+        /// compared) counts unless this is `none`.
         #[arg(long, value_enum, default_value_t = FailOn::Any)]
         fail_on: FailOn,
     },
-    /// Scan queries (pg_stat_statements CSV or a .sql file) for patterns that
-    /// break under transaction pooling.
+    /// Scan queries (pg_stat_statements CSV, Postgres logs or a .sql file) for
+    /// patterns that break under transaction pooling.
     Scan {
-        /// pg_stat_statements CSV, Postgres log (.log stderr, .json jsonlog) or .sql file.
+        /// pg_stat_statements CSV, Postgres log (.log stderr, .json jsonlog, .csv csvlog)
+        /// or .sql file. `-` reads stdin (needs --input).
         input: PathBuf,
+        /// What the input is. Without it, the file extension decides.
+        #[arg(long = "input", value_enum, value_name = "FORMAT")]
+        input_format: Option<scan::InputFormat>,
         #[arg(long, value_enum, default_value_t = ScanFormat::Text)]
         format: ScanFormat,
         /// Exit non-zero on warnings too, not just on queries that break.
@@ -182,6 +186,14 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
             let failed = count(|v| matches!(v, Verdict::Fail { .. }));
             let errors = count(|v| matches!(v, Verdict::Error { .. }));
             let exit_failure = results.iter().any(|r| fail_on.fails(&r.verdict));
+            let ignored = results
+                .iter()
+                .filter(|r| matches!(r.verdict, Verdict::Fail { .. } | Verdict::Error { .. }))
+                .filter(|r| !fail_on.fails(&r.verdict))
+                .count();
+            if ignored > 0 {
+                eprintln!("note: {ignored} failed or errored results ignored by --fail-on {fail_on}");
+            }
             if matches!(format, RunFormat::Text) {
                 let passed = count(|v| matches!(v, Verdict::Pass));
                 let skipped = count(|v| matches!(v, Verdict::Skip { .. }));
@@ -219,13 +231,14 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
         }
         Command::Scan {
             input,
+            input_format,
             format,
             strict,
             pooler,
             postgres,
             results,
         } => {
-            let queries = scan::load_queries(&input)?;
+            let queries = scan::load_queries(&input, input_format)?;
             let mut report = scan::scan(&queries);
             if let Some(pooler) = &pooler {
                 let reports = match &results {
@@ -246,7 +259,7 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
                 report.findings.sort_by_key(rank);
             }
             match format {
-                ScanFormat::Json => println!("{}", serde_json::to_string_pretty(&report.findings)?),
+                ScanFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
                 ScanFormat::Sarif => println!("{}", serde_json::to_string_pretty(&sarif(&report, &input))?),
                 ScanFormat::Text => print_scan(&report),
             }
