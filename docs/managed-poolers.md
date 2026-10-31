@@ -81,8 +81,9 @@ Not tested in poolproof's CI.
   ERROR with a reason like `reset = "all" can't end the pooler's sessions: this user
   can't end sessions of proxy_user without pg_signal_backend and pg_read_all_stats; as a
   superuser: GRANT pg_signal_backend, pg_read_all_stats TO "app"` (naming only what is
-  missing). There is no superuser on RDS to run that `GRANT`. `doctor` shows the same
-  refusal as a failed `reset` check.
+  missing). There is no superuser on RDS; the master user may be able to run that
+  `GRANT` (check its privileges with `doctor`), otherwise use one role on both URLs.
+  `doctor` shows the same refusal as a failed `reset` check.
 - **SKIP.** `load-isolated-between-clients` needs a superuser, so it always SKIPs. The two
   `SET ROLE` scenarios need `CREATEROLE` on the `direct` user.
 
