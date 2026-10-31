@@ -5,6 +5,16 @@
 # test beds can run side by side; scripts/testbed.sh sets them all from one offset.
 name: poolproof
 
+# The postgres image declares a VOLUME for its data, so every container from it would
+# leave an anonymous volume behind on each `down` without -v. The test bed's data is
+# throwaway: tmpfs instead, which is faster too. Both paths, so neither 17's VOLUME
+# (/var/lib/postgresql/data) nor 18's (/var/lib/postgresql) gets a volume. With a mount
+# at the old path, 18 starts only if PGDATA points there, so services that run Postgres
+# set PGDATA to it on every version.
+x-postgres-tmpfs: &postgres-tmpfs
+  - /var/lib/postgresql
+  - /var/lib/postgresql/data
+
 x-pgbouncer: &pgbouncer
   volumes:
     - ./pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
@@ -67,6 +77,7 @@ services:
     environment:
       # Each test bed writes its own ca.pem, so beds side by side don't overwrite it.
       PROJECT: ${COMPOSE_PROJECT_NAME:-poolproof}
+    tmpfs: *postgres-tmpfs
     volumes:
       - ./tls/make-certs.sh:/make-certs.sh:ro
       - tls:/certs
@@ -78,6 +89,8 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: app
+      PGDATA: /var/lib/postgresql/data
+    tmpfs: *postgres-tmpfs
     ports:
       - "127.0.0.1:${PP_PORT_55432:-55432}:5432"
     healthcheck:
@@ -176,6 +189,8 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
+      PGDATA: /var/lib/postgresql/data
+    tmpfs: *postgres-tmpfs
     volumes:
       - ./supavisor/init.sh:/docker-entrypoint-initdb.d/init.sh:ro
     healthcheck:
