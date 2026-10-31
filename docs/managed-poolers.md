@@ -16,9 +16,10 @@ poolproof's CI, so check it against your provider's docs if something doesn't ma
 2. **Use one role for both URLs, and not a superuser.** The pooler URL and the `direct`
    URL should log in as the same role. A role can always see and end its own sessions, so
    the reset needs no extra privileges. With two different roles, the `direct` one needs
-   `pg_signal_backend` and `pg_read_all_stats` to see and end the pooler's sessions, and
-   `run` refuses to start without them. It can never end a superuser's sessions, so a
-   pooler that logs in as a superuser can't be reset by a user that isn't one.
+   `pg_signal_backend` and `pg_read_all_stats` to see and end the pooler's sessions;
+   without them, `run` resets nothing and marks every scenario ERROR. It can never end a
+   superuser's sessions, so a pooler that logs in as a superuser can't be reset by a user
+   that isn't one.
 3. **Pick `reset = "all"` and pass `--yes`.** A managed pooler usually reaches Postgres
    from several addresses (one per node or zone), and `"auto"` only ends the sessions
    from the one address it sees when it asks through the pooler. `"all"` ends every other
@@ -73,11 +74,12 @@ Not tested in poolproof's CI.
   other role. With the same user on both URLs, `reset = "all"` works without extra
   privileges and ends that user's other sessions on the scratch database (and other
   roles' too, where the user has `pg_signal_backend`). If the proxy logs in as a
-  different role, `run` stops with an ERROR on every scenario, along the lines of
-  `reset = "all" can't end the pooler's sessions: this user can't end sessions of
-  proxy_user without pg_signal_backend; as a superuser: GRANT pg_signal_backend TO "app"`.
-  There is no superuser to run that `GRANT` on RDS, so use one role on both URLs
-  instead. `doctor` shows the same refusal as a failed `reset` check.
+  different role and the `direct` user lacks either privilege, every scenario is an
+  ERROR with a reason like `reset = "all" can't end the pooler's sessions: this user
+  can't end sessions of proxy_user without pg_signal_backend and pg_read_all_stats; as a
+  superuser: GRANT pg_signal_backend, pg_read_all_stats TO "app"` (naming only what is
+  missing). There is no superuser to run that `GRANT` on RDS, so use one role on both
+  URLs instead. `doctor` shows the same refusal as a failed `reset` check.
 - **SKIP.** `load-isolated-between-clients` needs a superuser, so it always SKIPs. The two
   `SET ROLE` scenarios need `CREATEROLE` on the `direct` user.
 
