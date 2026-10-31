@@ -9,8 +9,8 @@ use anyhow::{Context, Result, bail};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpStream;
 use tokio::task::JoinHandle;
-use tokio::time::timeout;
-use tokio_postgres::config::{Host, SslMode};
+use tokio::time::{timeout, timeout_at};
+use tokio_postgres::config::{Config, Host, SslMode};
 use tokio_postgres::tls::MakeTlsConnect;
 use tokio_postgres::{AsyncMessage, CancelToken, Client, Connection, NoTls, SimpleQueryMessage, Statement};
 use tokio_postgres_rustls::MakeRustlsConnect;
@@ -106,19 +106,71 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for DrainOnShutdown<S> {
     }
 }
 
+/// Opens a TCP connection with the URL's socket options: `connect_timeout` for the TCP
+/// connect (as tokio-postgres; the whole connect also has the harness's own limit),
+/// `tcp_user_timeout` in milliseconds as in libpq, and keepalives (on unless
+/// `keepalives=0`, with `keepalives_idle`, `_interval` and `_retries`). An option this
+/// system can't set is an error, not ignored.
+pub(super) async fn tcp_connect(config: &Config, host: &str, port: u16) -> Result<TcpStream> {
+    let connecting = TcpStream::connect((host, port));
+    let stream = match config.get_connect_timeout() {
+        Some(limit) => timeout(*limit, connecting)
+            .await
+            .with_context(|| format!("no connection within connect_timeout ({limit:?})"))??,
+        None => connecting.await?,
+    };
+    stream.set_nodelay(true)?;
+    let socket = socket2::SockRef::from(&stream);
+    if let Some(parsed) = config.get_tcp_user_timeout() {
+        // libpq's tcp_user_timeout is in milliseconds; tokio-postgres reads the number
+        // as seconds.
+        let limit = Duration::from_millis(parsed.as_secs());
+        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+        socket.set_tcp_user_timeout(Some(limit))?;
+        #[cfg(not(any(target_os = "android", target_os = "fuchsia", target_os = "linux")))]
+        bail!("not supported on this system: tcp_user_timeout ({limit:?})");
+    }
+    if config.get_keepalives() {
+        let mut keepalive = socket2::TcpKeepalive::new().with_time(config.get_keepalives_idle());
+        if let Some(interval) = config.get_keepalives_interval() {
+            #[cfg(not(any(target_os = "aix", target_os = "openbsd", target_os = "redox", target_os = "solaris")))]
+            {
+                keepalive = keepalive.with_interval(interval);
+            }
+            #[cfg(any(target_os = "aix", target_os = "openbsd", target_os = "redox", target_os = "solaris"))]
+            bail!("not supported on this system: keepalives_interval ({interval:?})");
+        }
+        if let Some(retries) = config.get_keepalives_retries() {
+            #[cfg(not(any(
+                target_os = "aix",
+                target_os = "openbsd",
+                target_os = "redox",
+                target_os = "solaris",
+                target_os = "windows"
+            )))]
+            {
+                keepalive = keepalive.with_retries(retries);
+            }
+            #[cfg(any(
+                target_os = "aix",
+                target_os = "openbsd",
+                target_os = "redox",
+                target_os = "solaris",
+                target_os = "windows"
+            ))]
+            bail!("not supported on this system: keepalives_retries ({retries})");
+        }
+        socket.set_tcp_keepalive(&keepalive)?;
+    }
+    Ok(stream)
+}
+
 /// Opens the socket to an endpoint's first host. Returns it with the host name, for TLS.
 async fn open(endpoint: &Endpoint) -> Result<(Box<dyn Io>, String)> {
     let config = endpoint.config();
     let port = config.get_ports().first().copied().unwrap_or(5432);
     match config.get_hosts().first() {
-        Some(Host::Tcp(host)) => {
-            let stream = TcpStream::connect((host.as_str(), port)).await?;
-            stream.set_nodelay(true)?;
-            // As tokio-postgres does on the sockets it opens: keepalives after 2 hours idle.
-            let keepalive = socket2::TcpKeepalive::new().with_time(Duration::from_secs(2 * 60 * 60));
-            socket2::SockRef::from(&stream).set_tcp_keepalive(&keepalive)?;
-            Ok((Box::new(stream), host.clone()))
-        }
+        Some(Host::Tcp(host)) => Ok((Box::new(tcp_connect(config, host, port).await?), host.clone())),
         #[cfg(unix)]
         Some(Host::Unix(dir)) => {
             let stream = tokio::net::UnixStream::connect(dir.join(format!(".s.PGSQL.{port}"))).await?;
@@ -314,34 +366,243 @@ pub async fn server_version(endpoint: &Endpoint, t: &Timeouts) -> Result<String>
     Ok(version.split_whitespace().next().unwrap_or_default().to_string())
 }
 
-/// Retry `SELECT 1` through the pooler until it answers. A reset kills the pooler's
-/// server connections, and it needs a moment to notice and open new ones.
-pub(super) async fn wait_ready(endpoint: &Endpoint, t: &Timeouts) -> Result<()> {
+/// Retry `SELECT 1` through the pooler until it answers, then let it settle (see
+/// `settle`). A reset kills the pooler's server connections, and it needs a moment to
+/// notice and open new ones. Errors only if the pooler never answers; returns whether
+/// it settled.
+pub(super) async fn wait_ready(endpoint: &Endpoint, t: &Timeouts) -> Result<bool> {
     let deadline = tokio::time::Instant::now() + t.ready;
+    let mut answered = false;
+    // Settling is skipped for poolers already seen rotating their server connections.
+    let skip_settle = ROTATING
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .contains(&endpoint.to_string());
     loop {
         let err = match connect(endpoint, t).await {
             Ok((client, driver, _)) => {
-                let res = timeout(t.housekeeping, client.simple_query("SELECT 1")).await;
+                let res = match timeout(t.housekeeping, client.simple_query("SELECT 1")).await {
+                    Ok(Ok(_)) if skip_settle => Ok(Settle::Unstable),
+                    Ok(Ok(_)) => {
+                        answered = true;
+                        Ok(settle(&client, t).await)
+                    }
+                    Ok(Err(e)) => Err(anyhow::Error::from(e)),
+                    Err(_) => Err(anyhow::anyhow!("SELECT 1 timed out")),
+                };
                 drop(client);
-                let _ = timeout(t.housekeeping, driver).await;
+                if matches!(res, Ok(Settle::Stable)) || skip_settle {
+                    let _ = timeout(t.housekeeping, driver).await;
+                } else {
+                    // A probe may still be waiting for its reply; don't wait for it.
+                    driver.abort();
+                }
                 match res {
-                    Ok(Ok(_)) => return Ok(()),
-                    Ok(Err(e)) => anyhow::Error::from(e),
-                    Err(_) => anyhow::anyhow!("SELECT 1 timed out"),
+                    Ok(Settle::Stable) => return Ok(true),
+                    Ok(Settle::Unstable) => return Ok(false),
+                    Ok(Settle::Rotating) => {
+                        eprintln!("note: pooler {endpoint} rotates server connections; settle skipped from now on");
+                        ROTATING
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .push(endpoint.to_string());
+                        return Ok(false);
+                    }
+                    // The server connection went away while settling: start over.
+                    Ok(Settle::Broken) => anyhow::anyhow!("server connection changed while settling"),
+                    Err(e) => e,
                 }
             }
             Err(e) => e,
         };
         if tokio::time::Instant::now() >= deadline {
+            // It answered at least once: go on, settling is best effort.
+            if answered {
+                return Ok(false);
+            }
             return Err(err.context(format!("pooler not ready {:?} after reset", t.ready)));
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
 }
 
+/// Poolers (by endpoint) that answered from SETTLE_PROBES different backends without
+/// settling; see `settle`. A pooler that was only slow isn't added: Supavisor 2.10
+/// sometimes needs more than SETTLE_MAX to replace its server connection.
+static ROTATING: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+enum Settle {
+    /// The same backend answered SETTLE_PROBES times in a row.
+    Stable,
+    /// The time ran out before the pid settled.
+    Unstable,
+    /// At least SETTLE_PROBES different backends answered and none settled: a pool
+    /// with several server connections, not worth settling again.
+    Rotating,
+    /// A probe failed: the server connection went away under us.
+    Broken,
+}
+
+const SETTLE_PROBES: usize = 3;
+const SETTLE_GAP: Duration = Duration::from_millis(50);
+const SETTLE_MAX: Duration = Duration::from_secs(2);
+
+/// Some poolers learn only later that reset killed their server connection, and
+/// replace it after they've already answered (Supavisor 2.10 logs "Session terminated
+/// by server while idle in the pool"). A scenario that starts in that window loses its
+/// session state halfway. So ask for the backend pid until the same one answers
+/// SETTLE_PROBES times in a row. Best effort: with several server connections the pid
+/// may never settle, and after SETTLE_MAX the run goes on.
+async fn settle(client: &Client, t: &Timeouts) -> Settle {
+    let deadline = tokio::time::Instant::now() + SETTLE_MAX;
+    let mut last = None;
+    let mut same = 0;
+    let mut seen = std::collections::HashSet::new();
+    while tokio::time::Instant::now() < deadline {
+        // Each probe ends by the overall deadline too, so settling never takes longer.
+        let until = deadline.min(tokio::time::Instant::now() + t.housekeeping);
+        let pid = match timeout_at(until, client.simple_query("SELECT pg_backend_pid()")).await {
+            Ok(Ok(messages)) => messages.into_iter().find_map(|m| match m {
+                SimpleQueryMessage::Row(row) => row.get(0).map(str::to_string),
+                _ => None,
+            }),
+            Err(_) if tokio::time::Instant::now() >= deadline => return Settle::Unstable,
+            _ => return Settle::Broken,
+        };
+        same = if pid.is_some() && pid == last { same + 1 } else { 1 };
+        if same >= SETTLE_PROBES {
+            return Settle::Stable;
+        }
+        seen.extend(pid.clone());
+        last = pid;
+        tokio::time::sleep(SETTLE_GAP).await;
+    }
+    if seen.len() >= SETTLE_PROBES {
+        Settle::Rotating
+    } else {
+        Settle::Unstable
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// How the stand-in pooler answers the n-th `SELECT pg_backend_pid()`.
+    enum Pid {
+        Is(usize),
+        /// Never answers.
+        Hang,
+        /// Drops the connection, as when the pooler swaps its server connection.
+        Close,
+    }
+
+    /// A pooler stand-in: accepts any login, answers SELECT 1, and answers
+    /// `SELECT pg_backend_pid()` as `pid(n)` says, counting over all connections.
+    async fn pooler_with_pids(name: &str, pid: fn(usize) -> Pid) -> Endpoint {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        fn message(tag: u8, body: &[u8]) -> Vec<u8> {
+            [&[tag][..], &(body.len() as u32 + 4).to_be_bytes(), body].concat()
+        }
+        fn row(value: &str) -> Vec<u8> {
+            let mut desc = b"\0\x01x\0".to_vec();
+            desc.extend([0u8; 6]);
+            desc.extend(25u32.to_be_bytes());
+            desc.extend((-1i16).to_be_bytes());
+            desc.extend((-1i32).to_be_bytes());
+            desc.extend(0i16.to_be_bytes());
+            let mut data = 1u16.to_be_bytes().to_vec();
+            data.extend((value.len() as u32).to_be_bytes());
+            data.extend(value.as_bytes());
+            [message(b'T', &desc), message(b'D', &data), message(b'C', b"SELECT 1\0")].concat()
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let asked = Arc::new(Mutex::new(0));
+        tokio::spawn(async move {
+            while let Ok((mut s, _)) = listener.accept().await {
+                let asked = asked.clone();
+                tokio::spawn(async move {
+                    let len = s.read_u32().await.unwrap() as usize;
+                    let mut startup = vec![0; len - 4];
+                    s.read_exact(&mut startup).await.unwrap();
+                    let ready = message(b'Z', b"I");
+                    let hello = [message(b'R', &[0; 4]), message(b'K', &[0; 8]), ready.clone()].concat();
+                    s.write_all(&hello).await.unwrap();
+                    while let Ok(tag) = s.read_u8().await {
+                        let len = s.read_u32().await.unwrap() as usize;
+                        let mut body = vec![0; len - 4];
+                        s.read_exact(&mut body).await.unwrap();
+                        if tag != b'Q' {
+                            return;
+                        }
+                        let reply = if body.starts_with(b"SELECT pg_backend_pid()") {
+                            let n = {
+                                let mut asked = asked.lock().unwrap();
+                                *asked += 1;
+                                *asked
+                            };
+                            match pid(n) {
+                                Pid::Is(pid) => row(&pid.to_string()),
+                                Pid::Hang => {
+                                    tokio::time::sleep(Duration::from_secs(60)).await;
+                                    return;
+                                }
+                                Pid::Close => return,
+                            }
+                        } else {
+                            row("1")
+                        };
+                        s.write_all(&[reply, ready.clone()].concat()).await.unwrap();
+                    }
+                });
+            }
+        });
+        // A dbname per test: ports can repeat across tests, and the skip list is by endpoint.
+        Endpoint::parse(&format!("postgres://u@127.0.0.1:{port}/{name}?sslmode=disable")).unwrap()
+    }
+
+    #[tokio::test]
+    async fn ready_waits_until_the_same_backend_answers() {
+        let t = Timeouts::default();
+        // The pooler swaps its server connection twice, then keeps one.
+        let settling = pooler_with_pids("settling", |n| Pid::Is(n.min(3)));
+        assert!(wait_ready(&settling.await, &t).await.unwrap());
+        // A new backend every time, as with a larger pool: give up, but don't fail,
+        // and don't try again for this pooler.
+        let rotating = pooler_with_pids("rotating", Pid::Is).await;
+        let started = tokio::time::Instant::now();
+        assert!(!wait_ready(&rotating, &t).await.unwrap());
+        assert!(started.elapsed() >= SETTLE_MAX);
+        let started = tokio::time::Instant::now();
+        assert!(!wait_ready(&rotating, &t).await.unwrap());
+        assert!(
+            started.elapsed() < Duration::from_millis(500),
+            "settle skipped the second time"
+        );
+    }
+
+    #[tokio::test]
+    async fn settling_never_takes_longer_than_its_limit() {
+        let hangs = pooler_with_pids("hangs", |n| if n == 1 { Pid::Is(1) } else { Pid::Hang }).await;
+        let started = tokio::time::Instant::now();
+        assert!(!wait_ready(&hangs, &Timeouts::default()).await.unwrap());
+        assert!(
+            started.elapsed() < SETTLE_MAX + Duration::from_millis(500),
+            "{:?}",
+            started.elapsed()
+        );
+        // Only slow, not rotating: it gets another chance next time.
+        assert!(!ROTATING.lock().unwrap().contains(&hangs.to_string()));
+    }
+
+    #[tokio::test]
+    async fn a_connection_dropped_while_settling_is_retried() {
+        // The second pid query loses the connection (Supavisor swapping its backend);
+        // the next connection settles.
+        let swaps = pooler_with_pids("swaps", |n| if n == 2 { Pid::Close } else { Pid::Is(7) }).await;
+        assert!(wait_ready(&swaps, &Timeouts::default()).await.unwrap());
+    }
 
     #[tokio::test]
     async fn shutdown_waits_for_the_server_to_close_when_draining() {
@@ -398,6 +659,37 @@ mod tests {
         );
         assert_eq!(createrole.missing(&[Requirement::Createrole]), None);
         assert_eq!(superuser.missing(&all), None);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn sockets_get_the_url_options() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let open = |options: &str| {
+            let url = format!("postgres://u@127.0.0.1:{port}/db?{options}");
+            async move {
+                let endpoint = Endpoint::parse(&url).unwrap();
+                tcp_connect(endpoint.config(), "127.0.0.1", port).await.unwrap()
+            }
+        };
+
+        let stream = open("keepalives_idle=77&keepalives_interval=5&keepalives_retries=3&tcp_user_timeout=9000").await;
+        let socket = socket2::SockRef::from(&stream);
+        assert!(socket.keepalive().unwrap());
+        assert_eq!(socket.tcp_keepalive_time().unwrap(), Duration::from_secs(77));
+        assert_eq!(socket.tcp_keepalive_interval().unwrap(), Duration::from_secs(5));
+        assert_eq!(socket.tcp_keepalive_retries().unwrap(), 3);
+        assert_eq!(socket.tcp_user_timeout().unwrap(), Some(Duration::from_secs(9)));
+
+        // The defaults, as in tokio-postgres: on, after 2 hours idle.
+        let stream = open("").await;
+        let socket = socket2::SockRef::from(&stream);
+        assert!(socket.keepalive().unwrap());
+        assert_eq!(socket.tcp_keepalive_time().unwrap(), Duration::from_secs(2 * 60 * 60));
+
+        let stream = open("keepalives=0").await;
+        assert!(!socket2::SockRef::from(&stream).keepalive().unwrap());
     }
 
     #[tokio::test]
