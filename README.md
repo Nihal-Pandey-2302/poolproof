@@ -120,7 +120,7 @@ mode = "transaction"
 config = ["default", "tls"]   # target configs; default: ["default"]
 since = "1.24.1"              # lowest version it was checked on; fixed_in = "..." ends it
 # postgres_since / postgres_fixed_in limit it to some Postgres versions.
-differs = [{ step = 3, pooler = { status = "ok", rows = [["9MB"]], tags = [0] } }]
+differs = [{ step = 4, pooler = { status = "ok", rows = [["9MB"]], tags = [0] } }]
 doc = "https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f.../features.md"
 quote = "SET/RESET | Yes | Never"
 # doc_version = "1.26.1" is needed when the link isn't pinned to a commit.
@@ -686,8 +686,9 @@ Not covered yet:
 
 - RDS Proxy and hosted poolers are not in the test bed; they can be tested with the
   recipes in [docs/managed-poolers.md](docs/managed-poolers.md).
-- The variant targets (`targets-variants.toml`, session mode so far) have no published
-  results yet, and a larger pool and non-default pooler settings have no targets yet.
+- The variant targets (`targets-variants.toml`: session mode and pool_size 4 so far) run
+  nightly on Postgres 18.4 only, and their results are published on the site under their
+  own heading. Non-default pooler settings have no targets yet.
 - `scripts/pgdog-ref.sh` has not been checked with release builds, its default.
 
 ## License
