@@ -641,6 +641,41 @@ mod tests {
     }
 
     #[test]
+    fn limitations_never_mark_a_driver_case() {
+        use crate::runner::Verdict;
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut report = crate::report::Report::load(&root.join("results/drivers-postgres-17.11.json")).unwrap();
+        let cases = scenarios(&[]).unwrap();
+        // PgBouncer's SET leak is a documented limitation of the built-in scenarios; the
+        // driver cases fail the same way, but no entry is about them.
+        assert!(
+            report
+                .results
+                .iter()
+                .any(|r| r.target.starts_with("pgbouncer") && matches!(r.verdict, Verdict::Fail { .. }))
+        );
+        let limitations = crate::limitations::load(None, &[]).unwrap();
+        for row in &report.results {
+            let target = report.targets.iter().find(|t| t.name == row.target).unwrap();
+            let case = cases.iter().find(|s| s.name == row.scenario).unwrap();
+            assert!(
+                limitations.expected_for(target, case, row).is_none(),
+                "{}",
+                row.scenario
+            );
+        }
+        limitations.apply(&mut report, &cases);
+        assert!(report.results.iter().all(|r| r.expected.is_none()));
+        assert!(report.stale_expectations.is_empty());
+
+        // `drivers --limitations DIR` checks a directory against the built-in scenarios,
+        // so a pooler's own set loads; against the driver cases it couldn't.
+        let dir = root.join("limitations");
+        assert!(crate::limitations::load(Some(&dir), &crate::scenario::bundled().unwrap()).is_ok());
+        assert!(crate::limitations::load(Some(&dir), &cases).is_err());
+    }
+
+    #[test]
     fn deadline_covers_every_step_and_connect() {
         let t = Timeouts {
             step: Duration::from_secs(10),
