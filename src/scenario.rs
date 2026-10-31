@@ -729,12 +729,13 @@ mod tests {
 
     /// Validated on session PgBouncer 1.26.1 with a pool of 1: exactly these hang there
     /// (two clients hold a server connection at once), and every other scenario passes.
+    /// Scenarios that don't run in session mode are left out.
     #[test]
     fn scenarios_needing_two_session_connections() {
         let mut two: Vec<String> = bundled()
             .unwrap()
             .into_iter()
-            .filter(|s| s.max_concurrent() > 1)
+            .filter(|s| s.modes.contains(&PoolMode::Session) && s.max_concurrent() > 1)
             .map(|s| s.name)
             .collect();
         two.sort();

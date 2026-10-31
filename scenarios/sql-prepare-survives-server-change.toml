@@ -1,0 +1,40 @@
+name = "sql-prepare-survives-server-change"
+description = "A statement prepared with SQL PREPARE must stay usable by its client while another client holds the server connection it was prepared on."
+requires = ["several_server_connections"]
+modes = ["transaction"]
+# Whether the pooler hands c a's old backend can depend on timing: run it several times.
+repeat = 5
+setup = ["DROP TABLE IF EXISTS pp_hog_pid", "CREATE TABLE pp_hog_pid (who text PRIMARY KEY, pid int)"]
+teardown = ["DROP TABLE IF EXISTS pp_hog_pid"]
+
+[[step]]
+client = "a"
+simple = "PREPARE pp_hog_stmt AS SELECT 'from a'::text"
+
+# a's backend, so c can check it took it.
+[[step]]
+client = "a"
+simple = "INSERT INTO pp_hog_pid VALUES ('a', pg_backend_pid()) ON CONFLICT (who) DO UPDATE SET pid = excluded.pid"
+
+# c holds a's old backend in an open transaction, so a's next query has to run on
+# another one. If c got a different backend, the run proves nothing and is a SKIP.
+[[step]]
+client = "c"
+simple = "BEGIN"
+
+[[step]]
+client = "c"
+simple = "SELECT pg_backend_pid() = (SELECT pid FROM pp_hog_pid WHERE who = 'a')"
+precondition = true
+
+[[step]]
+client = "a"
+simple = "EXECUTE pp_hog_stmt"
+
+[[step]]
+client = "c"
+simple = "COMMIT"
+
+[[step]]
+client = "a"
+simple = "DEALLOCATE ALL"

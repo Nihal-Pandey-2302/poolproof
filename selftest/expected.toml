@@ -12,6 +12,10 @@
 # the harness or the scenario is wrong.
 [targets.selftest-passthrough]
 default = "pass"
+protocol-prepare-survives-server-change = { result = "skip", reason_prefix = "precondition at step", why = "every client has its own server connection, so c never holds a's" }
+set-survives-server-change = { result = "skip", reason_prefix = "precondition at step", why = "every client has its own server connection, so c never holds a's" }
+sql-prepare-survives-server-change = { result = "skip", reason_prefix = "precondition at step", why = "every client has its own server connection, so c never holds a's" }
+temp-table-survives-server-change = { result = "skip", reason_prefix = "precondition at step", why = "every client has its own server connection, so c never holds a's" }
 
 # Drops client messages sent after a Sync until that Sync's ReadyForQuery.
 [targets.selftest-drop-pipelined]
@@ -19,6 +23,10 @@ default = "pass"
 protocol-four-pipelined-requests = { result = "hang", why = "requests 2-4 never reach the server" }
 protocol-pipeline-recovers-after-error = { result = "hang", why = "the second request never reaches the server" }
 # protocol-pipelined-statements passes: its steps have a single Sync each.
+protocol-prepare-survives-server-change = { result = "skip", reason_prefix = "precondition at step", why = "every client has its own server connection, so c never holds a's" }
+set-survives-server-change = { result = "skip", reason_prefix = "precondition at step", why = "every client has its own server connection, so c never holds a's" }
+sql-prepare-survives-server-change = { result = "skip", reason_prefix = "precondition at step", why = "every client has its own server connection, so c never holds a's" }
+temp-table-survives-server-change = { result = "skip", reason_prefix = "precondition at step", why = "every client has its own server connection, so c never holds a's" }
 
 # Drops every ErrorResponse after startup. Every scenario where Postgres answers with
 # an error fails; the client gets ReadyForQuery and no hint, so they are silent, except
@@ -35,16 +43,28 @@ protocol-error-after-flush = { result = "hang", why = "42601 is dropped; with Fl
 protocol-pipeline-recovers-after-error = { result = "silent", why = "22012 is dropped" }
 sql-prepare-isolated-between-clients = { result = "silent", why = "the other client's 26000 is dropped" }
 temp-table-isolated-between-clients = { result = "silent", why = "the other client's 42P01 is dropped" }
+protocol-prepare-survives-server-change = { result = "skip", reason_prefix = "precondition at step", why = "every client has its own server connection, so c never holds a's" }
+set-survives-server-change = { result = "skip", reason_prefix = "precondition at step", why = "every client has its own server connection, so c never holds a's" }
+sql-prepare-survives-server-change = { result = "skip", reason_prefix = "precondition at step", why = "every client has its own server connection, so c never holds a's" }
+temp-table-survives-server-change = { result = "skip", reason_prefix = "precondition at step", why = "every client has its own server connection, so c never holds a's" }
 
 # Drops the client's CopyDone, so the server waits for more data.
 [targets.selftest-no-copydone]
 default = "pass"
 copy-from-stdin = { result = "hang", why = "COPY never completes" }
+protocol-prepare-survives-server-change = { result = "skip", reason_prefix = "precondition at step", why = "every client has its own server connection, so c never holds a's" }
+set-survives-server-change = { result = "skip", reason_prefix = "precondition at step", why = "every client has its own server connection, so c never holds a's" }
+sql-prepare-survives-server-change = { result = "skip", reason_prefix = "precondition at step", why = "every client has its own server connection, so c never holds a's" }
+temp-table-survives-server-change = { result = "skip", reason_prefix = "precondition at step", why = "every client has its own server connection, so c never holds a's" }
 
 # Reports one row more in every INSERT command tag.
 [targets.selftest-wrong-tag]
 default = "pass"
 multi-statement-begin = { result = "silent", why = "INSERT tag says 2 rows" }
+protocol-prepare-survives-server-change = { result = "silent", why = "the INSERT that records a's backend gets a tag saying 2 rows" }
+set-survives-server-change = { result = "silent", why = "the INSERT that records a's backend gets a tag saying 2 rows" }
+sql-prepare-survives-server-change = { result = "silent", why = "the INSERT that records a's backend gets a tag saying 2 rows" }
+temp-table-survives-server-change = { result = "silent", why = "the INSERT that records a's backend gets a tag saying 2 rows" }
 
 # One server connection for all clients, no reset, every client gets its
 # BackendKeyData. Fails the documented transaction-pooling limits like PgBouncer, plus
@@ -69,6 +89,10 @@ set-role-isolated-between-clients = { result = "silent", why = "SET ROLE leaks" 
 set-role-reset-after-pinned-disconnect = { result = "silent", why = "SET ROLE survives the disconnect" }
 sql-prepare-isolated-between-clients = { result = "silent", why = "the SQL PREPARE is visible to the other client" }
 temp-table-isolated-between-clients = { result = "silent", why = "the temp table is visible to the other client" }
+protocol-prepare-survives-server-change = { result = "skip", reason_prefix = "needs several server connections", why = "one server connection, so a can't move to another" }
+set-survives-server-change = { result = "skip", reason_prefix = "needs several server connections", why = "one server connection, so a can't move to another" }
+sql-prepare-survives-server-change = { result = "skip", reason_prefix = "needs several server connections", why = "one server connection, so a can't move to another" }
+temp-table-survives-server-change = { result = "skip", reason_prefix = "needs several server connections", why = "one server connection, so a can't move to another" }
 
 # Two server connections, last in, first out, never reset. Its probes see several
 # connections (idle shared, busy separate), so the scenarios that need one SKIP. The
