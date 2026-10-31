@@ -1,0 +1,119 @@
+name: windows
+
+# The release builds a Windows binary; this runs one. GitHub's Windows runners can't
+# run the Linux containers of the test bed, so the run below uses the PostgreSQL the
+# runner image ships, as its own pooler. Its own workflow so that `paths` can keep it
+# to changes that affect the binary: Windows minutes are free on a public repo but
+# count double on a private one.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "build.rs"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "scenarios/**"
+      # Built into the binary for scan --pooler.
+      - "results/**"
+      - ".github/workflows/windows.yml"
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - "src/**"
+      - "build.rs"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "scenarios/**"
+      - "results/**"
+      - ".github/workflows/windows.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    env:
+      PP: ./target/debug/poolproof.exe
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: cargo build --locked
+
+      # Commands that need no server, and the error paths, each with its exact exit code.
+      - name: Smoke test
+        run: |
+          expect() {
+            want=$1; shift
+            set +e; "$@"; got=$?; set -e
+            if [ "$got" != "$want" ]; then echo "::error::$*: exit $got, expected $want"; exit 1; fi
+          }
+          expect 0 "$PP" --version
+          expect 0 "$PP" list > list.txt
+          grep -q multi-statement-begin list.txt
+
+          printf 'SET search_path TO app;\nSELECT pg_advisory_lock(1);\nSELECT 1;\n' > queries.sql
+          expect 1 "$PP" scan queries.sql
+          expect 1 "$PP" scan --format json queries.sql > scan.json
+          jq -e '[.findings[].severity] | sort == ["breaks", "warn"]' scan.json
+          expect 1 "$PP" scan --format sarif queries.sql > scan.sarif
+          jq -e '.runs[0].results | length == 2' scan.sarif
+          # Uses the results built into the binary.
+          expect 1 "$PP" scan --pooler pgbouncer-1.26.1 queries.sql
+          expect 2 "$PP" scan no-such-file.sql
+
+          # Nothing listens on port 1: every scenario is ERROR, and doctor fails both sides.
+          refused=postgres://postgres:x@127.0.0.1:1/app
+          expect 1 "$PP" run --pooler "$refused" --direct "$refused" --format json > refused.json
+          jq -e '.results | length > 0 and all(.result == "error" and (.reason | startswith("target unreachable")))' refused.json
+          expect 1 "$PP" doctor --pooler "$refused" --direct "$refused"
+
+      # The image's PostgreSQL, whatever version it ships: not pinned on purpose, since
+      # this checks poolproof on Windows, not a Postgres version. Its service is disabled
+      # by default; user postgres, password root.
+      - name: Start PostgreSQL
+        shell: pwsh
+        run: |
+          $service = Get-Service -Name 'postgresql*'
+          Set-Service -InputObject $service -StartupType Manual
+          Start-Service -InputObject $service
+      - name: Create the database
+        env:
+          PGPASSWORD: root
+        run: |
+          for _ in $(seq 30); do "$PGBIN/pg_isready" -h 127.0.0.1 -U postgres && break; sleep 1; done
+          "$PGBIN/psql" -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE app" -c "SELECT version()"
+
+      # Postgres as its own pooler: every client gets its own server connection, so
+      # anything but PASS or SKIP is a harness bug, on Windows.
+      - name: Run the scenarios
+        run: |
+          url=postgres://postgres:root@127.0.0.1:5432/app
+          set +e
+          "$PP" run --pooler "$url" --direct "$url" --mode transaction --reset all --format json > windows.json
+          code=$?
+          set -e
+          jq -r '.results[] | select(.result != "pass" and .result != "skip") | "::error::\(.scenario): \(.result) \(.reason // "")"' windows.json
+          if [ "$code" != 0 ]; then echo "::error::run: exit $code, expected 0"; exit 1; fi
+          jq -e '.results | length > 0 and all(.result == "pass" or .result == "skip")' windows.json
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: windows
+          path: |
+            windows.json
+            refused.json
