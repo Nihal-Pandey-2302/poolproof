@@ -458,14 +458,18 @@ fn check_evidence(origin: &str, scenario: &Scenario) -> Result<()> {
             .iter()
             .any(|s| s.client == step.client && s.send.is_some());
         if raw && !before.evidence {
-            let synced = before
+            // A Sync, a simple Query or a CopyDone ends with ReadyForQuery: the exchange is
+            // complete, and the evidence Query starts a new one.
+            let complete = before
                 .send
                 .as_ref()
                 .and_then(|m| m.last())
-                .is_some_and(|m| m.trim() == "sync");
-            if !synced {
+                .and_then(|m| m.parse::<RawMessage>().ok())
+                .is_some_and(|m| m.ends_cycle());
+            if !complete {
                 bail!(
-                    "{origin}: the evidence at step {n} must follow a send step of client '{}' that ends with sync",
+                    "{origin}: the evidence at step {n} must follow a send step of client '{}' that ends with sync \
+                     (or a query)",
                     step.client
                 );
             }
@@ -629,6 +633,16 @@ mod tests {
         ]
         .concat();
         assert_eq!(with(&raw, ""), Ok(()));
+        // A simple Query ends with ReadyForQuery too.
+        let query = [step("r", "send = ['query SELECT 1']"), step("r", "evidence = true")].concat();
+        assert_eq!(with(&query, ""), Ok(()));
+        // After a Parse with no Sync, the exchange isn't over: refused.
+        let parsed = [
+            step("r", "send = ['query SELECT 1', 'parse - SELECT 2']"),
+            step("r", "evidence = true"),
+        ]
+        .concat();
+        assert!(with(&parsed, "").unwrap_err().contains("ends with sync"));
         for pairs in ["[4, 2]", "[1, 4]", "[2, 9]"] {
             assert!(
                 with(&ok, pairs).unwrap_err().contains("must name two evidence steps"),
