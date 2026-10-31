@@ -30,6 +30,11 @@ src/doctor.rs            `doctor`: the checks, their order and output (text and 
 src/targets.rs           targets TOML format, and the single target from --pooler/--direct;
                          Endpoint (a parsed URL: ${VAR}, password sources, sslmode, one
                          host only; prints without the password), Reset
+src/limitations.rs       documented pooler limitations (limitations/*.toml): loading, and
+                         marking a FAIL that matches an entry exactly as expected; cli.rs
+                         applies them to every report it prints
+src/version.rs           version order (17.11, 0.1.62, 2.10.0-rc.1): limitation version
+                         ranges, and the newest Postgres for scan --pooler
 src/runner/
   mod.rs                 Outcome (what a client saw for one step), Timeouts (every limit
                          and its default in one struct)
@@ -44,6 +49,10 @@ src/runner/
                          reset, privileges, resolve_reset, server version
   raw.rs                 raw protocol clients for `send` steps
   doctor.rs              the live side of `doctor`: connects to one target, read-only
+  probe.rs               before a target's scenarios: what a second client gets while the
+                         first is idle and inside a transaction (probe_target)
+  exact.rs               reset = "exact": finds the pooler's server connections by holding
+                         pool_size transactions through it, and ends exactly those
   tls.rs                 sslmode and sslrootcert as in libpq (except prefer, which never
                          checks): one rustls config per Endpoint
   compare.rs             outcome matching, Verdict, Mismatch, FailKind (silent/error/hang)
@@ -68,6 +77,7 @@ src/output/
   text.rs                `run` results on the terminal
   scan.rs, sarif.rs      `scan` results as text and SARIF (cli.rs prints JSON directly)
 scenarios/               one TOML file per scenario
+limitations/             one TOML file per pooler product: its documented limitations
 drivers/                 the driver programs, one directory and image each; drivers.toml
                          (versions, variants), cases.toml (the steps), targets.txt (where
                          CI runs them), docker-bake.hcl (builds the images), README.md
@@ -99,6 +109,9 @@ cli ─ targets.toml or --pooler/--direct ─┐
                                                  a refusal is ERROR like preflight
                                                  privileges of the direct user: unmet
                                                  `requires` -> SKIP
+                                                 probes: a second client while the first
+                                                 is idle, then in a transaction; a
+                                                 contradiction with the mode -> ERROR
                                                  for each scenario:
                                                    [--check-scenarios: baseline twice,
                                                     once per scenario, direct URL and
@@ -182,6 +195,38 @@ Details that matter when changing this:
   below TLS; raw clients do the same above it). Through a pooler the EOF says nothing
   about a backend, so pooled clients don't wait. An abandoned client isn't waited for.
   A backend that doesn't exit in time is an error, so the scenario is ERROR.
+
+## Probes, evidence, preconditions, exact reset, limitations
+
+These decide whether a result means anything, so read them before changing a verdict.
+
+- **Probes** (`runner/probe.rs`, called from `suite.rs` once per target). A second
+  client connects while the first is idle, then while the first is inside a
+  transaction. The results check the declared mode (a contradiction makes the target
+  ERROR) and decide the `one_server_connection` and `several_server_connections`
+  requirements, which `before_run` turns into SKIPs; in session mode they also say
+  whether the pool has room for a scenario's clients. `ignore_server_requirements`
+  skips that, for Postgres standing in for its own pooler.
+- **Evidence** (`evidence_of` and `compare_with` in `runner/check.rs`). An `evidence`
+  step records which backend a client is on. On the pooler run, a `same_backend` pair
+  that doesn't match means the clients never shared a server connection, so the run
+  doesn't count; `same_backend_or_closed` also counts one where the first backend had
+  exited. A scenario with no counted run is a SKIP whose reason starts "passed, but".
+  Evidence a scenario asks for mid-exchange (inside COPY IN) is the scenario's mistake.
+- **Preconditions** (also `runner/check.rs`). A `precondition` step runs only through
+  the pooler. False stops that run, which then doesn't count; anything but true or false
+  is a FAIL. With `repeat`, the row records how many runs met it.
+- **Exact reset** (`runner/exact.rs`, built in `suite.rs` for `reset = "exact"`). It
+  holds `pool_size` transactions through the pooler to learn each server connection's
+  pid, start time, user and address, then ends exactly those. Before the first scenario
+  it checks the pool really is that size; once a reset can't account for every server
+  connection, the target's remaining scenarios ERROR. `doctor` runs the same check and
+  ends nothing.
+- **Limitations** (`limitations.rs`, data in `limitations/`). Applied after a run, by
+  `cli.rs`, to every report it prints or renders. A FAIL that matches an entry exactly
+  (product, version range, config, Postgres, step, outcome) stays a FAIL, marked
+  expected with the doc's link and quote. Entries that match nothing are listed as
+  stale.
 
 ## How `scan` works
 

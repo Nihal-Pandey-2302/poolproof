@@ -32,6 +32,12 @@ hosted Supavisor.
 cargo install --git https://github.com/Nihal-Pandey-2302/poolproof
 ```
 
+Building needs Rust 1.88 or newer, a C compiler and libclang, since poolproof uses the
+Postgres parser (C, through bindgen): `apt install clang libclang-dev` on Debian and
+Ubuntu, `dnf install clang clang-devel` on Fedora, the Xcode command line tools
+(`xcode-select --install`) on macOS, and LLVM (`winget install LLVM.LLVM`) with the
+Visual Studio C++ build tools on Windows.
+
 That is the way to install it today. Once the first version is released, binaries for
 Linux, macOS (x86_64 and arm64) and Windows (x86_64) will be on the releases page. The
 scenarios and the latest results are built into the binary.
@@ -120,7 +126,7 @@ mode = "transaction"
 config = ["default", "tls"]   # target configs; default: ["default"]
 since = "1.24.1"              # lowest version it was checked on; fixed_in = "..." ends it
 # postgres_since / postgres_fixed_in limit it to some Postgres versions.
-differs = [{ step = 4, pooler = { status = "ok", rows = [["9MB"]], tags = [0] } }]
+differs = [{ step = 7, pooler = { status = "ok", rows = [["9MB"]], tags = [0] } }]
 doc = "https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f.../features.md"
 quote = "SET/RESET | Yes | Never"
 # doc_version = "1.26.1" is needed when the link isn't pinned to a commit.
@@ -413,7 +419,7 @@ file works too, e.g. your migrations.
 ### Against your pooler
 
 Add `--pooler` and every finding is checked against what that pooler version actually did
-in poolproof's own runs (built into the binary, no setup needed):
+in poolproof's own runs (built into the binary, no setup needed). Abridged:
 
 ```text
 $ poolproof scan postgresql.log --pooler pgdog-0.1.62
@@ -499,8 +505,11 @@ the pooler:
 docker buildx bake -f drivers/docker-bake.hcl --load   # build the driver images once
 poolproof drivers --target pgbouncer-1.26.1
 poolproof drivers --driver psycopg --pooler postgres://app@127.0.0.1:6432/app \
-  --direct postgres://app@127.0.0.1:5432/app --reset auto
+  --direct postgres://app@127.0.0.1:5432/app --reset all
 ```
+
+(`--reset auto` refuses here: Postgres sees a pooler on the same machine connect from
+poolproof's own address. `all` needs no `--yes` for a local Postgres.)
 
 Each driver runs twice: with its defaults, and with the setting its docs give for
 transaction pooling (psycopg `prepare_threshold = None`, pgx `QueryExecModeExec`, pgjdbc
@@ -602,7 +611,8 @@ Step actions:
   SQL`, `copydata TEXT`, `copydone`. `-` is the unnamed statement or portal. Replies are
   read up to one ReadyForQuery per `sync`/`query`/`copydone`; without those, until the
   server is quiet for half a second. Errors are recorded by SQLSTATE only. A client that
-  uses `send` has its own raw connection; `disconnect` is its only other step.
+  uses `send` has its own raw connection; `evidence` and `disconnect` are its only other
+  steps.
   ParameterStatus replies are skipped, since poolers add and drop them freely; with
   `compare_parameter_status = true` a `send` step records them and compares them as a
   set, wherever in the step's reply they come. A dropped or changed value is a silent
