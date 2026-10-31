@@ -120,15 +120,45 @@ impl Input {
 /// Scenarios that exercise each rule. `session-set` is refined by parameter below.
 fn scenarios_for(rule: &str) -> Vec<&'static str> {
     match rule {
-        "session-advisory-lock" => vec!["advisory-lock-released-on-disconnect"],
-        "session-set-config" => vec!["empty-search-path-from-set-config", "set-isolated-between-clients"],
-        "session-set" => vec!["set-isolated-between-clients", "set-does-not-leak-after-disconnect"],
+        // Each state rule: other clients mustn't see it (isolated), and its own client must
+        // keep it across its transactions (survives-own-transactions) and when another
+        // client holds the server connection it was made on (survives-server-change).
+        "session-advisory-lock" => vec![
+            "advisory-lock-released-on-disconnect",
+            "advisory-lock-survives-own-transactions",
+        ],
+        "session-set-config" => vec![
+            "empty-search-path-from-set-config",
+            "set-isolated-between-clients",
+            "set-survives-server-change",
+        ],
+        "session-set" => vec![
+            "set-isolated-between-clients",
+            "set-does-not-leak-after-disconnect",
+            "set-survives-server-change",
+        ],
         "listen" => vec!["listen-notify-delivered"],
-        "temp-table" => vec!["temp-table-isolated-between-clients"],
-        "with-hold-cursor" => vec!["cursor-isolated-between-clients"],
-        "sql-prepare" => vec!["sql-prepare-isolated-between-clients"],
+        "temp-table" => vec![
+            "temp-table-isolated-between-clients",
+            "temp-table-survives-own-transactions",
+            "temp-table-survives-server-change",
+        ],
+        "with-hold-cursor" => vec!["cursor-isolated-between-clients", "cursor-survives-own-transactions"],
+        "sql-prepare" => vec![
+            "sql-prepare-isolated-between-clients",
+            "sql-prepare-survives-server-change",
+        ],
         "discard" => vec!["discard-all-resets-settings"],
-        "multi-statement-transaction" => vec!["multi-statement-begin"],
+        // Each finding picks the ones with its query's shape (rules.rs).
+        "multi-statement-transaction" => vec![
+            "multi-statement-begin",
+            "multi-statement-begin-variants",
+            "multi-statement-begin-error",
+            "multi-statement-begin-left-open",
+            "multi-statement-commit-first",
+            "multi-statement-begin-not-first",
+            "multi-statement-error-aborts-transaction",
+        ],
         "deallocate-all" => vec!["deallocate-all-isolated"],
         "load" => vec!["load-isolated-between-clients"],
         _ => vec![],
@@ -153,7 +183,7 @@ pub const RULES: &[(&str, &str)] = &[
     ),
     (
         "multi-statement-transaction",
-        "Several statements in one query string that starts a transaction",
+        "Several statements in one query string, with BEGIN, COMMIT or ROLLBACK among them",
     ),
 ];
 

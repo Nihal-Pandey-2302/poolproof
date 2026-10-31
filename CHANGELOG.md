@@ -204,6 +204,12 @@ First release.
 - `scan` names the driver behind a log's prepared statements and, with `--pooler`, checks
   psycopg, pgjdbc and pgx against their driver results; a `scan --pooler` step on such
   logs can now fail.
+- `scan`'s `multi-statement-transaction` rule also flags `BEGIN`, `COMMIT` or `ROLLBACK`
+  after other statements in the same string, and with `--pooler` checks each shape
+  against the multi-statement scenarios that match it.
+- `scan --pooler` checks session state (temp tables, `SET`, `set_config`, advisory locks,
+  `WITH HOLD` cursors, SQL `PREPARE`) against the scenarios where its own client loses it
+  too, not only those where other clients see it.
 
 ### Changed
 

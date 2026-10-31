@@ -453,8 +453,10 @@ bodies only checked for words). `--format sarif` works with GitHub code scanning
 Rules today: session `SET`/`RESET` (including `SET ROLE`) and `set_config(..., false)` (a
 parameter there, as pg_stat_statements shows it, gives a warning to check the value),
 session advisory locks, `LISTEN`, temp tables without `ON COMMIT DROP`, `WITH HOLD`
-cursors, SQL-level `PREPARE`, `DISCARD`, `DEALLOCATE ALL`, `LOAD`, and query strings that
-start a transaction and run more statements in it. Function calls are checked anywhere in
+cursors, SQL-level `PREPARE`, `DISCARD`, `DEALLOCATE ALL`, `LOAD`, and query strings of
+several statements with `BEGIN`, `COMMIT` or `ROLLBACK` among them, first or later. With
+`--pooler`, a finding about session state counts the scenarios where other clients see it
+and those where its own client loses it. Function calls are checked anywhere in
 a statement, including the query inside `PREPARE` and `DECLARE CURSOR`, but not in the
 body of `CREATE VIEW` or `CREATE RULE`, which doesn't run then (`CREATE MATERIALIZED VIEW`
 does run its query, so it is checked). Statements inside DO blocks and function bodies

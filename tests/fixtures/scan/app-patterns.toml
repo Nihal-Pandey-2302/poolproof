@@ -141,6 +141,18 @@ form = "log"
 expect = ["multi-statement-transaction"]
 
 [[query]]
+sql = 'SELECT 1; BEGIN; INSERT INTO orders (id) VALUES (1); COMMIT'
+form = "log"
+expect = ["multi-statement-transaction"]
+note = "BEGIN after another statement in the same string"
+
+[[query]]
+sql = 'COMMIT; INSERT INTO audit (event) VALUES (1)'
+form = "log"
+expect = ["multi-statement-transaction"]
+note = "COMMIT, then more statements in the same string"
+
+[[query]]
 sql = 'PREPARE lock_job (bigint) AS SELECT pg_try_advisory_lock($1)'
 form = "log"
 expect = ["sql-prepare", "session-advisory-lock"]
