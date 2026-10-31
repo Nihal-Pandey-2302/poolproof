@@ -53,7 +53,8 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       # Code behind #[cfg(unix)] or #[cfg(windows)] only warns on the other platform.
-      - run: cargo clippy --locked --all-targets -- -D warnings
+      # The shipped code only: the tests don't run here.
+      - run: cargo clippy --locked -- -D warnings
       - run: cargo build --locked
 
       # Commands that need no server, and the error paths, each with its exact exit code.
