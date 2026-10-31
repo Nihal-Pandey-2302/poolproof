@@ -20,7 +20,8 @@ protocol-pipeline-recovers-after-error = { result = "hang", why = "the second re
 # protocol-pipelined-statements passes: its steps have a single Sync each.
 
 # Drops every ErrorResponse after startup. Every scenario where Postgres answers with
-# an error fails; the client gets ReadyForQuery and no hint, so all are silent.
+# an error fails; the client gets ReadyForQuery and no hint, so they are silent, except
+# where the error was the only reply.
 [targets.selftest-swallow-error]
 default = "pass"
 aborted-transaction-not-reused = { result = "silent", why = "57014 from the statement timeout is dropped" }
@@ -65,3 +66,7 @@ set-role-isolated-between-clients = { result = "silent", why = "SET ROLE leaks" 
 set-role-reset-after-pinned-disconnect = { result = "silent", why = "SET ROLE survives the disconnect" }
 sql-prepare-isolated-between-clients = { result = "silent", why = "the SQL PREPARE is visible to the other client" }
 temp-table-isolated-between-clients = { result = "silent", why = "the temp table is visible to the other client" }
+
+# Accepts and closes. Preflight marks every scenario ERROR; nothing may pass.
+[targets.selftest-refuse]
+default = { result = "harness-error", reason_prefix = "target unreachable: pooler:" }

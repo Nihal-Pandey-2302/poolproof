@@ -110,11 +110,11 @@ jobs:
           PROXY_USER: postgres
           PROXY_PASSWORD: postgres
           PROXY_DATABASE: app
-          PROXY_LISTEN: 56471=none,56472=drop-pipelined,56473=swallow-error,56474=no-copydone,56475=wrong-tag,56476=shared-server
+          PROXY_LISTEN: 56471=none,56472=drop-pipelined,56473=swallow-error,56474=no-copydone,56475=wrong-tag,56476=shared-server,56477=refuse
         run: |
           nohup tools/pp-proxy/target/debug/pp-proxy > pp-proxy.log 2>&1 &
           echo $! > pp-proxy.pid
-          for _ in $(seq 50); do (exec 3<>/dev/tcp/127.0.0.1/56476) 2>/dev/null && exit 0; sleep 0.1; done
+          for _ in $(seq 50); do (exec 3<>/dev/tcp/127.0.0.1/56477) 2>/dev/null && exit 0; sleep 0.1; done
           cat pp-proxy.log
           exit 1
 

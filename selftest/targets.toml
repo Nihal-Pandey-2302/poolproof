@@ -61,3 +61,13 @@ pooler = "postgres://postgres:postgres@127.0.0.1:56476/app?sslmode=disable"
 direct = "postgres://postgres:postgres@127.0.0.1:55432/app?sslmode=disable"
 mode = "transaction"
 reset = ["SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'"]
+
+[[target]]
+name = "selftest-refuse"
+product = "pp-proxy"
+version = "dev"
+config = "refuse"
+pooler = "postgres://postgres:postgres@127.0.0.1:56477/app?sslmode=disable"
+direct = "postgres://postgres:postgres@127.0.0.1:55432/app?sslmode=disable"
+mode = "transaction"
+reset = ["SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'"]
