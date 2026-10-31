@@ -211,8 +211,9 @@ footer { color: var(--muted); font-size: 12px; max-width: 1400px; margin: 0 auto
   const symbol = { pass: "✓", silent: "✕", error: "!", hang: "⏱", skip: "–", none: "·", error_run: "?" };
   const word = { pass: "pass", silent: "silent failure", error: "pooler error", hang: "no reply", skip: "skipped", none: "not run" };
 
-  // Where a scenario's result changes between consecutive versions of one product,
-  // for the same config and Postgres version.
+  // Where a scenario's result changes between two neighboring tested versions of one
+  // product, for the same config and Postgres version. Tested versions skip releases, so
+  // the note names both ends instead of claiming the release that changed it.
   function versionNotes(s) {
     const notes = [];
     const groups = new Map();
@@ -231,8 +232,9 @@ footer { color: var(--muted); font-size: 12px; max-width: 1400px; margin: 0 auto
         const ok = v => v === "pass", bad = v => ["silent", "error", "hang"].includes(v);
         let text = null, cls = null;
         const who = productName(group[i].product);
-        if (ok(before) && bad(after)) { text = `${who}: broke in ${group[i].t.version}`; cls = "broke"; }
-        if (bad(before) && ok(after)) { text = `${who}: fixed in ${group[i].t.version}`; cls = "fixed"; }
+        const [w, v] = [group[i - 1].t.version, group[i].t.version];
+        if (ok(before) && bad(after)) { text = `${who}: fails from ${v} (passed in ${w})`; cls = "broke"; }
+        if (bad(before) && ok(after)) { text = `${who}: passes from ${v} (failed in ${w})`; cls = "fixed"; }
         if (text && !seen.has(text)) { seen.add(text); notes.push(el("span", { class: "note " + cls }, text)); }
       }
     }

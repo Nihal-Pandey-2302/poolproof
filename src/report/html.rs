@@ -97,6 +97,14 @@ mod tests {
     }
 
     #[test]
+    fn version_notes_name_both_tested_versions() {
+        // Tested versions skip releases, so a change is never pinned on one release.
+        assert!(TEMPLATE.contains("fails from ${v} (passed in ${w})"));
+        assert!(TEMPLATE.contains("passes from ${v} (failed in ${w})"));
+        assert!(!TEMPLATE.contains("broke in") && !TEMPLATE.contains("fixed in"));
+    }
+
+    #[test]
     fn expected_failures_are_shown_by_default() {
         // The filter that hides expected failures starts off on every load: it isn't
         // checked in the markup and nothing on the page is remembered between visits.
