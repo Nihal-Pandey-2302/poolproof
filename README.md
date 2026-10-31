@@ -58,6 +58,15 @@ that scenario; the run goes on.
 (nothing compared) counts for all but `none`. A pooler with known hangs can still gate CI
 on wrong results. Results it ignores are counted on stderr.
 
+`--compare-to last.json` compares the run with a saved `run --format json` report, so a
+pooler with known failures can gate CI on new ones. Results match by target and scenario.
+Only regressions fail the run: PASS to FAIL or ERROR, a FAIL getting worse (hang, then
+error, then silent), and FAIL to ERROR or back. `--fail-on` still decides which of those
+count. Fixed results, milder failures, and scenarios or targets only one side has are
+listed but never fail it. A target whose product, version, config or Postgres differs
+gets a warning; a different pool mode is an error. With `--format json` the comparison
+is in the report under `comparison`.
+
 ```text
 $ poolproof run --filter multi-statement
 FAIL  pgdog-0.1.62             multi-statement-begin (silent)
@@ -170,8 +179,9 @@ To share the outcome with your team, `--format html` writes one self-contained p
 the grid and every step's trace. `--format json` saves the raw results;
 `poolproof report a.json b.json --format html` (or `markdown`) combines saved runs. The
 JSON carries `schema_version` and `generated_at`; poolproof refuses a report in a newer
-format than it reads. In these formats, a progress line per result goes to stderr. Text output is colored on a
-terminal unless `NO_COLOR` is set; `FORCE_COLOR` or `CLICOLOR_FORCE` colors it anywhere.
+format than it reads. In these formats, a progress line per result goes to stderr. Text
+output is colored on a terminal unless `NO_COLOR` is set; `FORCE_COLOR` or
+`CLICOLOR_FORCE` colors it anywhere.
 
 Scenarios create and drop their own objects (prefixed `pp_`), so use a scratch database.
 That matters even more with `reset = "all"`, which kills every session on it.
