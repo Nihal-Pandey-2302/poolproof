@@ -31,8 +31,9 @@ releases page. The scenarios and the latest results are built into the binary.
 **[Results site](https://nihal-pandey-2302.github.io/poolproof/)**: every scenario against
 PgBouncer 1.24 to 1.26, PgDog 0.1.50 to 0.1.62 and Supavisor 2.9 and 2.10, on Postgres 17
 and 18, with the full step-by-step trace for each cell. It also marks the version where a
-behavior broke or got fixed. [RESULTS.md](RESULTS.md) has the same data as a table. CI
-regenerates both.
+behavior broke or got fixed. The site goes live with the first public release.
+[RESULTS.md](RESULTS.md) has the same data as a table. Both are built from `results/`,
+which `scripts/update-results.sh` regenerates and CI checks.
 
 A failure is one of three kinds:
 
@@ -61,10 +62,10 @@ FAIL  pgdog-0.1.62             multi-statement-begin (silent)
 
 ```text
 $ poolproof scan queries.csv
-BREAKS  session-advisory-lock       calls=48211    SELECT pg_advisory_lock($1)
-        pg_advisory_lock() holds the lock for the whole session. ...
-WARN    session-set                 calls=1022     SET search_path TO app
-        SET/RESET of `search_path` outside SET LOCAL lasts for the session. ...
+BREAKS   session-advisory-lock       calls=48211    SELECT pg_advisory_lock($1)
+         pg_advisory_lock() holds the lock for the whole session. ...
+WARN     session-set                 calls=1022     SET search_path TO app
+         SET/RESET of `search_path` outside SET LOCAL lasts for the session. ...
 ```
 
 ## Try it locally
@@ -78,6 +79,16 @@ Each pooler in the test bed has a pool of one server connection, so leaks betwee
 happen every time instead of by luck. `POSTGRES_IMAGE=postgres:18.4` picks the server
 version. `scripts/update-results.sh` rebuilds `results/` and `RESULTS.md` for Postgres 17
 and 18 from a fresh test bed.
+
+The test bed listens on 127.0.0.1 only. To run more than one at a time, give each its own
+port offset:
+
+```sh
+scripts/testbed.sh up 100                    # project poolproof-100, every port + 100
+scripts/testbed.sh targets 100 > t100.toml   # targets.toml with the ports shifted
+cargo run -- run --targets t100.toml
+scripts/testbed.sh down 100
+```
 
 To test your own pooler, point poolproof at it and at the Postgres server behind it:
 
@@ -123,9 +134,16 @@ poolproof scan queries.csv
 ```
 
 From Postgres logs, with `log_statement = 'all'` or `log_min_duration_statement` set:
-`poolproof scan postgresql.log` (stderr format) or `poolproof scan postgresql.json`
-(jsonlog). Logs keep multi-statement query strings whole; pg_stat_statements splits them,
-so some problems only show up in logs. A `.sql` file works too, e.g. your migrations.
+`poolproof scan postgresql.log` (stderr format), `postgresql.csv` (csvlog) or
+`postgresql.json` (jsonlog). Logs keep multi-statement query strings whole;
+pg_stat_statements splits them, so some problems only show up in logs. Logs are read as a
+stream, so multi-GB files are fine. poolproof reads the English log prefixes (`LOG:`,
+`statement:`), so the server needs `lc_messages = 'C'` or another English locale. A `.sql`
+file works too, e.g. your migrations.
+
+`--input pgss|csvlog|log|jsonlog|sql` says what the input is when the extension doesn't
+(a `.csv` is told apart by its first row). `-` reads stdin:
+`pg_dump --schema-only mydb | poolproof scan - --input sql`.
 
 ### Against your pooler
 
@@ -147,13 +165,16 @@ OK       session-set                 calls=1        SET search_path TO public;
 
 BREAKS means a related scenario fails silently on that pooler; REJECTED means the pooler
 returns an error, so the query would fail loudly in production; OK means it passes. With
-`--pooler`, only BREAKS and REJECTED fail the exit code. `--postgres 17.11` picks the
-Postgres version (default: newest), and `--results my-run.json` uses a run against your
-own setup instead. An unknown name lists the available ones.
+`--pooler`, BREAKS and REJECTED fail the exit code; a finding poolproof's results don't
+cover (no related scenario, or only SKIP or ERROR verdicts) counts as it would without
+`--pooler`. `--postgres 17.11` picks the Postgres version (default: newest), and
+`--results my-run.json` uses a run against your own setup instead. An unknown name lists
+the available ones.
 
 Without `--pooler`, the exit code is 1 if anything would break under transaction pooling
-(`--strict` also fails on warnings), so it can run in CI. `--format json` gives machine-readable output and
-`--format sarif` works with GitHub code scanning:
+(`--strict` also fails on warnings), so it can run in CI. `--format json` prints an object
+with `findings` and the counts `queries`, `unparsed` and `uninspected` (function and DO
+bodies only checked for words). `--format sarif` works with GitHub code scanning:
 
 ```yaml
 - run: poolproof scan migrations/all.sql --format sarif > poolproof.sarif || true
@@ -162,10 +183,19 @@ Without `--pooler`, the exit code is 1 if anything would break under transaction
     sarif_file: poolproof.sarif
 ```
 
-Rules today: session `SET`/`RESET` (including `SET ROLE`) and `set_config(..., false)`,
+Rules today: session `SET`/`RESET` (including `SET ROLE`) and `set_config(..., false)` (a
+parameter there, as pg_stat_statements shows it, gives a warning to check the value),
 session advisory locks, `LISTEN`, temp tables without `ON COMMIT DROP`, `WITH HOLD`
-cursors, SQL-level `PREPARE`, `DISCARD`, and query strings that start a transaction and
-run more statements in it.
+cursors, SQL-level `PREPARE`, `DISCARD`, `DEALLOCATE ALL`, `LOAD`, and query strings that
+start a transaction and run more statements in it. Function calls are checked anywhere in a
+statement, including the query inside `PREPARE` and `DECLARE CURSOR`, but not in the body
+of `CREATE VIEW` or `CREATE RULE`, which doesn't run then (`CREATE MATERIALIZED VIEW` does
+run its query, so it is checked). Statements inside DO blocks and function bodies
+(PL/pgSQL and SQL) are checked too. Findings in a function body are warnings that name the
+function, since it runs whenever the function is called. Parameters a function sets in its
+own `SET` clause are restored on return, so setting them in its body is fine. Dynamic
+`EXECUTE` strings are not inspected, and a body the PL/pgSQL parser can't read is only
+checked for words, with a count at the end.
 
 ## Writing a scenario
 
@@ -231,7 +261,8 @@ pooler. Use it on a new scenario: a PASS only means something if Postgres did wh
 expected.
 
 The best scenarios come from real bug reports. If your pooler bit you, a scenario with a
-link to the issue is the most useful contribution.
+link to the issue is the most useful contribution. [CONTRIBUTING.md](CONTRIBUTING.md) has
+the workflow.
 
 ## Status
 

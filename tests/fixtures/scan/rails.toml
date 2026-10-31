@@ -1,0 +1,97 @@
+# Rails / ActiveRecord (postgresql adapter) and GoodJob.
+
+[[query]]
+sql = "SET client_min_messages TO 'warning'"
+form = "pgss-17"
+expect = ["session-set"]
+note = "configure_connection, every new connection"
+
+[[query]]
+sql = 'SET client_min_messages TO $1'
+form = "pgss-18"
+expect = ["session-set"]
+note = "same, Postgres 18"
+
+[[query]]
+sql = 'SET standard_conforming_strings = on'
+form = "pgss-17"
+expect = ["session-set"]
+note = "configure_connection"
+
+[[query]]
+sql = 'SET intervalstyle = iso_8601'
+form = "pgss-17"
+expect = ["session-set"]
+note = "configure_connection"
+
+[[query]]
+sql = "SET SESSION timezone TO 'UTC'"
+form = "pgss-17"
+expect = ["session-set"]
+note = "configure_connection with default_timezone :utc and a variables: entry"
+
+[[query]]
+sql = 'SET SESSION timezone TO $1'
+form = "pgss-18"
+expect = ["session-set"]
+note = "same, Postgres 18"
+
+[[query]]
+sql = 'SET search_path TO "$user", public'
+form = "pgss-17"
+expect = ["session-set"]
+note = "schema_search_path="
+
+[[query]]
+sql = 'SHOW search_path'
+form = "pgss"
+expect = []
+note = "schema_search_path"
+
+[[query]]
+sql = 'SELECT "users".* FROM "users" WHERE "users"."id" = $1 LIMIT $2'
+form = "pgss"
+expect = []
+note = "find"
+
+[[query]]
+sql = 'INSERT INTO "users" ("email", "created_at", "updated_at") VALUES ($1, $2, $3) RETURNING "id"'
+form = "pgss"
+expect = []
+note = "create"
+
+[[query]]
+sql = 'SAVEPOINT active_record_1'
+form = "pgss"
+expect = []
+note = "nested transaction(requires_new: true)"
+
+[[query]]
+sql = 'RELEASE SAVEPOINT active_record_1'
+form = "pgss"
+expect = []
+note = "nested transaction"
+
+[[query]]
+sql = 'SELECT pg_try_advisory_lock($1)'
+form = "pgss"
+expect = ["session-advisory-lock"]
+note = "db:migrate (advisory_locks: true is the default)"
+
+[[query]]
+sql = 'SELECT pg_advisory_unlock($1)'
+form = "pgss"
+expect = []
+note = "db:migrate"
+
+[[query]]
+sql = '''SELECT "good_jobs".* FROM "good_jobs" WHERE "good_jobs"."id" IN (WITH "rows" AS MATERIALIZED (SELECT "good_jobs"."id", "good_jobs"."active_job_id" FROM "good_jobs" WHERE "good_jobs"."finished_at" IS NULL ORDER BY priority DESC NULLS LAST, created_at ASC) SELECT "rows"."id" FROM "rows" WHERE pg_try_advisory_lock(($1 || substr(md5($2 || $3 || "rows"."active_job_id"::text), $4, $5))::bit(64)::bigint) LIMIT $6)'''
+form = "pgss"
+expect = ["session-advisory-lock"]
+note = "GoodJob dequeue, simplified from memory, not captured; GoodJob needs session mode for this reason"
+
+[[query]]
+sql = 'LISTEN good_job'
+form = "pgss"
+expect = ["listen"]
+note = "GoodJob notifier"
