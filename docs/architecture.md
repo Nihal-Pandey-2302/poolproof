@@ -45,6 +45,7 @@ src/report/
   mod.rs                 the JSON report (schema_version), bundled results, lookups for
                          scan --pooler
   compare.rs             run --compare-to: regressions against a saved report
+  schema.rs              tests that keep schemas/v1 in sync with the Rust types
   markdown.rs            RESULTS.md-style table
   html.rs, report.html   the self-contained results page
 src/scan/
@@ -57,6 +58,8 @@ src/output/
   scan.rs, sarif.rs      `scan` results as text and SARIF (cli.rs prints JSON directly)
 scenarios/               one TOML file per scenario
 results/                 committed `run --format json` reports, one per Postgres version
+schemas/v1/              JSON Schemas for reports, scenario and targets files, generated from
+                         the Rust types and published with the site
 docker/compose.yml       the test bed: Postgres and every pooler version in the matrix
 targets.toml             the test bed's targets
 scripts/update-results.sh  regenerates results/ and RESULTS.md from a fresh test bed
@@ -181,6 +184,7 @@ report given with `--results`.
 | A privilege for `requires` | `scenario.rs` (the names), `privileges` in `runner/pg.rs`, `before_run` in `runner/suite.rs` |
 | A field in the JSON report | `report/mod.rs`; it's a stable format, see the versioning policy in CHANGELOG.md. A change old readers would misread bumps `SCHEMA_VERSION` |
 | What `--compare-to` counts as a regression | `report/compare.rs` |
+| Any field of a report, scenario or targets file | also regenerate `schemas/v1` with `UPDATE_SCHEMAS=1 cargo test schema`; a test fails until it matches |
 | The results table or page | `report/markdown.rs`, `report/html.rs` and `report/report.html` |
 | A `scan` rule | `scan/rules.rs`, `RULES` and the rule -> scenario map in `scan/mod.rs`, README's rule list, expected findings in the corpus (`tests/fixtures/scan/*.toml`, run by `tests/scan_corpus.rs`) |
 | A `scan` input format | `scan/input.rs` (`InputFormat` is also the list of `--input` values) |

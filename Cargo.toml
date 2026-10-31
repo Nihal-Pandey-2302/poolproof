@@ -11,7 +11,7 @@ keywords = ["postgres", "pgbouncer", "connection-pool", "testing", "pooler"]
 categories = ["command-line-utilities", "database", "development-tools::testing"]
 # The test bed and CI files are for this repo, not for `cargo install`. results/ stays:
 # `scan --pooler` reads it.
-exclude = [".github/", ".gitguardian.yaml", "docker/", "fuzz/", "scripts/", "selftest/", "tools/", "RESULTS.md", "targets.toml"]
+exclude = [".github/", ".gitguardian.yaml", ".taplo.toml", "docker/", "fuzz/", "scripts/", "selftest/", "tools/", "RESULTS.md", "targets.toml"]
 
 # cargo binstall poolproof: download the release archive instead of compiling.
 [package.metadata.binstall]
