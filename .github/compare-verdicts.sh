@@ -74,14 +74,20 @@ if [ -n "$loose" ]; then
   { echo "### Compared loosely (results/known-flaky.txt)"; echo "$loose"; } >> "$summary"
 fi
 
-# The committed result of each pair: a `reached` pair's run that didn't count stands for
-# whatever was committed, so it is read the same way in both files.
-mine=$(jq -c '.results | map({key: "\(.target) \(.scenario)", value: .result}) | from_entries' "$committed")
+# The timing list comes from this run, so a scenario that just got repeat > 1 is skipped
+# on both sides before results/ is regenerated.
+timing=$(jq -c '[.scenarios[]? | select((.repeat // 1) > 1) | .name]' "$new")
+# The committed result of each pair, built inside jq from the committed file (a file
+# passed as one argument could hit the system's limit): a `reached` pair's run that
+# didn't count stands for whatever was committed, so both files read it the same way.
+# shellcheck disable=SC2016 # jq, not the shell, expands these
+mine='($c[0].results | map({key: "\(.target) \(.scenario)", value: .result}) | from_entries) as $mine'
 
 # `reached` pairs that matched only because this run didn't count: if a pooler stops
 # sharing for good, they keep matching, so the summary says so every time.
-unreached=$(jq -r --argjson flaky "$flaky" --argjson mine "$mine" '
-  .results[] | . as $r | "\(.target) \(.scenario)" as $k
+unreached=$(jq -r --argjson timing "$timing" --argjson flaky "$flaky" --slurpfile c "$committed" "$mine"' |
+  .results[] | select(.scenario as $s | $timing | index($s) | not)
+  | . as $r | "\(.target) \(.scenario)" as $k
   | select([$flaky[] | select(.target == $r.target and .scenario == $r.scenario and .mode == "reached")] | length > 0)
   | select(.result == "skip" and ((.reason // "") | startswith("passed, but")))
   | select($mine[$k] == "pass" or $mine[$k] == "fail")
@@ -90,11 +96,8 @@ if [ -n "$unreached" ]; then
   { echo "### Matched only by a run that didn't count (reached)"; echo "$unreached"; } >> "$summary"
 fi
 
-# The timing list comes from this run, so a scenario that just got repeat > 1 is skipped
-# on both sides before results/ is regenerated.
-timing=$(jq -c '[.scenarios[]? | select((.repeat // 1) > 1) | .name]' "$new")
 verdicts() {
-  jq -r --argjson timing "$timing" --argjson flaky "$flaky" --argjson mine "$mine" '
+  jq -r --argjson timing "$timing" --argjson flaky "$flaky" --slurpfile c "$committed" "$mine"' |
     .results[] | select(.scenario as $s | $timing | index($s) | not)
     | . as $r | "\(.target) \(.scenario)" as $k
     | ([$flaky[] | select(.target == $r.target and .scenario == $r.scenario) | .mode] | first) as $mode
