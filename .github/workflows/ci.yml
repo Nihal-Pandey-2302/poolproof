@@ -189,7 +189,7 @@ jobs:
           CODE: ${{ steps.refused.outputs.exit-code }}
           REPORT: ${{ steps.refused.outputs.report }}
         run: |
-          # The filter matches nothing: no scenario runs, nothing is contacted, exit 0.
+          # The filter matches nothing: no scenario runs, so exit 0.
           [ "$OUTCOME" = success ] && [ "$CODE" = 0 ]
           [ ! -e pwned ]
           jq -e '.results == []' "$REPORT"
