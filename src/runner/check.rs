@@ -6,7 +6,7 @@ use tokio::time::{Instant, timeout};
 use super::compare::{FailKind, Mismatch, Verdict, baseline_failure};
 use super::pg::{connect, wait_ready};
 use super::steps::run_steps;
-use super::{Outcome, READY_TIMEOUT, STEP_TIMEOUT};
+use super::{Outcome, Timeouts};
 use crate::scenario::Scenario;
 
 /// Start of the ERROR reason when a target's pooler URL doesn't answer before the run.
@@ -23,11 +23,11 @@ const DIRECT_STATEMENT_TIMEOUT: Duration = Duration::from_secs(30);
 /// Extra time on top of the statement timeout before giving up on the server itself.
 const DIRECT_GRACE: Duration = Duration::from_secs(5);
 
-async fn run_direct(url: &str, statements: &[String]) -> Result<()> {
+async fn run_direct(url: &str, statements: &[String], t: &Timeouts) -> Result<()> {
     if statements.is_empty() {
         return Ok(());
     }
-    let (client, driver, _) = connect(url).await?;
+    let (client, driver, _) = connect(url, t).await?;
     let limits = format!(
         "SET lock_timeout = {}; SET statement_timeout = {}",
         DIRECT_LOCK_TIMEOUT.as_millis(),
@@ -43,7 +43,7 @@ async fn run_direct(url: &str, statements: &[String]) -> Result<()> {
     // Close the session even after an error, so it's gone before the next phase
     // (e.g. a failed setup's session while teardown runs).
     drop(client);
-    let _ = timeout(STEP_TIMEOUT, driver).await;
+    let _ = timeout(t.step, driver).await;
     res
 }
 
@@ -56,20 +56,20 @@ async fn execute(client: &tokio_postgres::Client, sql: &str) -> Result<()> {
 }
 
 /// Connect and run `SELECT 1` once.
-async fn probe(url: &str) -> Result<()> {
-    let (client, driver, _) = connect(url).await?;
-    let res = timeout(STEP_TIMEOUT, client.simple_query("SELECT 1")).await;
+async fn probe(url: &str, t: &Timeouts) -> Result<()> {
+    let (client, driver, _) = connect(url, t).await?;
+    let res = timeout(t.step, client.simple_query("SELECT 1")).await;
     drop(client);
-    let _ = timeout(STEP_TIMEOUT, driver).await;
+    let _ = timeout(t.step, driver).await;
     res.context("SELECT 1 timed out")??;
     Ok(())
 }
 
 /// Probe until it works or `within` has passed.
-async fn probe_until(url: &str, within: Duration) -> Result<()> {
+async fn probe_until(url: &str, within: Duration, t: &Timeouts) -> Result<()> {
     let deadline = Instant::now() + within;
     loop {
-        match probe(url).await {
+        match probe(url, t).await {
             Ok(()) => return Ok(()),
             Err(e) if Instant::now() >= deadline => return Err(e.context(format!("no answer within {within:?}"))),
             Err(_) => tokio::time::sleep(Duration::from_millis(200)).await,
@@ -80,9 +80,11 @@ async fn probe_until(url: &str, within: Duration) -> Result<()> {
 /// Check that a target's direct and pooler URLs both answer, before running any
 /// scenario on it. The error is the ERROR reason for each of its scenarios. A pooler
 /// gets a few tries: it may still be starting, or reconnecting after an earlier reset.
-pub async fn preflight(pooled: &str, direct: &str) -> Result<(), String> {
-    probe(direct).await.map_err(|e| format!("{DIRECT_UNREACHABLE} {e:#}"))?;
-    probe_until(pooled, READY_TIMEOUT)
+pub async fn preflight(pooled: &str, direct: &str, t: &Timeouts) -> Result<(), String> {
+    probe(direct, t)
+        .await
+        .map_err(|e| format!("{DIRECT_UNREACHABLE} {e:#}"))?;
+    probe_until(pooled, t.ready, t)
         .await
         .map_err(|e| format!("{POOLER_UNREACHABLE} {e:#}"))
 }
@@ -132,25 +134,26 @@ async fn run_once(
     direct: &str,
     reset: &[String],
     side: Side,
+    t: &Timeouts,
 ) -> Result<Vec<Outcome>, String> {
-    run_direct(direct, reset)
+    run_direct(direct, reset, t)
         .await
         .map_err(|e| format!("reset ({side}): {e:#}"))?;
     // A reset kills the pooler's server connections, and it needs a moment to open new
     // ones. Without a reset there's nothing to wait for.
     if side == Side::Target
         && !reset.is_empty()
-        && let Err(e) = wait_ready(pooled).await
+        && let Err(e) = wait_ready(pooled, t).await
     {
         return Err(format!("{e:#}"));
     }
-    let outcomes = match run_direct(direct, &scenario.setup).await {
-        Ok(()) => run_steps(scenario, pooled, direct)
+    let outcomes = match run_direct(direct, &scenario.setup, t).await {
+        Ok(()) => run_steps(scenario, pooled, direct, t)
             .await
             .map_err(|e| format!("steps ({side}): {e:#}")),
         Err(e) => Err(format!("setup ({side}): {e:#}")),
     };
-    let teardown = run_direct(direct, &scenario.teardown)
+    let teardown = run_direct(direct, &scenario.teardown, t)
         .await
         .map_err(|e| format!("teardown ({side}): {e:#}"));
     let outcomes = outcomes?;
@@ -162,8 +165,8 @@ async fn run_once(
 /// `reset` runs on `direct` before each run so state leaked on the pooler's server
 /// connections by an earlier scenario can't change this one's result. Anything that
 /// stops the comparison is a `Verdict::Error` for this scenario only.
-pub async fn check(scenario: &Scenario, pooled: &str, direct: &str, reset: &[String]) -> Checked {
-    let expected = match run_once(scenario, direct, direct, reset, Side::Baseline).await {
+pub async fn check(scenario: &Scenario, pooled: &str, direct: &str, reset: &[String], t: &Timeouts) -> Checked {
+    let expected = match run_once(scenario, direct, direct, reset, Side::Baseline, t).await {
         Ok(expected) => expected,
         Err(reason) => return Checked::error(reason),
     };
@@ -174,7 +177,7 @@ pub async fn check(scenario: &Scenario, pooled: &str, direct: &str, reset: &[Str
     let mut kept: Option<Checked> = None;
     let mut failures = 0;
     for _ in 0..scenario.repeat {
-        let checked = match run_once(scenario, pooled, direct, reset, Side::Target).await {
+        let checked = match run_once(scenario, pooled, direct, reset, Side::Target, t).await {
             Ok(actual) => compare(scenario, &expected, actual),
             Err(reason) => Checked::error(reason),
         };
@@ -252,7 +255,7 @@ mod tests {
     #[tokio::test]
     async fn unreachable_postgres_is_an_error_not_a_pass() {
         let s = scenario("name = 't'\ndescription = 't'\n[[step]]\nclient = 'a'\nsimple = 'SELECT 1'\n");
-        let checked = check(&s, CLOSED_PORT, CLOSED_PORT, &[]).await;
+        let checked = check(&s, CLOSED_PORT, CLOSED_PORT, &[], &Timeouts::default()).await;
         let reason = reason(&checked);
         assert!(
             reason.starts_with("baseline failed at step 1: error CONNECT"),
@@ -265,7 +268,7 @@ mod tests {
         let s = scenario(
             "name = 't'\ndescription = 't'\nsetup = ['SELECT 1']\n[[step]]\nclient = 'a'\nsimple = 'SELECT 1'\n",
         );
-        let checked = check(&s, CLOSED_PORT, CLOSED_PORT, &[]).await;
+        let checked = check(&s, CLOSED_PORT, CLOSED_PORT, &[], &Timeouts::default()).await;
         let reason = reason(&checked);
         assert!(reason.starts_with("setup (baseline): "), "{reason}");
     }
@@ -276,7 +279,7 @@ mod tests {
         let mut s = scenario("name = 't'\ndescription = 't'\nrepeat = 3\nstep = []\n");
         s.steps.clear();
         let started = Instant::now();
-        let checked = check(&s, CLOSED_PORT, CLOSED_PORT, &[]).await;
+        let checked = check(&s, CLOSED_PORT, CLOSED_PORT, &[], &Timeouts::default()).await;
         assert!(matches!(checked.verdict, Verdict::Pass));
         assert!(
             started.elapsed() < Duration::from_secs(2),
@@ -339,14 +342,14 @@ mod tests {
     async fn preflight_waits_for_a_pooler_that_is_still_starting() {
         let url = test_pg();
         let pooled = late_forwarder(url.clone(), Duration::from_secs(2)).await;
-        preflight(&pooled, &url).await.unwrap();
+        preflight(&pooled, &url, &Timeouts::default()).await.unwrap();
     }
 
     #[tokio::test]
     #[ignore = "needs POOLPROOF_TEST_PG"]
     async fn teardown_blocked_by_a_held_lock_is_an_error() {
         let url = test_pg();
-        let (holder, driver, _) = connect(&url).await.unwrap();
+        let (holder, driver, _) = connect(&url, &Timeouts::default()).await.unwrap();
         // Separate queries: a BEGIN later in the same string would take the CREATE
         // into its transaction, and the table wouldn't exist for anyone else.
         holder
@@ -357,9 +360,12 @@ mod tests {
 
         let s = scenario("name = 't'\ndescription = 't'\nteardown = ['DROP TABLE pp_c3_lock']\nstep = []\n");
         let started = Instant::now();
-        let checked = timeout(Duration::from_secs(30), check(&s, &url, &url, &[]))
-            .await
-            .expect("teardown hung");
+        let checked = timeout(
+            Duration::from_secs(30),
+            check(&s, &url, &url, &[], &Timeouts::default()),
+        )
+        .await
+        .expect("teardown hung");
         let reason = reason(&checked);
         assert!(
             reason.starts_with("teardown (baseline): running `DROP TABLE pp_c3_lock`"),
@@ -379,7 +385,9 @@ mod tests {
 
     #[tokio::test]
     async fn preflight_names_the_unreachable_side() {
-        let reason = preflight(CLOSED_PORT, CLOSED_PORT).await.unwrap_err();
+        let reason = preflight(CLOSED_PORT, CLOSED_PORT, &Timeouts::default())
+            .await
+            .unwrap_err();
         assert!(reason.starts_with(DIRECT_UNREACHABLE), "{reason}");
     }
 }

@@ -49,5 +49,23 @@ First release.
   with SHA256SUMS and build provenance attestations. `cargo binstall poolproof` installs
   them.
 - Release binaries are built with thin LTO and stripped: 9.2 MB to 6.5 MB on Linux x86_64.
+- `scan --input pgss|csvlog|log|jsonlog|sql`, and `-` for stdin. csvlog is new. Logs and
+  CSV are read as a stream, so large logs use little memory, and invalid UTF-8 no longer
+  fails the file. A log with no statements in it is an error that names `log_statement`
+  and `lc_messages`.
+- `scan` rules `deallocate-all` and `load` (warnings).
+- `scan` checks function calls inside `PREPARE` and `DECLARE CURSOR`.
+
+### Fixed
+
+- `scan`: the `set_config` rule reads each call's own third argument. `true` gives no
+  finding, `false` a warning, and a parameter (how pg_stat_statements shows any literal)
+  a warning to check the value. A `false` elsewhere in the query no longer triggers it.
+  The value is read through casts, string booleans (`'true'`, `'on'`) and named
+  arguments (`is_local => true`).
+- `scan`: function calls in the body of `CREATE VIEW`, `CREATE FUNCTION` and
+  `CREATE RULE` are no longer flagged, since they don't run when the statement does.
+  `CREATE MATERIALIZED VIEW` still is, because it runs its query.
+- `scan`: in jsonlog files, only `LOG` messages count as statements.
 
 [Unreleased]: https://github.com/Nihal-Pandey-2302/poolproof/commits/main
