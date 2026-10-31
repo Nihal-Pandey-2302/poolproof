@@ -71,8 +71,9 @@ First release.
 - `poolproof drivers`: runs small programs for real drivers (psycopg 3, pgx,
   node-postgres, pgjdbc) through each target, with each driver's defaults and with the
   settings its docs give for poolers, and compares every step with the same program
-  against Postgres. Each driver runs in a pinned container (needs Docker). It takes the
-  same flags as `run`. Results on Postgres 17.11 are in DRIVERS.md.
+  against Postgres. Each driver runs in a pinned container (needs Docker). It takes
+  run's target, reset and output flags, plus `--driver NAME`. Results on Postgres 17.11
+  are in DRIVERS.md.
 - Documented limitations (`limitations/<product>.toml`): a FAIL that exactly matches a
   limitation in the pooler's own docs is marked expected, with the doc link and quote.
   It stays a FAIL. Entries that no longer match are reported as stale.
