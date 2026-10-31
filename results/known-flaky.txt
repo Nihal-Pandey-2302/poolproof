@@ -1,6 +1,12 @@
-# Verdicts CI doesn't compare: "<target> <scenario>", one pair per line. Only that exact
-# pair is skipped; the same scenario on other targets is still compared. Remove a line
-# once the scenario has repeat or the cause is fixed.
+# Verdicts CI compares loosely: "<target> <scenario> <mode>", one pair per line. Only
+# that exact pair; the same scenario on other targets is compared as usual. The mode
+# says what may change (.github/compare-verdicts.sh):
+#   verdict  PASS and FAIL (any kind) match each other; ERROR, SKIP or a missing
+#            result still fail the comparison
+#   kind     a FAIL matches a FAIL of any kind; anything else must match exactly
+# CI fails on a line without a mode, a `kind` line whose committed result isn't FAIL, a
+# `verdict` line committed as ERROR or SKIP, and a pair no results/*.json has. Remove a
+# line once the scenario has repeat or the cause is fixed.
 
 # 2026-10-31: a single client can lose its own session state. Supavisor 2.10 opens a
 # second server connection when the only one isn't back in the pool yet (pool_size 1 is
@@ -11,15 +17,15 @@
 # The drivers suite's set-leak cases are exposed the same way: which client gets moved
 # decides between silent and error. Seen once in CI on pgx-default (silent -> error).
 # Drop these once a Supavisor release no longer does this.
-supavisor-2.10.0-rc.1 set-local-reverts-after-commit
-supavisor-2.10.0-rc.1 cursor-survives-own-transactions
-supavisor-2.10.0-rc.1 temp-table-survives-own-transactions
-supavisor-2.10.0-rc.1 advisory-lock-survives-own-transactions
-supavisor-2.10.0-rc.1 driver/psycopg-default/set-leak
-supavisor-2.10.0-rc.1 driver/psycopg-no-prepare/set-leak
-supavisor-2.10.0-rc.1 driver/pgx-default/set-leak
-supavisor-2.10.0-rc.1 driver/pgx-exec/set-leak
-supavisor-2.10.0-rc.1 driver/node-postgres-default/set-leak
-supavisor-2.10.0-rc.1 driver/node-postgres-named/set-leak
-supavisor-2.10.0-rc.1 driver/pgjdbc-default/set-leak
-supavisor-2.10.0-rc.1 driver/pgjdbc-no-prepare/set-leak
+supavisor-2.10.0-rc.1 set-local-reverts-after-commit verdict
+supavisor-2.10.0-rc.1 cursor-survives-own-transactions verdict
+supavisor-2.10.0-rc.1 temp-table-survives-own-transactions verdict
+supavisor-2.10.0-rc.1 advisory-lock-survives-own-transactions verdict
+supavisor-2.10.0-rc.1 driver/psycopg-default/set-leak kind
+supavisor-2.10.0-rc.1 driver/psycopg-no-prepare/set-leak kind
+supavisor-2.10.0-rc.1 driver/pgx-default/set-leak kind
+supavisor-2.10.0-rc.1 driver/pgx-exec/set-leak kind
+supavisor-2.10.0-rc.1 driver/node-postgres-default/set-leak kind
+supavisor-2.10.0-rc.1 driver/node-postgres-named/set-leak kind
+supavisor-2.10.0-rc.1 driver/pgjdbc-default/set-leak kind
+supavisor-2.10.0-rc.1 driver/pgjdbc-no-prepare/set-leak kind
