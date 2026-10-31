@@ -126,6 +126,10 @@ a Unix socket matches as `localhost`, and only the first of several hosts is loo
 In a URL, percent-encode special characters in the password (`@` is `%40`). Output
 never shows passwords.
 
+For RDS Proxy, hosted Supavisor and other managed poolers, see
+[docs/managed-poolers.md](docs/managed-poolers.md): which URLs, which reset, and what to
+expect.
+
 TLS works as in psql: `sslmode` is `disable`, `prefer` (the default: TLS if the server
 offers it, else plaintext without a word), `require`, `verify-ca` or `verify-full`, from
 the URL or `PGSSLMODE`. `prefer` never checks certificates, even with a root certificate
