@@ -116,7 +116,9 @@ jobs:
           if [ "$code" != 0 ]; then echo "::error::run: exit $code, expected 0"; exit 1; fi
           jq -e '.results | length > 0 and all(.result == "pass" or .result == "skip")' windows.json
           # The scenarios that may SKIP here, by name; any other SKIP fails the job.
-          expected_skips='[]'
+          # The *-survives-server-change scenarios need c to hold a's server connection,
+          # which never happens when every client has its own.
+          expected_skips='["protocol-prepare-survives-server-change", "set-survives-server-change", "sql-prepare-survives-server-change", "temp-table-survives-server-change"]'
           skipped=$(jq -c '[.results[] | select(.result == "skip") | .scenario] | unique' windows.json)
           if ! jq -n -e --argjson got "$skipped" --argjson want "$expected_skips" '$got == ($want | sort)'; then
             echo "::error::SKIPped $skipped, expected $expected_skips"; exit 1
