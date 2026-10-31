@@ -220,7 +220,8 @@ footer { color: var(--muted); font-size: 12px; max-width: 1400px; margin: 0 auto
   const probeWord = { shared: "shared", separate: "separate", waited: "waited", refused: "refused", unknown: "unknown" };
   // `max` cuts each detail (e.g. a pooler's error text) for the column tooltip; the
   // dialog shows it whole.
-  const clip = (text, max) => text.length > max ? text.slice(0, max - 1) + "…" : text;
+  // Counted in code points, so the cut never splits a surrogate pair (an emoji).
+  const clip = (text, max) => { const cs = [...text]; return cs.length > max ? cs.slice(0, max - 1).join("") + "…" : text; };
   const probeText = (t, max = Infinity) => {
     if (!t.idle_probe && !t.busy_probe) return null;
     const one = (p) => !p ? "not probed" : (probeWord[p.result] || String(p.result)) + (p.detail ? ` (${clip(p.detail, max)})` : "");
