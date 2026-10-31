@@ -69,6 +69,37 @@ set-role-reset-after-pinned-disconnect = { result = "silent", why = "SET ROLE su
 sql-prepare-isolated-between-clients = { result = "silent", why = "the SQL PREPARE is visible to the other client" }
 temp-table-isolated-between-clients = { result = "silent", why = "the temp table is visible to the other client" }
 
+# Two server connections, last in, first out, never reset. Its probes see several
+# connections (idle shared, busy separate), so the scenarios that need one SKIP. The
+# rest match shared-server: with no reset, a client that runs after another one lands
+# on that one's released connection, the top of the free stack. Any row that differs
+# from shared-server names the slot order that makes it differ.
+# Scenarios that check state left on a reused server connection must FAIL here, or
+# SKIP because the reuse was never reached; never PASS. A PASS would mean the client
+# got its own connection back and the scenario tested nothing.
+[targets.selftest-pool-of-two]
+default = "pass"
+abandoned-query-does-not-block-pool = { result = "skip", why = "needs one server connection (probe: several)" }
+aborted-transaction-not-reused = { result = "error", why = "the next client gets the released connection, still in the aborted transaction (25P02)" }
+advisory-lock-released-on-disconnect = { result = "silent", why = "the lock stays on the released connection's session" }
+cancel-from-idle-client-is-harmless = { result = "error", why = "a's key is the top free slot at its startup, the slot b then takes, so a cancels b's query" }
+cancel-reaches-running-query = { result = "pass", why = "a lone client's key is the top free slot at startup, which its query then gets" }
+cancel-under-saturated-pool = { result = "skip", why = "needs one server connection (probe: several)" }
+cursor-isolated-between-clients = { result = "silent", why = "b gets a's released connection, with the WITH HOLD cursor" }
+deallocate-all-isolated = { result = "error", why = "b's DEALLOCATE ALL runs on a's released connection (26000)" }
+empty-search-path-from-set-config = { result = "silent", why = "set_config leaks to the next client on the same connection" }
+listen-notify-delivered = { result = "silent", why = "the notification arrives while no client holds the connection" }
+load-isolated-between-clients = { result = "silent", why = "b gets a's released connection, with the loaded library" }
+protocol-statement-names-isolated = { result = "error", why = "b's Parse of s1 runs on a's released connection (42P05)" }
+protocol-unnamed-statement-survives-other-clients = { result = "error", why = "b's query on a's released connection replaces the unnamed statement (26000)" }
+search-path-isolated-between-clients = { result = "silent", why = "SET search_path leaks through the released connection" }
+set-does-not-leak-after-disconnect = { result = "silent", why = "SET survives the disconnect on the released connection" }
+set-isolated-between-clients = { result = "silent", why = "SET leaks through the released connection" }
+set-role-isolated-between-clients = { result = "silent", why = "SET ROLE leaks through the released connection" }
+set-role-reset-after-pinned-disconnect = { result = "silent", why = "SET ROLE survives the disconnect on the released connection" }
+sql-prepare-isolated-between-clients = { result = "silent", why = "b gets a's released connection, with the SQL PREPARE" }
+temp-table-isolated-between-clients = { result = "silent", why = "b gets a's released connection, with the temp table" }
+
 # Accepts and closes. Preflight marks every scenario ERROR; nothing may pass.
 [targets.selftest-refuse]
 default = { result = "harness-error", reason_prefix = "target unreachable: pooler:" }
