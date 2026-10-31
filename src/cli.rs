@@ -225,7 +225,7 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
                 report.findings.sort_by_key(rank);
             }
             match format {
-                ScanFormat::Json => println!("{}", serde_json::to_string_pretty(&report.findings)?),
+                ScanFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
                 ScanFormat::Sarif => println!("{}", serde_json::to_string_pretty(&sarif(&report, &input))?),
                 ScanFormat::Text => print_scan(&report),
             }

@@ -79,3 +79,78 @@ note = "Ecto default migration_lock"
 sql = 'CREATE INDEX CONCURRENTLY "orders_user_id_index" ON "orders" ("user_id")'
 form = "pgss"
 expect = []
+
+[[query]]
+sql = '''DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_reader') THEN
+    CREATE ROLE app_reader;
+  END IF;
+END
+$$'''
+form = "sql"
+expect = []
+note = "common idempotent-migration DO block"
+
+[[query]]
+sql = '''DO $$
+BEGIN
+  SET LOCAL lock_timeout = '5s';
+  ALTER TABLE orders ADD COLUMN IF NOT EXISTS archived boolean NOT NULL DEFAULT false;
+END
+$$'''
+form = "sql"
+expect = []
+note = "SET LOCAL inside a DO block is transaction-scoped"
+
+[[query]]
+sql = '''DO $$
+BEGIN
+  SET lock_timeout = '5s';
+  ALTER TABLE orders ADD COLUMN IF NOT EXISTS archived boolean NOT NULL DEFAULT false;
+END
+$$'''
+form = "sql"
+expect = ["session-set"]
+note = "plain SET inside a DO block lasts for the session"
+
+[[query]]
+sql = 'CREATE FUNCTION trg() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN NEW.updated_at := now(); RETURN NEW; END $$'
+form = "sql"
+expect = []
+note = "updated_at trigger: the PL/pgSQL parser alone rejects NEW; read after a retry"
+
+[[query]]
+sql = 'CREATE FUNCTION typ(x t.id%TYPE) RETURNS int LANGUAGE plpgsql AS $$ DECLARE v t%ROWTYPE; BEGIN SELECT * INTO v FROM t WHERE id = x; RETURN v.id; END $$'
+form = "sql"
+expect = []
+note = "%TYPE and %ROWTYPE need a catalog; read after a retry"
+
+[[query]]
+sql = "CREATE FUNCTION evt() RETURNS event_trigger LANGUAGE plpgsql AS $$ BEGIN RAISE NOTICE '%', tg_tag; END $$"
+form = "sql"
+expect = []
+note = "event trigger"
+
+[[query]]
+sql = '''CREATE FUNCTION audit.log_change() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM set_config('audit.changed_by', current_user, false);
+  INSERT INTO audit.changes (tbl, op, row_data) VALUES (TG_TABLE_NAME, TG_OP, to_jsonb(NEW));
+  RETURN NEW;
+END
+$$'''
+form = "sql"
+expect = ["session-set-config"]
+note = "audit trigger setting a session variable: a warning naming the function"
+
+[[query]]
+sql = '''CREATE FUNCTION app.with_app_path() RETURNS void LANGUAGE plpgsql
+SET search_path = app, pg_temp AS $$
+BEGIN
+  SET search_path = app, public;
+END
+$$'''
+form = "sql"
+expect = []
+note = "the function's own SET clause restores search_path on return"

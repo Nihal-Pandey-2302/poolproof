@@ -164,8 +164,9 @@ cover (no related scenario, or only SKIP or ERROR verdicts) counts as it would w
 the available ones.
 
 Without `--pooler`, the exit code is 1 if anything would break under transaction pooling
-(`--strict` also fails on warnings), so it can run in CI. `--format json` gives machine-readable output and
-`--format sarif` works with GitHub code scanning:
+(`--strict` also fails on warnings), so it can run in CI. `--format json` prints an object
+with `findings` and the counts `queries`, `unparsed` and `uninspected` (function and DO
+bodies only checked for words). `--format sarif` works with GitHub code scanning:
 
 ```yaml
 - run: poolproof scan migrations/all.sql --format sarif > poolproof.sarif || true
@@ -180,8 +181,13 @@ session advisory locks, `LISTEN`, temp tables without `ON COMMIT DROP`, `WITH HO
 cursors, SQL-level `PREPARE`, `DISCARD`, `DEALLOCATE ALL`, `LOAD`, and query strings that
 start a transaction and run more statements in it. Function calls are checked anywhere in a
 statement, including the query inside `PREPARE` and `DECLARE CURSOR`, but not in the body
-of `CREATE VIEW`, `CREATE FUNCTION` or `CREATE RULE`, which doesn't run then (`CREATE
-MATERIALIZED VIEW` does run its query, so it is checked).
+of `CREATE VIEW` or `CREATE RULE`, which doesn't run then (`CREATE MATERIALIZED VIEW` does
+run its query, so it is checked). Statements inside DO blocks and function bodies
+(PL/pgSQL and SQL) are checked too. Findings in a function body are warnings that name the
+function, since it runs whenever the function is called. Parameters a function sets in its
+own `SET` clause are restored on return, so setting them in its body is fine. Dynamic
+`EXECUTE` strings are not inspected, and a body the PL/pgSQL parser can't read is only
+checked for words, with a count at the end.
 
 ## Writing a scenario
 
