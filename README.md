@@ -131,8 +131,9 @@ localhost. `sslrootcert` (or `PGSSLROOTCERT`) names the CA file, or `system` for
 operating system's store (which needs `verify-full`, and makes it the default); without
 it, `~/.postgresql/root.crt` is used when it exists, and `require` then checks the chain
 like `verify-ca`. `send` steps and cancel requests use the same settings. Not supported
-yet: client certificates and `sslnegotiation=direct`. A URL names one host: several hosts or ports, `hostaddr`, `target_session_attrs` and
-`load_balance_hosts` are refused, since poolproof would otherwise pick a host on its own.
+yet: client certificates and `sslnegotiation=direct`. A URL names one host: several
+hosts or ports, `hostaddr`, `target_session_attrs` and `load_balance_hosts` are refused,
+since poolproof would otherwise pick a host on its own.
 
 For several poolers, or to reset state between scenarios, use a targets file
 (`--targets`, default `targets.toml`):
