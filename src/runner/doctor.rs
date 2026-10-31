@@ -314,7 +314,8 @@ async fn reset(
 /// The other sessions on the database, and how many of them `reset = "all"` leaves:
 /// those of roles this user has no privileges of, unless it has pg_signal_backend and
 /// pg_read_all_stats (without which their backend_type is hidden and the reset never
-/// matches them), and always those of superusers. A superuser leaves none.
+/// matches them), and every superuser's, even when this user inherits from that
+/// superuser role. A superuser leaves none.
 struct OtherSessions {
     total: String,
     unreachable: String,
@@ -323,12 +324,12 @@ struct OtherSessions {
 
 async fn other_sessions(direct: &Client, have: Privileges, t: &Timeouts) -> Result<OtherSessions> {
     let can_end_others = have.pg_signal_backend && have.pg_read_all_stats;
-    let foreign =
-        format!("{OTHER_SESSIONS_COUNT} AND usesysid IS NOT NULL AND NOT pg_has_role(current_user, usesysid, 'USAGE')");
+    let foreign = "NOT pg_has_role(current_user, usesysid, 'USAGE')";
     let superuser = "usesysid IN (SELECT oid FROM pg_roles WHERE rolsuper)";
+    let others = format!("{OTHER_SESSIONS_COUNT} AND usesysid IS NOT NULL");
     let sql = format!(
-        "SELECT ({OTHER_SESSIONS_COUNT}), ({foreign} AND (NOT {can_end_others} OR {superuser})), \
-         ({foreign} AND {superuser})"
+        "SELECT ({OTHER_SESSIONS_COUNT}), ({others} AND ({foreign} AND NOT {can_end_others} OR {superuser})), \
+         ({others} AND {superuser})"
     );
     let r = row(direct, &sql, t).await?;
     let none = || "0".to_string();
@@ -522,6 +523,62 @@ mod tests {
             check.public.as_deref(),
             Some("all: ends every other session that this user may end on the database; other sessions now: 3")
         );
+    }
+
+    /// A user that inherits from a superuser role has the privileges of its sessions,
+    /// but still can't end them: they count as left.
+    #[tokio::test]
+    #[ignore = "needs POOLPROOF_TEST_PG"]
+    async fn sessions_of_an_inherited_superuser_are_left() {
+        let url = std::env::var("POOLPROOF_TEST_PG").expect("set POOLPROOF_TEST_PG to a Postgres URL");
+        let endpoint = Endpoint::parse(&url).unwrap();
+        let t = Timeouts::default();
+        let (admin, admin_driver, _) = connect(&endpoint, &t).await.unwrap();
+        let me = row(
+            &admin,
+            "SELECT rolsuper, quote_ident(rolname) FROM pg_roles WHERE rolname = current_user",
+            &t,
+        )
+        .await
+        .unwrap();
+        if cell(&me, 0) != "t" {
+            eprintln!("note: POOLPROOF_TEST_PG isn't a superuser; skipped");
+            return;
+        }
+        // NOLOGIN, taken with SET ROLE: it never has a password. It inherits from the
+        // superuser that `admin` connects as, and `admin` is the other session.
+        let role = format!("pp_doctor_inherit_{}", std::process::id());
+        admin
+            .batch_execute(&format!(
+                "DROP ROLE IF EXISTS {role}; CREATE ROLE {role} NOLOGIN; GRANT {} TO {role}",
+                cell(&me, 1)
+            ))
+            .await
+            .unwrap();
+        let (plain, plain_driver, _) = connect(&endpoint, &t).await.unwrap();
+        let left = match plain.batch_execute(&format!("SET ROLE {role}")).await {
+            Ok(()) => {
+                let none = Privileges {
+                    superuser: false,
+                    createrole: false,
+                    pg_signal_backend: false,
+                    pg_read_all_stats: false,
+                };
+                other_sessions(&plain, none, &t).await
+            }
+            Err(e) => Err(e.into()),
+        };
+        // Clean up before any assert.
+        drop(plain);
+        let _ = plain_driver.await;
+        admin.batch_execute(&format!("DROP ROLE {role}")).await.unwrap();
+        drop(admin);
+        let _ = admin_driver.await;
+
+        let left = left.unwrap();
+        let superusers: u32 = left.superusers.parse().unwrap();
+        assert!(superusers >= 1, "total {}, superusers {}", left.total, left.superusers);
+        assert_eq!(left.unreachable, left.superusers);
     }
 
     #[tokio::test]
