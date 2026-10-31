@@ -818,6 +818,7 @@ async fn settle(client: &Client, t: &Timeouts) -> Settle {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// How the stand-in pooler answers the n-th `SELECT pg_backend_pid()`.
     enum Pid {
@@ -1407,16 +1408,22 @@ pub(crate) mod tests {
         assert!(wait_ready(&settling.await, &t).await.unwrap());
         // A new backend every time, as with a larger pool: give up, but don't fail,
         // and don't try again for this pooler.
-        let rotating = pooler_with_pids("rotating", Pid::Is).await;
+        static PROBES: AtomicUsize = AtomicUsize::new(0);
+        let rotating = pooler_with_pids("rotating", |n| {
+            PROBES.store(n, Ordering::SeqCst);
+            Pid::Is(n)
+        })
+        .await;
         let started = tokio::time::Instant::now();
         assert!(!wait_ready(&rotating, &t).await.unwrap());
         assert!(started.elapsed() >= SETTLE_MAX);
+        let probes = PROBES.load(Ordering::SeqCst);
+        assert!(probes >= SETTLE_PROBES, "{probes} probes");
         let started = tokio::time::Instant::now();
         assert!(!wait_ready(&rotating, &t).await.unwrap());
-        assert!(
-            started.elapsed() < Duration::from_millis(500),
-            "settle skipped the second time"
-        );
+        assert_eq!(PROBES.load(Ordering::SeqCst), probes, "settle skipped the second time");
+        // Only a backstop: settling would take SETTLE_MAX.
+        assert!(started.elapsed() < SETTLE_MAX, "{:?}", started.elapsed());
     }
 
     #[tokio::test]
