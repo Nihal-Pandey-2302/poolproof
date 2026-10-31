@@ -1,0 +1,15 @@
+name = "copy-to-stdout"
+description = "COPY TO STDOUT through the pooler must return every row unchanged, over the simple and the extended protocol."
+
+[[step]]
+client = "a"
+send = ["query COPY (SELECT * FROM (VALUES (1, 'a'), (2, NULL), (3, E'tab\\there')) v (x, t) ORDER BY x) TO STDOUT"]
+
+[[step]]
+client = "a"
+send = [
+    "parse - COPY (SELECT g FROM generate_series(1, 3) g) TO STDOUT",
+    "bind - -",
+    "execute -",
+    "sync",
+]
