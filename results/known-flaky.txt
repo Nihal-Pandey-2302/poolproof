@@ -32,14 +32,11 @@ supavisor-2.10.0-rc.1 driver/node-postgres-named/set-leak kind
 supavisor-2.10.0-rc.1 driver/pgjdbc-default/set-leak kind
 supavisor-2.10.0-rc.1 driver/pgjdbc-no-prepare/set-leak kind
 
-# Two-client scenarios that the same overflow connection can turn from FAIL silent to
-# PASS: client b lands on a server connection where client a's state isn't, so the leak
-# they check for doesn't show. Committed FAIL silent. Temporary: remove when the
-# evidence placement fix lands.
-# Seen in run 41235706707 (17.11, FAIL silent -> PASS).
-supavisor-2.10.0-rc.1 set-role-reset-after-pinned-disconnect verdict
-# Seen in main run 41233260898 (18.4, FAIL silent -> PASS).
-supavisor-2.10.0-rc.1 cursor-isolated-between-clients verdict
+# Two more pairs the same overflow connection moves.
+# Seen in run 41238064314 (17.11, FAIL error -> FAIL silent).
+supavisor-2.10.0-rc.1-strict protocol-statement-names-isolated kind
+# Seen in run 41238169659 (17.11, PASS -> FAIL error).
+supavisor-2.10.0-rc.1 prepared-statement-survives-other-clients verdict
 
 # Same mechanism: a named statement prepared on one server, reused after Supavisor moved
 # the client to another, gives 26000. Seen in CI on pgx-default/transaction (both
