@@ -225,7 +225,7 @@ services:
       PROXY_USER: postgres
       PROXY_PASSWORD: postgres
       PROXY_DATABASE: app
-      PROXY_LISTEN: 6501=none,6502=drop-pipelined,6503=swallow-error,6504=no-copydone,6505=wrong-tag,6506=shared-server,6507=refuse
+      PROXY_LISTEN: 6501=none,6502=drop-pipelined,6503=swallow-error,6504=no-copydone,6505=wrong-tag,6506=shared-server,6507=refuse,6508=pool-of-two
     ports:
       - "127.0.0.1:${PP_PORT_56471:-56471}:6501"
       - "127.0.0.1:${PP_PORT_56472:-56472}:6502"
@@ -234,6 +234,7 @@ services:
       - "127.0.0.1:${PP_PORT_56475:-56475}:6505"
       - "127.0.0.1:${PP_PORT_56476:-56476}:6506"
       - "127.0.0.1:${PP_PORT_56477:-56477}:6507"
+      - "127.0.0.1:${PP_PORT_56478:-56478}:6508"
     depends_on:
       postgres:
         condition: service_healthy

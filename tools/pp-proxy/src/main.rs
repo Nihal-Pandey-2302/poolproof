@@ -1,8 +1,9 @@
 //! pp-proxy: self-test targets for poolproof.
 //!
 //! PROXY_LISTEN="6501=none,6502=drop-pipelined,..." opens one listener per fault, all
-//! forwarding to PROXY_UPSTREAM (host:port, default postgres:5432). `shared-server`
-//! logs in to Postgres itself as PROXY_USER / PROXY_PASSWORD / PROXY_DATABASE.
+//! forwarding to PROXY_UPSTREAM (host:port, default postgres:5432). `shared-server` and
+//! `pool-of-two` log in to Postgres themselves as PROXY_USER / PROXY_PASSWORD /
+//! PROXY_DATABASE.
 //! PROXY_BIND picks the listen address (default 127.0.0.1; a container sets 0.0.0.0).
 
 mod fault;
@@ -59,7 +60,12 @@ async fn main() {
         };
         eprintln!("pp-proxy: :{port} {fault:?} -> {upstream}");
         let upstream = upstream.clone();
-        let pool = (fault == Fault::SharedServer).then(|| Arc::new(shared::Pool::new(login.clone())));
+        let size = match fault {
+            Fault::SharedServer => Some(1),
+            Fault::PoolOfTwo => Some(2),
+            _ => None,
+        };
+        let pool = size.map(|size| Arc::new(shared::Pool::new(login.clone(), size)));
         tasks.push(tokio::spawn(async move {
             loop {
                 // Out of file descriptors and the like: don't spin.

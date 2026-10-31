@@ -21,6 +21,8 @@ pub enum Fault {
     /// One server connection for all clients, held from a client's first message to
     /// ReadyForQuery idle, never reset.
     SharedServer,
+    /// Like SharedServer with two server connections, handed out last in, first out.
+    PoolOfTwo,
 }
 
 impl Fault {
@@ -33,6 +35,7 @@ impl Fault {
             "no-copydone" => Fault::NoCopyDone,
             "wrong-tag" => Fault::WrongTag,
             "shared-server" => Fault::SharedServer,
+            "pool-of-two" => Fault::PoolOfTwo,
             _ => return None,
         })
     }
@@ -145,6 +148,7 @@ mod tests {
             "no-copydone",
             "wrong-tag",
             "shared-server",
+            "pool-of-two",
         ] {
             assert!(Fault::parse(name).is_some(), "{name}");
         }

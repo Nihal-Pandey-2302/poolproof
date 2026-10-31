@@ -112,13 +112,26 @@ jobs:
           PROXY_USER: postgres
           PROXY_PASSWORD: postgres
           PROXY_DATABASE: app
-          PROXY_LISTEN: 56471=none,56472=drop-pipelined,56473=swallow-error,56474=no-copydone,56475=wrong-tag,56476=shared-server,56477=refuse
+          PROXY_LISTEN: 56471=none,56472=drop-pipelined,56473=swallow-error,56474=no-copydone,56475=wrong-tag,56476=shared-server,56477=refuse,56478=pool-of-two
         run: |
           nohup tools/pp-proxy/target/debug/pp-proxy > pp-proxy.log 2>&1 &
           echo $! > pp-proxy.pid
-          for _ in $(seq 50); do (exec 3<>/dev/tcp/127.0.0.1/56477) 2>/dev/null && exit 0; sleep 0.1; done
+          for _ in $(seq 50); do (exec 3<>/dev/tcp/127.0.0.1/56478) 2>/dev/null && exit 0; sleep 0.1; done
           cat pp-proxy.log
           exit 1
+
+      # pool-of-two has two server connections: doctor's exact reset must count both, and
+      # must refuse a pool size of 1. Before the run, while no scenario has left state on
+      # the proxy's connections (it never resets them).
+      - name: Check doctor against pool-of-two
+        run: |
+          p='postgres://postgres:postgres@127.0.0.1:56478/app?sslmode=disable'
+          d='postgres://postgres:postgres@127.0.0.1:55432/app?sslmode=disable'
+          doctor() { ./target/debug/poolproof doctor --pooler "$p" --direct "$d" --mode transaction --reset exact --pool-size "$1" || true; }
+          doctor 2 | tee doctor-2.txt
+          grep -q 'exact: held 2 transactions, client 3 waited' doctor-2.txt
+          doctor 1 | tee doctor-1.txt
+          grep -q 'exact: pool_size = 1, but client 2 got its own server connection' doctor-1.txt
 
       - name: Run the self-test
         run: |
