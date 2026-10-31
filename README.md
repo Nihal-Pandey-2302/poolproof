@@ -339,8 +339,7 @@ the workflow.
 
 ## Status
 
-Not covered yet: RDS Proxy in the test bed, session-mode targets, and COPY TO STDOUT
-(`send` steps record its replies, but no scenario uses it yet).
+Not covered yet: RDS Proxy in the test bed and session-mode targets.
 
 ## License
 
