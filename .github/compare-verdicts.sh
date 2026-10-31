@@ -75,13 +75,18 @@ if $common_only; then
   only_new=$(comm -13 <(pairs "$committed") <(pairs "$new"))
   only_committed=$(comm -23 <(pairs "$committed") <(pairs "$new"))
   if [ -n "$only_new" ]; then
-    { echo "### Not in the committed file yet"; sed 's/^/- /' <<<"$only_new"; } >> "$summary"
+    { echo "### Not in the committed file yet"; while IFS= read -r p; do echo "- $p"; done <<<"$only_new"; } >> "$summary"
   fi
   if [ -n "$only_committed" ]; then
-    { echo "### In the committed file, not in this run"; sed 's/^/- /' <<<"$only_committed"; } >> "$summary"
+    { echo "### In the committed file, not in this run"; while IFS= read -r p; do echo "- $p"; done <<<"$only_committed"; } >> "$summary"
   fi
   # Both sides keep only the pairs the other has: "target scenario" is the start of a line.
   both=$(comm -12 <(pairs "$committed") <(pairs "$new"))
+  # Nothing in common would compare nothing and pass.
+  if [ -z "$both" ] && [ -n "$(pairs "$committed")" ]; then
+    echo "::error::no target and scenario pair in common with the committed file"
+    exit 1
+  fi
   keep() { awk 'NR == FNR { k[$0]; next } ($1 " " $2) in k' <(printf '%s\n' "$both") -; }
   diff <(verdicts "$committed" | keep) <(verdicts "$new" | keep)
 else
