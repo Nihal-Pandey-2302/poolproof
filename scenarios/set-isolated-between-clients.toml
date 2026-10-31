@@ -12,6 +12,8 @@ simple = "SET work_mem = '7MB'"
 client = "b"
 simple = "SET work_mem = '9MB'"
 
+# b's evidence is also b's first query after its SET, which is what makes a pooler that
+# applies SET lazily send it to the server.
 [[step]]
 client = "b"
 evidence = true

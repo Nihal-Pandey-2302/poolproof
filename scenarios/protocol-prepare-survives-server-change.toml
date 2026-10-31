@@ -12,7 +12,10 @@ client = "a"
 prepare = "SELECT 'from a'::text"
 name = "q"
 
-# a's backend, so c can check it took it.
+# a's backend, so c can check it took it. This INSERT runs after a's Parse as its own
+# query: on a pool that doesn't hand a client back the connection it just released, the
+# two can run on different backends, and the precondition then checks the wrong one. A
+# protocol Parse can't share a query with the INSERT.
 [[step]]
 client = "a"
 simple = "INSERT INTO pp_hog_pid VALUES ('a', pg_backend_pid()) ON CONFLICT (who) DO UPDATE SET pid = excluded.pid"
