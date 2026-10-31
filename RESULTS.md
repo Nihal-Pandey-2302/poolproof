@@ -2970,7 +2970,7 @@ A plain SET from one client must not change the setting another client sees.
 
 - on pgbouncer-1.24.1 (pg 17.11), pgbouncer-1.25.2 (pg 17.11), pgbouncer-1.26.1 (pg 17.11), pgbouncer-1.26.1-tls (pg 17.11), pgbouncer-1.24.1 (pg 18.4), pgbouncer-1.25.2 (pg 18.4), pgbouncer-1.26.1 (pg 18.4), pgbouncer-1.26.1-tls (pg 18.4)
 - documented: "SET/RESET | Yes | Never", https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes
-- note: Row of the table "SQL feature map for pooling modes" (columns: Feature, Session pooling, Transaction pooling).
+- note: Row of the table "SQL feature map for pooling modes" (columns: Feature, Session pooling, Transaction pooling), with the table's padding spaces collapsed.
 - step 3: `[a] simple: SHOW work_mem`
 - postgres: `ok rows=[(7MB)] tags=[0]`
 - pooler: `ok rows=[(9MB)] tags=[0]`
