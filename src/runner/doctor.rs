@@ -110,7 +110,7 @@ async fn open_side(
     };
     match connected.await {
         Ok((client, driver)) => {
-            checks.push(Check::new(side, Status::Ok, format!("connected to {endpoint}")));
+            checks.push(Check::new(side, Status::Ok, format!("connected to {endpoint}")).public("connected"));
             checks.push(tls(side, endpoint, &client, t).await);
             Some((client, driver))
         }
@@ -276,20 +276,26 @@ async fn reset(
             ));
         }
         return match line {
-            Err(reason) => Check::new("reset", Status::Warn, format!("all: {reason}; {now}")),
-            Ok((_, line)) => Check::new("reset", Status::Ok, format!("{}; {now}", summary(&line))),
+            Err(reason) => Check::new("reset", Status::Warn, format!("all: {reason}; {now}")).public(format!(
+                "all: run needs --yes for a Postgres that isn't on this machine; {now}"
+            )),
+            Ok((_, line)) => Check::new("reset", Status::Ok, format!("{}; {now}", summary(&line)))
+                .public(format!("all: ends every other session on the database; {now}")),
         };
     }
 
     let line = match line {
         Ok((_, line)) => line,
-        Err(reason) => return fail(format!("auto: {reason}")),
+        Err(reason) => {
+            return fail(format!("auto: {reason}"))
+                .public("auto: refused: reset = \"auto\" can't tell the pooler's sessions apart");
+        }
     };
     let (Some(Some(addr)), Some(Some(user))) = (
         pooler_session.and_then(|r| r.first()),
         pooler_session.and_then(|r| r.get(1)),
     ) else {
-        return Check::new("reset", Status::Ok, summary(&line));
+        return Check::new("reset", Status::Ok, summary(&line)).public(AUTO_PUBLIC);
     };
     let sql = format!(
         "SELECT ({OTHER_SESSIONS_COUNT} AND host(client_addr) = $1 AND usename = $2)::text, \
@@ -310,12 +316,18 @@ async fn reset(
         return fail(format!(
             "{}, but {user} is a superuser, and only a superuser can end its sessions",
             summary(&line)
+        ))
+        .public(format!(
+            "{AUTO_PUBLIC}, but that user is a superuser, and only a superuser can end its sessions"
         ));
     }
     if !member && !missing.is_empty() {
         return fail(format!(
             "{}, but this user can't end sessions of {user} without {missing}",
             summary(&line)
+        ))
+        .public(format!(
+            "{AUTO_PUBLIC}, but this user can't end that user's sessions without {missing}"
         ));
     }
     Check::new(
@@ -323,7 +335,11 @@ async fn reset(
         Status::Ok,
         format!("{}; matching sessions now: {count}", summary(&line)),
     )
+    .public(format!("{AUTO_PUBLIC}; matching sessions now: {count}"))
 }
+
+/// What `auto` ends, for JSON: without the user, address and host it names in text.
+const AUTO_PUBLIC: &str = "auto: ends every session of the pooler's user from the pooler's address";
 
 /// resolve_reset's line without its "reset: 'name': " prefix.
 fn summary(line: &str) -> String {

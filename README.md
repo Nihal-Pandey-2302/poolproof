@@ -211,7 +211,8 @@ waits for it (session mode with a full pool). A user that isn't a superuser need
 `pg_signal_backend` and `pg_read_all_stats` to end other roles' sessions, and can never
 end a superuser's. doctor only reads: it runs no reset, setup or scenario, ends no
 session and sets nothing through the pooler. Exit code 1 if a check fails (with
-`--strict`, also on a warning); `--format json` for scripts.
+`--strict`, also on a warning). `--format json` is for scripts and issues: it leaves out
+URLs, hosts, users and addresses, which the text output shows.
 
 `--target NAME` runs only that target from the file (repeat it for several).
 

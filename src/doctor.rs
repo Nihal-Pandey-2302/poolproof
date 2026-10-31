@@ -30,11 +30,15 @@ impl std::fmt::Display for Status {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Check {
     pub check: &'static str,
     pub status: Status,
+    /// For text output: may name URLs, hosts, users and addresses.
     pub detail: String,
+    /// For JSON, which people paste into issues: the detail without those, when it has
+    /// any. Same rule as the run report.
+    pub public: Option<String>,
 }
 
 impl Check {
@@ -43,7 +47,25 @@ impl Check {
             check,
             status,
             detail: detail.into(),
+            public: None,
         }
+    }
+
+    /// Sets the detail JSON shows instead.
+    pub fn public(mut self, detail: impl Into<String>) -> Self {
+        self.public = Some(detail.into());
+        self
+    }
+}
+
+impl Serialize for Check {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut out = s.serialize_struct("Check", 3)?;
+        out.serialize_field("check", self.check)?;
+        out.serialize_field("status", &self.status)?;
+        out.serialize_field("detail", self.public.as_ref().unwrap_or(&self.detail))?;
+        out.end()
     }
 }
 
@@ -157,7 +179,8 @@ pub fn same_server(pooler: &ServerFacts, direct: &ServerFacts) -> Check {
         addr(&direct.addr)
     );
     if !differ.is_empty() {
-        return Check::new("same server", Status::Fail, format!("{} {addrs}", differ.join("; ")));
+        let differ = differ.join("; ");
+        return Check::new("same server", Status::Fail, format!("{differ} {addrs}")).public(differ);
     }
     let port = direct
         .port
@@ -165,10 +188,10 @@ pub fn same_server(pooler: &ServerFacts, direct: &ServerFacts) -> Check {
         .map(|p| format!(", port {p}"))
         .unwrap_or_default();
     let detail = format!(
-        "database {}{port}, started {}, {} {addrs}",
+        "database {}{port}, started {}, {}",
         direct.database, direct.started, direct.version
     );
-    Check::new("same server", Status::Ok, detail)
+    Check::new("same server", Status::Ok, format!("{detail} {addrs}")).public(detail)
 }
 
 /// What the mode probe saw: client a took a server connection, then client b asked for
@@ -288,6 +311,11 @@ mod tests {
         assert_eq!(
             ok.detail,
             "database pp, port 5432, started 2026-10-31 21:04:11, 17.11 (addr 172.18.0.2 via pooler, 127.0.0.1 direct)"
+        );
+        // JSON drops the addresses.
+        assert_eq!(
+            ok.public.as_deref(),
+            Some("database pp, port 5432, started 2026-10-31 21:04:11, 17.11")
         );
         let other = same_server(&facts("5433", "10.0.0.1"), &facts("5432", "127.0.0.1"));
         assert_eq!(other.status, Status::Fail);
