@@ -193,6 +193,14 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
             };
             // Before the run, so a bad baseline fails fast.
             let baseline = compare_to.as_deref().map(report::Report::load).transpose()?;
+            if let Some(baseline) = &baseline {
+                let selected = targets
+                    .targets
+                    .iter()
+                    .filter(|t| only.is_empty() || only.contains(&t.name))
+                    .map(|t| (t.name.as_str(), t.mode));
+                report::compare::check_modes(baseline, selected)?;
+            }
             let mut scenarios = load_scenarios(scenarios.as_deref())?;
             if reverse {
                 scenarios.reverse();

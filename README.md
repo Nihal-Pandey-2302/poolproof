@@ -63,7 +63,8 @@ pooler with known failures can gate CI on new ones. Results match by target and 
 Only regressions fail the run: PASS to FAIL or ERROR, a FAIL getting worse (hang, then
 error, then silent), and FAIL to ERROR or back. `--fail-on` still decides which of those
 count. Fixed results, milder failures, and scenarios or targets only one side has are
-listed but never fail it. A target whose product, version, config or Postgres differs
+listed but never fail it. A repeated (timing-sensitive) scenario gates on PASS and FAIL
+only, so one failing run in five against a baseline that passed all five fails it. A target whose product, version, config or Postgres differs
 gets a warning; a different pool mode is an error. With `--format json` the comparison
 is in the report under `comparison`.
 

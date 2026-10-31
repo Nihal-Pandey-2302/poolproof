@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use super::{Report, ResultRow};
 use crate::runner::suite::FailOn;
 use crate::runner::{FailKind, Verdict};
+use crate::scenario::PoolMode;
 
 /// What changed between the baseline and this run. Results match by target and
 /// scenario name.
@@ -155,19 +156,12 @@ fn classify(before: &Verdict, after: &Verdict, repeated: bool) -> Change {
 /// Compares `current` with `baseline`. A target whose pool mode differs is an error:
 /// its results would be about a different setup.
 pub fn compare(baseline: &Report, current: &Report, fail_on: FailOn) -> Result<Comparison> {
+    check_modes(baseline, current.targets.iter().map(|t| (t.name.as_str(), t.mode)))?;
     let mut warnings = Vec::new();
     for t in &current.targets {
         let Some(b) = baseline.targets.iter().find(|b| b.name == t.name) else {
             continue;
         };
-        if b.mode != t.mode {
-            anyhow::bail!(
-                "target '{}' is in {:?} mode, but in {:?} mode in the baseline; compare runs of the same setup",
-                t.name,
-                t.mode,
-                b.mode
-            );
-        }
         let fields = [
             ("product", &b.product, &t.product),
             ("version", &b.version, &t.version),
@@ -177,7 +171,8 @@ pub fn compare(baseline: &Report, current: &Report, fail_on: FailOn) -> Result<C
         ];
         let diffs: Vec<String> = fields
             .iter()
-            .filter(|(_, b, t)| b != t)
+            // A Postgres version that couldn't be read this time isn't a difference.
+            .filter(|(name, b, t)| b != t && !(*name == "postgres" && t.is_none()))
             .map(|(name, b, t)| {
                 format!(
                     "{name} {} -> {}",
@@ -250,7 +245,28 @@ pub fn compare(baseline: &Report, current: &Report, fail_on: FailOn) -> Result<C
         .filter(|b| current.row(&b.target, &b.scenario).is_none())
         .map(key)
         .collect();
+    // A renamed target or the wrong file would otherwise turn the gate off quietly.
+    if !current.results.is_empty() && cmp.new.len() == current.results.len() {
+        cmp.warnings
+            .push("no results in common with the baseline; nothing was compared".to_string());
+    }
     Ok(cmp)
+}
+
+/// Fails if a target is in a different pool mode than in the baseline: its results
+/// would be about a different setup. `run` checks this before running anything.
+pub fn check_modes<'a>(baseline: &Report, targets: impl IntoIterator<Item = (&'a str, PoolMode)>) -> Result<()> {
+    for (name, mode) in targets {
+        if let Some(b) = baseline.targets.iter().find(|b| b.name == name)
+            && b.mode != mode
+        {
+            anyhow::bail!(
+                "target '{name}' is in {mode} mode, but in {} mode in the baseline; compare runs of the same setup",
+                b.mode
+            );
+        }
+    }
+    Ok(())
 }
 
 impl Comparison {
@@ -262,13 +278,14 @@ impl Comparison {
     fn header(&self, file: &str) -> String {
         let b = &self.baseline;
         format!(
-            "compared to {file} (poolproof {}, {}, {} results): {} regressed, {} fixed, {} changed, {} new, {} gone",
+            "compared to {file} (poolproof {}, {}, {} results): {} regressed, {} fixed, {} changed, {} skipped, {} new, {} gone",
             b.poolproof,
             b.generated_at.as_deref().unwrap_or("time unknown"),
             b.results,
             self.regressed.len(),
             self.fixed.len(),
             self.changed.len(),
+            self.skipped.len(),
             self.new.len(),
             self.gone.len(),
         )
@@ -535,12 +552,35 @@ mod tests {
         let cmp = compare(&before, &after, FailOn::Any).unwrap();
         let text = cmp.text("base.json", &after);
         assert!(text.contains(
-            "compared to base.json (poolproof 0.1.0, 2026-10-31T09:23:05Z, 1 results): 0 regressed, 0 fixed, 0 changed, 0 new, 0 gone"
+            "compared to base.json (poolproof 0.1.0, 2026-10-31T09:23:05Z, 1 results): 0 regressed, 0 fixed, 0 changed, 0 skipped, 0 new, 0 gone"
         ));
+        assert!(!text.contains("no results in common"));
         assert!(text.contains("warning: target p differs from the baseline: version 0.1.62 -> 0.1.63"));
         assert!(text.contains("warning: scenario a has changed since the baseline"));
-        after.targets[0].mode = crate::scenario::PoolMode::Session;
-        assert!(compare(&before, &after, FailOn::Any).is_err());
+        after.targets[0].postgres = None;
+        let text = compare(&before, &after, FailOn::Any).unwrap().text("base.json", &after);
+        assert!(!text.contains("postgres 17.11"), "{text}");
+        after.targets[0].mode = PoolMode::Session;
+        let err = compare(&before, &after, FailOn::Any).err().unwrap().to_string();
+        assert!(
+            err.contains("target 'p' is in session mode, but in transaction mode"),
+            "{err}"
+        );
+        assert!(check_modes(&before, [("p", PoolMode::Transaction), ("other", PoolMode::Session)]).is_ok());
+        assert!(check_modes(&before, [("p", PoolMode::Session)]).is_err());
+    }
+
+    #[test]
+    fn warns_when_nothing_matches() {
+        let before = report(&[("a", "pass")]);
+        let mut after = report(&[("a", "silent")]);
+        after.results[0].target = "renamed".into();
+        let cmp = compare(&before, &after, FailOn::Any).unwrap();
+        assert!(!cmp.fails());
+        assert!(
+            cmp.text("base.json", &after)
+                .contains("warning: no results in common with the baseline; nothing was compared")
+        );
     }
 
     #[test]
