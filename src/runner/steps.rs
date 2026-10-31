@@ -7,10 +7,36 @@ use tokio::time::timeout;
 use tokio_postgres::NoTls;
 
 use super::pg::{Conn, backend_pid, connect, db_error, row_value, simple_outcome, wait_backend_gone};
-use super::raw::{ExchangeOpts, RawConn};
+use super::raw::{ExchangeOpts, RawConn, ServerError};
 use super::{Outcome, Timeouts};
 use crate::scenario::{Action, Scenario};
 use crate::targets::Endpoint;
+
+/// A connect that failed. A server that refused with a SQLSTATE (53300 too many
+/// connections, 57P03 starting up) gives that code, so it compares like any other
+/// outcome on the pooler side: a pooler exhausting Postgres's connections is the
+/// pooler's fault. It is marked `connect`, so on the Postgres side it is a harness
+/// failure. Transport failures (refused, timed out, unknown host) are CONNECT.
+fn connect_failure(e: &anyhow::Error) -> Outcome {
+    let refused = e.chain().find_map(|cause| {
+        if let Some(e) = cause.downcast_ref::<tokio_postgres::Error>() {
+            return e
+                .as_db_error()
+                .map(|db| (db.code().code().to_string(), db.message().to_string()));
+        }
+        cause
+            .downcast_ref::<ServerError>()
+            .map(|e| (e.code.clone(), e.message.clone()))
+    });
+    match refused {
+        Some((code, message)) => Outcome::Error {
+            code,
+            message,
+            connect: true,
+        },
+        None => Outcome::error("CONNECT", format!("{e:#}")),
+    }
+}
 
 /// Run a scenario's steps. `pooled` is where normal clients connect; `direct` is
 /// plain Postgres. For the baseline run both are the same endpoint.
@@ -55,7 +81,7 @@ pub async fn run_steps(
                                 raw.insert(&step.client, conn);
                             }
                             Err(e) => {
-                                outcomes.push(Outcome::error("CONNECT", format!("{e:#}")));
+                                outcomes.push(connect_failure(&e));
                                 continue;
                             }
                         }
@@ -110,7 +136,7 @@ pub async fn run_steps(
                     );
                 }
                 Err(e) => {
-                    outcomes.push(Outcome::error("CONNECT", format!("{e:#}")));
+                    outcomes.push(connect_failure(&e));
                     continue;
                 }
             }
@@ -240,6 +266,97 @@ pub async fn run_steps(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A server that answers every startup with a FATAL error `code`, like a Postgres
+    /// that has run out of connections. Declines TLS if asked.
+    async fn refusing_server(code: &'static str) -> Endpoint {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    loop {
+                        let len = socket.read_u32().await.unwrap() as usize;
+                        let mut body = vec![0; len - 4];
+                        socket.read_exact(&mut body).await.unwrap();
+                        // SSLRequest: say no and wait for the startup message.
+                        if body == [0x04, 0xd2, 0x16, 0x2f] {
+                            socket.write_all(b"N").await.unwrap();
+                            continue;
+                        }
+                        break;
+                    }
+                    let fields = format!("SFATAL\0VFATAL\0C{code}\0Msorry, too many clients already\0\0");
+                    let mut reply = vec![b'E'];
+                    reply.extend((fields.len() as u32 + 4).to_be_bytes());
+                    reply.extend(fields.as_bytes());
+                    let _ = socket.write_all(&reply).await;
+                });
+            }
+        });
+        Endpoint::parse(&format!("postgres://u@127.0.0.1:{port}/db")).unwrap()
+    }
+
+    #[tokio::test]
+    async fn connect_refused_by_the_server_records_its_sqlstate() {
+        let scenario: Scenario = toml::from_str(
+            r#"
+            name = "refused"
+            description = ""
+            [[step]]
+            client = "a"
+            simple = "SELECT 1"
+            [[step]]
+            client = "b"
+            send = ["sync"]
+            "#,
+        )
+        .unwrap();
+        let server = refusing_server("53300").await;
+        let outcomes = run_steps(&scenario, &server, &server, &Timeouts::default())
+            .await
+            .unwrap();
+        for outcome in outcomes {
+            assert!(
+                matches!(&outcome, Outcome::Error { code, .. } if code == "53300"),
+                "{outcome}"
+            );
+        }
+
+        // Nothing listening: a transport failure stays CONNECT.
+        let closed = Endpoint::parse("postgres://u@127.0.0.1:1/db").unwrap();
+        let outcomes = run_steps(&scenario, &closed, &closed, &Timeouts::default())
+            .await
+            .unwrap();
+        for outcome in outcomes {
+            assert!(
+                matches!(&outcome, Outcome::Error { code, .. } if code == "CONNECT"),
+                "{outcome}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn postgres_refusing_connections_is_an_error_not_a_pass() {
+        let scenario: Scenario =
+            toml::from_str("name = 'r'\ndescription = ''\n[[step]]\nclient = 'a'\nsimple = 'SELECT 1'\n").unwrap();
+        let server = refusing_server("53300").await;
+        let checked = crate::runner::check(&scenario, &server, &server, &[], &Timeouts::default()).await;
+        assert!(
+            matches!(&checked.verdict, crate::runner::Verdict::Error { reason } if reason.contains("53300")),
+            "{:?}",
+            checked.verdict
+        );
+    }
+
+    #[test]
+    fn connect_flag_stays_out_of_stored_results() {
+        let plain = serde_json::to_string(&Outcome::error("42P01", "x")).unwrap();
+        assert!(!plain.contains("connect"), "{plain}");
+        let back: Outcome = serde_json::from_str(&plain).unwrap();
+        assert_eq!(back, Outcome::error("42P01", "x"));
+    }
 
     #[tokio::test]
     async fn send_client_cannot_mix_direct_and_pooled() {

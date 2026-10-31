@@ -121,7 +121,8 @@ name = "prod-like-pgbouncer"
 # ${NAME} is replaced with the environment variable NAME ($${ for a literal ${). In a
 # URL the value is percent-encoded (escaped in key=value strings), so any password works;
 # in reset statements it goes in as is. An empty value is an error, except as a URL
-# password (where it means no password).
+# password (where it means no password). Postgres itself may log a failing reset
+# statement with the values in it; keep secrets in URLs, not in reset.
 pooler = "postgres://user:${POOLER_PASSWORD}@pooler-host:6432/db"
 direct = "postgres://user@postgres-host:5432/db"   # password from PGPASSWORD or ~/.pgpass
 mode = "transaction"
@@ -285,6 +286,8 @@ five times and fails if any run fails. Use `repeat` when the outcome depends on 
 inside the pooler, as with pipelines: reports then show how many runs failed, and CI
 doesn't treat a change in those verdicts as a regression, because the worst case can differ
 between machines.
+`requires` lists privileges the `direct` user needs (`createrole`, `superuser`,
+`pg_signal_backend`); on a target without them the scenario is skipped, with the reason.
 
 `poolproof run -v --filter <name>` prints every step's result on Postgres and through the
 pooler. Use it on a new scenario: a PASS only means something if Postgres did what you

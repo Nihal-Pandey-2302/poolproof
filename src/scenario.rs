@@ -26,6 +26,28 @@ impl std::fmt::Display for PoolMode {
     }
 }
 
+/// A privilege a scenario's setup or steps need on Postgres. A target whose `direct`
+/// user lacks one skips the scenario instead of failing it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Requirement {
+    /// Create, drop and grant roles.
+    Createrole,
+    Superuser,
+    /// Cancel or terminate other users' sessions.
+    PgSignalBackend,
+}
+
+impl std::fmt::Display for Requirement {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Requirement::Createrole => "createrole",
+            Requirement::Superuser => "superuser",
+            Requirement::PgSignalBackend => "pg_signal_backend",
+        })
+    }
+}
+
 fn one() -> u32 {
     1
 }
@@ -51,6 +73,9 @@ pub struct Scenario {
     /// whose outcome depends on timing inside the pooler, such as pipelines.
     #[serde(default = "one")]
     pub repeat: u32,
+    /// Privileges the `direct` user needs; without them the scenario is skipped.
+    #[serde(default)]
+    pub requires: Vec<Requirement>,
     /// How long each step may take, overriding `run --step-timeout`.
     pub timeout_ms: Option<u64>,
     /// Statements run directly on Postgres before each run.
@@ -331,6 +356,42 @@ mod tests {
         let bundled = names(bundled().unwrap());
         assert!(!bundled.is_empty());
         assert_eq!(bundled, names(load_dir(&dir).unwrap()));
+    }
+
+    #[test]
+    fn role_scenarios_declare_createrole() {
+        for (name, text) in BUNDLED {
+            let scenario = parse(name, text).unwrap();
+            let declared = scenario
+                .requires
+                .iter()
+                .any(|r| matches!(r, Requirement::Createrole | Requirement::Superuser));
+            let text = text.to_lowercase();
+            let grants = text.contains("grant ") && text.contains(" to ");
+            let roles = ["pp_role", "create role", "alter role", "drop role", "create user"]
+                .iter()
+                .any(|s| text.contains(s));
+            if roles || grants {
+                assert!(declared, "{name} manages roles but doesn't require createrole");
+            }
+        }
+    }
+
+    #[test]
+    fn parses_requirements() {
+        let s: Scenario = toml::from_str(
+            "name = 'r'\ndescription = ''\nrequires = ['createrole', 'superuser', 'pg_signal_backend']\nstep = []\n",
+        )
+        .unwrap();
+        assert_eq!(
+            s.requires,
+            [
+                Requirement::Createrole,
+                Requirement::Superuser,
+                Requirement::PgSignalBackend
+            ]
+        );
+        assert!(toml::from_str::<Scenario>("name = 'r'\ndescription = ''\nrequires = ['root']\nstep = []\n").is_err());
     }
 
     #[test]

@@ -1,15 +1,17 @@
 //! The loop over targets and scenarios behind `poolproof run`.
 
-use std::collections::HashMap;
 use std::time::Duration;
 
 use anyhow::{Result, bail};
 
-use super::{FailKind, Timeouts, Verdict, check, deterministic, preflight, server_version};
+use super::{
+    DIRECT_UNREACHABLE, FailKind, Privileges, Timeouts, Verdict, check, deterministic, preflight, privileges,
+    server_version,
+};
 use crate::output::text::{Style, print_progress, print_result};
 use crate::report::{ResultRow, StepOutcomes, TargetInfo};
 use crate::scenario::Scenario;
-use crate::targets::Target;
+use crate::targets::{Endpoint, Target};
 
 /// How `run` goes about it.
 #[derive(Default)]
@@ -41,8 +43,9 @@ pub async fn run(
     let total = targets.len() * scenarios.iter().filter(wanted).count();
     let mut results = Vec::new();
     let mut target_infos = Vec::new();
-    // --check-scenarios verdicts by (scenario, direct URL).
-    let mut determinism: HashMap<(&str, String), Result<(), String>> = HashMap::new();
+    // --check-scenarios verdicts by scenario and direct endpoint, compared in full
+    // (options and password too). Few enough to search in order.
+    let mut determinism: Vec<(&str, &Endpoint, Result<(), String>)> = Vec::new();
     for target in targets {
         target_infos.push(TargetInfo {
             name: target.name.clone(),
@@ -68,33 +71,51 @@ pub async fn run(
         if let Some(reason) = &unreachable {
             eprintln!("error: target '{}': {reason}", target.name);
         }
+        // Same gate as preflight: no connection when nothing will run.
+        let privs = match unreachable {
+            Some(_) => Err(String::new()),
+            None if !scenarios.iter().any(|s| applies(&s)) => Err(String::new()),
+            None => privileges(&target.direct, &timeouts)
+                .await
+                .map_err(|e| format!("{DIRECT_UNREACHABLE} privilege check: {e:#}")),
+        };
+        if let Ok(p) = &privs
+            && !p.superuser
+            && !p.pg_signal_backend
+            && target
+                .reset
+                .iter()
+                .any(|s| s.sql().to_lowercase().contains("pg_terminate_backend"))
+        {
+            eprintln!(
+                "warning: target '{}': reset terminates sessions, but the direct user has neither superuser \
+                 nor pg_signal_backend, so it can only end sessions of its own role (and only a superuser \
+                 can end a superuser's)",
+                target.name
+            );
+        }
         for s in scenarios.iter().filter(wanted) {
-            let (verdict, steps, runs, failures) = if !s.modes.contains(&target.mode) {
-                let reason = format!("not applicable to {} mode", target.mode);
-                (Verdict::Skip { reason }, vec![], 0, 0)
-            } else if let Some(reason) = &unreachable {
-                (Verdict::Error { reason: reason.clone() }, vec![], 0, 0)
-            } else {
-                // Keyed by the redacted endpoint: the password doesn't change the server.
-                let key = (s.name.as_str(), target.direct.to_string());
-                if opts.check_scenarios && !determinism.contains_key(&key) {
-                    determinism.insert(
-                        key.clone(),
-                        deterministic(s, &target.direct, &target.reset, &for_scenario(&timeouts, s)).await,
-                    );
-                }
-                match determinism.get(&key) {
-                    Some(Err(reason)) => (Verdict::Error { reason: reason.clone() }, vec![], 0, 0),
-                    _ => {
-                        let checked = check(
-                            s,
-                            &target.pooler,
-                            &target.direct,
-                            &target.reset,
-                            &for_scenario(&timeouts, s),
-                        )
-                        .await;
-                        (checked.verdict, checked.steps, checked.runs, checked.failures)
+            let (verdict, steps, runs, failures) = match before_run(s, target, unreachable.as_deref(), &privs) {
+                Some(verdict) => (verdict, vec![], 0, 0),
+                None => {
+                    let seen = |(name, direct, _): &&(&str, &Endpoint, _)| *name == s.name && *direct == &target.direct;
+                    if opts.check_scenarios && !determinism.iter().any(|d| seen(&d)) {
+                        let result = deterministic(s, &target.direct, &target.reset, &for_scenario(&timeouts, s)).await;
+                        determinism.push((&s.name, &target.direct, result));
+                    }
+                    match determinism.iter().find(seen) {
+                        Some((_, _, Err(reason))) => (Verdict::Error { reason: reason.clone() }, vec![], 0, 0),
+                        _ => {
+                            let checked = check(
+                                s,
+                                &target.pooler,
+                                &target.direct,
+                                &target.reset,
+                                &for_scenario(&timeouts, s),
+                            )
+                            .await;
+                            (checked.verdict, checked.steps, checked.runs, checked.failures)
+                        }
                     }
                 }
             };
@@ -118,6 +139,32 @@ pub async fn run(
         }
     }
     Ok((target_infos, results))
+}
+
+/// The verdict for a scenario that won't run on this target, or `None` to run it.
+/// `privs` is the direct user's privileges, or why they couldn't be read.
+fn before_run(
+    s: &Scenario,
+    target: &Target,
+    unreachable: Option<&str>,
+    privs: &Result<Privileges, String>,
+) -> Option<Verdict> {
+    if !s.modes.contains(&target.mode) {
+        let reason = format!("not applicable to {} mode", target.mode);
+        return Some(Verdict::Skip { reason });
+    }
+    if let Some(reason) = unreachable {
+        return Some(Verdict::Error {
+            reason: reason.to_string(),
+        });
+    }
+    if s.requires.is_empty() {
+        return None;
+    }
+    match privs {
+        Ok(privs) => privs.missing(&s.requires).map(|reason| Verdict::Skip { reason }),
+        Err(reason) => Some(Verdict::Error { reason: reason.clone() }),
+    }
 }
 
 /// Which results make `run` exit 1. Each level includes the ones before it. An ERROR
@@ -194,6 +241,52 @@ mod tests {
     use crate::targets::Targets;
 
     #[test]
+    fn unmet_requirements_skip_before_running() {
+        let target = Targets::single(
+            "postgres://u@127.0.0.1:1/db",
+            "postgres://u@127.0.0.1:1/db",
+            PoolMode::Transaction,
+        )
+        .unwrap()
+        .targets
+        .remove(0);
+        let scenario = |requires: &str| -> Scenario {
+            toml::from_str(&format!(
+                "name = 's'\ndescription = ''\nrequires = [{requires}]\nstep = []\n"
+            ))
+            .unwrap()
+        };
+        let plain = Privileges {
+            superuser: false,
+            createrole: false,
+            pg_signal_backend: false,
+        };
+        let creator = Privileges {
+            createrole: true,
+            ..plain
+        };
+        let verdict = |s: &Scenario, privs: Result<Privileges, String>| before_run(s, &target, None, &privs);
+
+        let roles = scenario("'createrole'");
+        assert!(matches!(
+            verdict(&roles, Ok(plain)),
+            Some(Verdict::Skip { reason }) if reason == "needs createrole on direct"
+        ));
+        assert!(verdict(&roles, Ok(creator)).is_none());
+        assert!(matches!(
+            verdict(&roles, Err("no answer".into())),
+            Some(Verdict::Error { .. })
+        ));
+        // Nothing required: runs even when the privileges couldn't be read.
+        assert!(verdict(&scenario(""), Err("no answer".into())).is_none());
+        // Unreachable wins over requirements.
+        assert!(matches!(
+            before_run(&roles, &target, Some("down"), &Ok(creator)),
+            Some(Verdict::Error { reason }) if reason == "down"
+        ));
+    }
+
+    #[test]
     fn fail_on_is_a_ladder_and_errors_always_count() {
         use crate::runner::{Mismatch, Outcome};
         let fail = |kind| Verdict::Fail {
@@ -240,6 +333,11 @@ mod tests {
         let mut second = Targets::single(&url, &url, PoolMode::Transaction).unwrap().targets;
         second[0].name = "b".into();
         targets.append(&mut second);
+        // Same server, other options: may behave differently, so it's checked again.
+        let other = format!("{url}{}application_name=pp", if url.contains('?') { '&' } else { '?' });
+        let mut third = Targets::single(&url, &other, PoolMode::Transaction).unwrap().targets;
+        third[0].name = "c".into();
+        targets.append(&mut third);
         let opts = RunOptions {
             check_scenarios: true,
             ..RunOptions::default()
@@ -247,8 +345,9 @@ mod tests {
         let (_, results) = run(&targets, std::slice::from_ref(&s), &opts).await.unwrap();
         assert!(results.iter().all(|r| matches!(r.verdict, Verdict::Pass)));
         let rows = client.query_one("SELECT count(*) FROM pp_runs", &[]).await.unwrap();
-        // 2 for the shared check, then baseline + target run on each target.
-        assert_eq!(rows.get::<_, i64>(0), 2 + 2 * 2);
+        // 2 for the check shared by a and b, 2 for c's, then baseline + target run on
+        // each target.
+        assert_eq!(rows.get::<_, i64>(0), 2 + 2 + 3 * 2);
         client.batch_execute("DROP TABLE pp_runs").await.unwrap();
     }
 
