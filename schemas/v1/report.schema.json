@@ -29,6 +29,25 @@
       ],
       "type": "object"
     },
+    "Compare": {
+      "oneOf": [
+        {
+          "const": "full",
+          "description": "Rows, row counts and SQLSTATE must match.",
+          "type": "string"
+        },
+        {
+          "const": "status",
+          "description": "Only success vs. error (and the SQLSTATE) must match.",
+          "type": "string"
+        },
+        {
+          "const": "ignore",
+          "description": "Run the step but don't compare it.",
+          "type": "string"
+        }
+      ]
+    },
     "Comparison": {
       "description": "What changed between the baseline and this run. Results match by target and\nscenario name.",
       "properties": {
@@ -126,6 +145,37 @@
         "before",
         "after",
         "counted"
+      ],
+      "type": "object"
+    },
+    "Expected": {
+      "description": "What a row carries when a documented limitation explains its FAIL.",
+      "properties": {
+        "doc": {
+          "description": "The pooler's own documentation, pinned to a version or commit.",
+          "type": "string"
+        },
+        "doc_version": {
+          "description": "The pooler version the doc was read for, when the link isn't pinned to a commit.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "quote": {
+          "description": "The doc's own words.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "doc",
+        "quote"
       ],
       "type": "object"
     },
@@ -364,6 +414,17 @@
         }
       ],
       "properties": {
+        "expected": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Expected"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Set on a FAIL the pooler's own documentation describes. It is still a FAIL."
+        },
         "failures": {
           "default": 0,
           "format": "uint32",
@@ -389,6 +450,13 @@
         },
         "target": {
           "type": "string"
+        },
+        "varied": {
+          "description": "With more than one run: whether a failing run failed differently from the one\nwhose steps are kept here. Missing in older reports, and then unknown.",
+          "type": [
+            "boolean",
+            "null"
+          ]
         }
       },
       "required": [
@@ -400,6 +468,13 @@
     },
     "ScenarioInfo": {
       "properties": {
+        "compare": {
+          "description": "How each step is compared, in step order. Missing in reports from before it was\nrecorded.",
+          "items": {
+            "$ref": "#/$defs/Compare"
+          },
+          "type": "array"
+        },
         "description": {
           "type": "string"
         },
@@ -434,9 +509,38 @@
       ],
       "type": "object"
     },
+    "Stale": {
+      "description": "A documented limitation that applied to a target but didn't match its result.",
+      "properties": {
+        "doc": {
+          "type": "string"
+        },
+        "reason": {
+          "description": "Why it didn't match, e.g. `passes now`. Plain text for people, not for parsing.",
+          "type": "string"
+        },
+        "scenario": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "target",
+        "scenario",
+        "doc",
+        "reason"
+      ],
+      "type": "object"
+    },
     "State": {
       "description": "One side of an entry, without the step details.",
       "properties": {
+        "expected": {
+          "description": "A FAIL the pooler's own docs describe.",
+          "type": "boolean"
+        },
         "failed_runs": {
           "description": "For repeated scenarios: how many runs failed, of how many.",
           "maxItems": 2,
@@ -576,6 +680,13 @@
         "null"
       ]
     },
+    "limitations": {
+      "description": "Which documented limitations marked FAILs as expected: `built-in from poolproof\nX.Y.Z` or `custom` (from `--limitations`). Missing when none were applied.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "poolproof": {
       "type": "string"
     },
@@ -597,6 +708,13 @@
       "format": "uint32",
       "minimum": 0,
       "type": "integer"
+    },
+    "stale_expectations": {
+      "description": "Documented limitations that applied to a target here but didn't match its\nresult: the scenario passes now, or fails some other way. Those rows are plain\nFAILs.",
+      "items": {
+        "$ref": "#/$defs/Stale"
+      },
+      "type": "array"
     },
     "targets": {
       "items": {

@@ -1,6 +1,8 @@
 use std::io::IsTerminal;
 
-use crate::runner::{Outcome, Verdict};
+use crate::limitations::Expected;
+use crate::report::ResultRow;
+use crate::runner::Verdict;
 use crate::scenario;
 
 /// How `run` prints results as text.
@@ -45,17 +47,28 @@ fn label(verdict: &Verdict, color: bool) -> String {
     }
 }
 
-pub fn print_verdict(target: &str, s: &scenario::Scenario, verdict: &Verdict, color: bool) {
+pub fn print_verdict(
+    target: &str,
+    s: &scenario::Scenario,
+    verdict: &Verdict,
+    expected: Option<&Expected>,
+    color: bool,
+) {
     let label = label(verdict, color);
     match verdict {
         Verdict::Pass => println!("{label} {target:<24} {}", s.name),
         Verdict::Skip { reason } | Verdict::Error { reason } => println!("{label} {target:<24} {} ({reason})", s.name),
         Verdict::Fail { mismatch } => {
-            println!("{label} {target:<24} {} ({})", s.name, mismatch.kind);
+            let documented = if expected.is_some() { ", documented" } else { "" };
+            println!("{label} {target:<24} {} ({}{documented})", s.name, mismatch.kind);
             println!("      {}", s.description);
             println!("      step {}: {}", mismatch.step, mismatch.action);
             println!("      postgres: {}", mismatch.expected);
             println!("      pooler:   {}", mismatch.actual);
+            if let Some(e) = expected {
+                let version = e.doc_version.as_deref().map(|v| format!(" ({v})")).unwrap_or_default();
+                println!("      documented: \"{}\" {}{version}", e.quote, e.doc);
+            }
             for r in &s.refs {
                 println!("      from {r}");
             }
@@ -64,24 +77,19 @@ pub fn print_verdict(target: &str, s: &scenario::Scenario, verdict: &Verdict, co
 }
 
 /// One scenario's result on one target, as `run` prints it.
-pub fn print_result(
-    target: &str,
-    s: &scenario::Scenario,
-    verdict: &Verdict,
-    steps: &[(Outcome, Outcome)],
-    runs: u32,
-    failures: u32,
-    style: Style,
-) {
-    print_verdict(target, s, verdict, style.color);
-    if runs > 1 && failures > 0 {
-        println!("      failed in {failures} of {runs} runs (timing-sensitive)");
+pub fn print_result(s: &scenario::Scenario, row: &ResultRow, style: Style) {
+    print_verdict(&row.target, s, &row.verdict, row.expected.as_ref(), style.color);
+    if row.runs > 1 && row.failures > 0 {
+        println!(
+            "      failed in {} of {} runs (timing-sensitive)",
+            row.failures, row.runs
+        );
     }
     if style.verbose {
-        for (i, (step, (expected, actual))) in s.steps.iter().zip(steps).enumerate() {
+        for (i, (step, outcomes)) in s.steps.iter().zip(&row.steps).enumerate() {
             println!("      {}. {}", i + 1, step.describe());
-            println!("         postgres: {expected}");
-            println!("         pooler:   {actual}");
+            println!("         postgres: {}", outcomes.postgres);
+            println!("         pooler:   {}", outcomes.pooler);
         }
     }
 }

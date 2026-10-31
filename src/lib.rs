@@ -7,6 +7,8 @@ pub mod cli;
 #[doc(hidden)]
 pub mod doctor;
 #[doc(hidden)]
+pub mod limitations;
+#[doc(hidden)]
 pub mod output;
 #[doc(hidden)]
 pub mod report;
@@ -18,3 +20,5 @@ pub mod scan;
 pub mod scenario;
 #[doc(hidden)]
 pub mod targets;
+#[doc(hidden)]
+pub mod version;

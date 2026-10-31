@@ -85,6 +85,15 @@ enum Command {
         /// fixes and scenarios or targets only one side has are listed, not counted.
         #[arg(long, value_name = "REPORT")]
         compare_to: Option<PathBuf>,
+        /// Don't let FAILs the pooler's own docs describe make the exit code 1. They are
+        /// still reported, marked documented. For a pooler's own CI; an app team still
+        /// breaks on them.
+        #[arg(long)]
+        ignore_expected: bool,
+        /// Directory of documented limitations (`<product>.toml`). Defaults to the ones
+        /// built into poolproof.
+        #[arg(long, value_name = "DIR")]
+        limitations: Option<PathBuf>,
     },
     /// Scan queries (pg_stat_statements CSV, Postgres logs or a .sql file) for
     /// patterns that break under transaction pooling.
@@ -111,6 +120,10 @@ enum Command {
         /// built-in results, e.g. from a run against your own setup.
         #[arg(long, requires = "pooler")]
         results: Option<PathBuf>,
+        /// With --pooler: directory of documented limitations. Defaults to the built-in
+        /// ones.
+        #[arg(long, value_name = "DIR", requires = "pooler")]
+        limitations: Option<PathBuf>,
     },
     /// Render saved `run --format json` reports, e.g. one per Postgres version, as
     /// one table.
@@ -119,6 +132,10 @@ enum Command {
         files: Vec<PathBuf>,
         #[arg(long, value_enum, default_value_t = ReportFormat::Markdown)]
         format: ReportFormat,
+        /// Directory of documented limitations (`<product>.toml`). Defaults to the ones
+        /// built into poolproof.
+        #[arg(long, value_name = "DIR")]
+        limitations: Option<PathBuf>,
     },
     /// Check a target before a run: both URLs answer and reach the same Postgres,
     /// TLS, privileges, what reset would end, and the pooling mode. Only reads.
@@ -218,10 +235,12 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
             fail_on,
             step_timeout,
             compare_to,
+            ignore_expected,
+            limitations,
         } => {
             let targets = load_targets(&targets, pooler, direct, mode, reset)?;
             // Before the run, so a bad baseline fails fast.
-            let baseline = compare_to.as_deref().map(report::Report::load).transpose()?;
+            let mut baseline = compare_to.as_deref().map(report::Report::load).transpose()?;
             if let Some(baseline) = &baseline {
                 let selected = targets
                     .targets
@@ -233,6 +252,11 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
             let mut scenarios = load_scenarios(scenarios.as_deref())?;
             if reverse {
                 scenarios.reverse();
+            }
+            let limitations = crate::limitations::load(limitations.as_deref(), &scenarios)?;
+            // The same set judges both sides, so only a changed outcome changes a mark.
+            if let Some(baseline) = &mut baseline {
+                limitations.apply(baseline, &scenarios);
             }
 
             let text = matches!(format, RunFormat::Text);
@@ -250,6 +274,7 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
                     step: step_timeout,
                     ..Default::default()
                 },
+                limitations: Some(&limitations),
             };
             let (target_infos, results) = runner::suite::run(&targets.targets, &scenarios, &opts).await?;
             let scenarios = scenarios
@@ -261,6 +286,7 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
                     refs: s.refs.clone(),
                     steps: s.steps.iter().map(|step| step.describe()).collect(),
                     repeat: s.repeat,
+                    compare: s.steps.iter().map(|step| step.compare).collect(),
                 })
                 .collect();
             let mut report = report::Report {
@@ -272,13 +298,22 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
                 scenarios,
                 results,
                 comparison: None,
+                limitations: None,
+                stale_expectations: vec![],
             };
+            // Every scenario here records its compare modes.
+            limitations.apply(&mut report, &[]);
             let results = &report.results;
 
             let count = |f: fn(&Verdict) -> bool| results.iter().filter(|r| f(&r.verdict)).count();
             let failed = count(|v| matches!(v, Verdict::Fail { .. }));
             let errors = count(|v| matches!(v, Verdict::Error { .. }));
-            let exit_failure = results.iter().any(|r| fail_on.fails(&r.verdict));
+            let documented = results.iter().filter(|r| r.expected.is_some()).count();
+            let gate = runner::suite::Gate {
+                fail_on,
+                ignore_expected,
+            };
+            let exit_failure = results.iter().any(|r| gate.fails(r));
             let ignored = results
                 .iter()
                 .filter(|r| matches!(r.verdict, Verdict::Fail { .. } | Verdict::Error { .. }))
@@ -287,9 +322,16 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
             if ignored > 0 {
                 eprintln!("note: {ignored} failed or errored results ignored by --fail-on {fail_on}");
             }
+            let ignored = results
+                .iter()
+                .filter(|r| fail_on.fails(&r.verdict) && !gate.fails(r))
+                .count();
+            if ignored > 0 {
+                eprintln!("note: {ignored} documented failures ignored by --ignore-expected");
+            }
             // With --compare-to, only regressions that --fail-on counts fail the run.
             let comparison = match &baseline {
-                Some(baseline) => Some(report::compare::compare(baseline, &report, fail_on)?),
+                Some(baseline) => Some(report::compare::compare(baseline, &report, gate)?),
                 None => None,
             };
             let exit_failure = comparison.as_ref().map_or(exit_failure, |c| c.fails());
@@ -300,11 +342,27 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
             if matches!(format, RunFormat::Text) {
                 let passed = count(|v| matches!(v, Verdict::Pass));
                 let skipped = count(|v| matches!(v, Verdict::Skip { .. }));
-                println!("\n{passed} passed, {failed} failed, {errors} errors, {skipped} skipped");
+                let documented = match documented {
+                    0 => String::new(),
+                    n => format!(" ({n} documented)"),
+                };
+                println!("\n{passed} passed, {failed} failed{documented}, {errors} errors, {skipped} skipped");
+                for stale in &report.stale_expectations {
+                    println!(
+                        "stale expectation: {} / {}: {} ({})",
+                        stale.target, stale.scenario, stale.reason, stale.doc
+                    );
+                }
                 if let Some(c) = &comparison {
                     print!("{}", c.text(&baseline_file, &report));
                 }
             } else {
+                if !report.stale_expectations.is_empty() {
+                    eprintln!(
+                        "note: {} stale expectations: documented limitations that didn't match (stale_expectations)",
+                        report.stale_expectations.len()
+                    );
+                }
                 let compared = comparison.as_ref().map(|c| c.markdown(&baseline_file, &report));
                 report.comparison = comparison;
                 match format {
@@ -331,14 +389,20 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
             pooler,
             postgres,
             results,
+            limitations,
         } => {
             let queries = scan::load_queries(&input, input_format)?;
             let mut report = scan::scan(&queries);
             if let Some(pooler) = &pooler {
-                let reports = match &results {
+                let mut reports = match &results {
                     Some(path) => vec![report::Report::load(path)?],
                     None => report::bundled()?,
                 };
+                let scenarios = scenario::bundled()?;
+                let limitations = crate::limitations::load(limitations.as_deref(), &scenarios)?;
+                for r in &mut reports {
+                    limitations.apply(r, &scenarios);
+                }
                 let (results, target) = report::find_target(&reports, pooler, postgres.as_deref())?;
                 for finding in &mut report.findings {
                     finding.on_pooler = report::check_finding(results, target, &finding.scenarios);
@@ -364,11 +428,21 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
             });
             Ok(if failing { ExitCode::FAILURE } else { ExitCode::SUCCESS })
         }
-        Command::Report { files, format } => {
-            let reports = files
+        Command::Report {
+            files,
+            format,
+            limitations,
+        } => {
+            let mut reports = files
                 .iter()
                 .map(|f| report::Report::load(f))
                 .collect::<Result<Vec<_>>>()?;
+            // Marks come from the current set, so editing it needs no new run.
+            let scenarios = scenario::bundled()?;
+            let limitations = crate::limitations::load(limitations.as_deref(), &scenarios)?;
+            for r in &mut reports {
+                limitations.apply(r, &scenarios);
+            }
             match format {
                 ReportFormat::Markdown => print!("{}", report::markdown(&reports)),
                 ReportFormat::Html => print!("{}", report::html(&reports)?),

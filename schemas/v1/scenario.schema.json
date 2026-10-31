@@ -76,7 +76,8 @@
           "type": "string"
         },
         "compare": {
-          "$ref": "#/$defs/Compare"
+          "$ref": "#/$defs/Compare",
+          "default": "full"
         },
         "compare_parameter_status": {
           "default": false,

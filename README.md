@@ -69,6 +69,42 @@ target whose product, version, config or Postgres differs gets a warning; a diff
 pool mode is an error. With `--format json` the comparison is in the report under
 `comparison`.
 
+Some FAILs are limitations the pooler documents itself, like PgBouncer's "SET/RESET:
+Never" for transaction pooling. Those are listed in `limitations/<product>.toml`, built
+into the binary, each with a link to the pooler's own docs pinned to a version or commit
+and the doc's words. A FAIL that matches an entry exactly is still a FAIL, printed as
+`(silent, documented)` with the doc, and marked `expected` in JSON. Exactly means: the
+target's product, pool mode, config (`default` unless the entry lists others) and version
+are in the entry's range, every step that differs is one the entry lists, with the
+outcome it lists, and nothing hangs. A repeated scenario must fail the same way in every
+run. Anything else stays an unexplained FAIL. An entry that applies to a target but
+doesn't match its result (the scenario passes now, or fails another way) is printed as a
+stale expectation and listed under `stale_expectations` in JSON.
+
+Expected FAILs count for the exit code like any other: for an app, a documented SET leak
+still breaks it. `--ignore-expected` leaves them out, for a pooler's own CI. With
+`--compare-to`, an expected FAIL that no longer matches its entry is a regression.
+`--limitations DIR` (on `run`, `report` and `scan`) uses your own entries. `report`
+applies the current entries to saved runs, so a new entry needs no new run.
+
+```toml
+[[limitation]]
+scenario = "set-isolated-between-clients"
+mode = "transaction"
+config = ["default", "tls"]   # target configs; default: ["default"]
+since = "1.24.1"              # lowest version it was checked on; fixed_in = "..." ends it
+# postgres_since / postgres_fixed_in limit it to some Postgres versions.
+differs = [{ step = 3, pooler = { status = "ok", rows = [["9MB"]], tags = [0] } }]
+doc = "https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f.../features.md"
+quote = "SET/RESET | Yes | Never"
+# doc_version = "1.26.1" is needed when the link isn't pinned to a commit.
+```
+
+`pooler` is the outcome as in `run -v`: `{ status = "ok", rows, tags }`, `{ status =
+"error", code }` (the message isn't compared), `{ status = "messages", messages }` for a
+`send` step, or `{ status = "abandoned" }`. Timeouts, dropped connections and other
+outcomes the harness makes up are refused.
+
 ```text
 $ poolproof run --filter multi-statement
 FAIL  pgdog-0.1.62             multi-statement-begin (silent)
@@ -299,7 +335,9 @@ scenario fails with an error or hangs: the pooler refuses the query, or another 
 query fails because of it; OK means it passes. With
 `--pooler`, BREAKS and REJECTED fail the exit code; a finding poolproof's results don't
 cover (no related scenario, or only SKIP or ERROR verdicts) counts as it would without
-`--pooler`. `--postgres 17.11` picks the Postgres version (default: newest), and
+`--pooler`. A finding whose failing scenarios are all documented limitations (see
+above) still says BREAKS or REJECTED, with the docs after it: `(documented: <link>)`.
+`--postgres 17.11` picks the Postgres version (default: newest), and
 `--results my-run.json` uses a run against your own setup instead. An unknown name lists
 the available ones.
 

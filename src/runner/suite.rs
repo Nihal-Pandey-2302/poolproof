@@ -8,6 +8,7 @@ use super::{
     DIRECT_UNREACHABLE, FailKind, Privileges, Timeouts, Verdict, check, deterministic, preflight, privileges,
     resolve_reset, server_version,
 };
+use crate::limitations::Limitations;
 use crate::output::text::{Style, print_progress, print_result};
 use crate::report::{ResultRow, StepOutcomes, TargetInfo};
 use crate::scenario::Scenario;
@@ -35,6 +36,8 @@ pub struct RunOptions<'a> {
     pub timeouts: Timeouts,
     /// Allow reset = "all" against a Postgres that isn't on this machine.
     pub yes: bool,
+    /// Documented limitations, to mark expected FAILs as they come in.
+    pub limitations: Option<&'a Limitations>,
 }
 
 /// Runs every scenario on every target, in order.
@@ -130,8 +133,8 @@ pub async fn run(
             );
         }
         for s in scenarios.iter().filter(wanted) {
-            let (verdict, steps, runs, failures) = match before_run(s, target, unreachable.as_deref(), &privs) {
-                Some(verdict) => (verdict, vec![], 0, 0),
+            let (verdict, steps, runs, failures, varied) = match before_run(s, target, unreachable.as_deref(), &privs) {
+                Some(verdict) => (verdict, vec![], 0, 0, false),
                 None => {
                     let seen = |(name, direct, statements, _): &&Determinism| {
                         *name == s.name && *direct == &target.direct && *statements == reset
@@ -141,32 +144,46 @@ pub async fn run(
                         determinism.push((&s.name, &target.direct, reset.clone(), result));
                     }
                     match determinism.iter().find(seen) {
-                        Some((_, _, _, Err(reason))) => (Verdict::Error { reason: reason.clone() }, vec![], 0, 0),
+                        Some((_, _, _, Err(reason))) => {
+                            (Verdict::Error { reason: reason.clone() }, vec![], 0, 0, false)
+                        }
                         _ => {
                             let checked =
                                 check(s, &target.pooler, &target.direct, &reset, &for_scenario(&timeouts, s)).await;
-                            (checked.verdict, checked.steps, checked.runs, checked.failures)
+                            (
+                                checked.verdict,
+                                checked.steps,
+                                checked.runs,
+                                checked.failures,
+                                checked.varied,
+                            )
                         }
                     }
                 }
             };
-            if opts.text {
-                print_result(&target.name, s, &verdict, &steps, runs, failures, opts.style);
-            } else {
-                print_progress(results.len() + 1, total, &target.name, s, &verdict);
-            }
             let steps = steps
                 .into_iter()
                 .map(|(postgres, pooler)| StepOutcomes { postgres, pooler })
                 .collect();
-            results.push(ResultRow {
+            let mut row = ResultRow {
                 target: target.name.clone(),
                 scenario: s.name.clone(),
                 verdict,
                 steps,
                 runs,
                 failures,
-            });
+                varied: (runs > 1).then_some(varied),
+                expected: None,
+            };
+            if let (Some(limitations), Some(info)) = (opts.limitations, target_infos.last()) {
+                row.expected = limitations.expected_for(info, s, &row);
+            }
+            if opts.text {
+                print_result(s, &row, opts.style);
+            } else {
+                print_progress(results.len() + 1, total, &target.name, s, &row.verdict);
+            }
+            results.push(row);
         }
     }
     Ok((target_infos, results))
@@ -238,6 +255,29 @@ impl FailOn {
             FailOn::Silent => kind == FailKind::Silent,
             FailOn::Error => kind != FailKind::Hang,
             FailOn::Any => true,
+        }
+    }
+}
+
+/// What makes `run` exit 1: `--fail-on`, and with `--ignore-expected`, not the FAILs
+/// the pooler's own docs describe.
+#[derive(Clone, Copy, Debug)]
+pub struct Gate {
+    pub fail_on: FailOn,
+    pub ignore_expected: bool,
+}
+
+impl Gate {
+    pub fn fails(self, row: &ResultRow) -> bool {
+        self.fail_on.fails(&row.verdict) && !(self.ignore_expected && row.expected.is_some())
+    }
+}
+
+impl From<FailOn> for Gate {
+    fn from(fail_on: FailOn) -> Self {
+        Gate {
+            fail_on,
+            ignore_expected: false,
         }
     }
 }

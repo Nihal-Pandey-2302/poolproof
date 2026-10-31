@@ -1,0 +1,15 @@
+# PgBouncer's documented limitations: FAILs its own docs say happen. A result that
+# matches an entry exactly is reported as expected, still a FAIL; anything else stays
+# a bug. See README "Documented limitations" for the format and the rules.
+
+# The feature map on pgbouncer.org lists SET/RESET as "Never" for transaction
+# pooling: the next client on the same server connection sees the value.
+[[limitation]]
+scenario = "set-isolated-between-clients"
+mode = "transaction"
+config = ["default", "tls"]
+since = "1.24.1"
+differs = [{ step = 3, pooler = { status = "ok", rows = [["9MB"]], tags = [0] } }]
+doc = "https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes"
+quote = "SET/RESET | Yes | Never"
+note = "Row of the table \"SQL feature map for pooling modes\" (columns: Feature, Session pooling, Transaction pooling)."
