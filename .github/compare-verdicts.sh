@@ -10,6 +10,9 @@
 #   verdict  PASS and FAIL (any kind) match each other; ERROR, SKIP or a missing
 #            result still differ
 #   kind     a FAIL matches a FAIL of any kind
+#   reached  as kind, and a SKIP whose reason starts "passed, but" (evidence showed the
+#            clients never shared a server connection, so the run didn't count) matches
+#            it too; PASS, ERROR, other SKIPs and a missing result still differ
 # Exits 1 when verdicts differ, 2 on a bad or stale known-flaky line, 3 when a JSON file
 # it reads isn't a readable report.
 set -euo pipefail
@@ -35,22 +38,22 @@ done
 awk '{ sub(/\r$/, "") }
      NF && $1 !~ /^#/ && NF == 2 { bad = 1
        printf "::error file=%s,line=%d::add verdict or kind: %s\n", FILENAME, FNR, $0 }
-     NF && $1 !~ /^#/ && NF != 2 && (NF != 3 || ($3 != "verdict" && $3 != "kind")) { bad = 1
-       printf "::error file=%s,line=%d::expected \"<target> <scenario> verdict|kind\", got: %s\n", FILENAME, FNR, $0 }
+     NF && $1 !~ /^#/ && NF != 2 && (NF != 3 || ($3 != "verdict" && $3 != "kind" && $3 != "reached")) { bad = 1
+       printf "::error file=%s,line=%d::expected \"<target> <scenario> verdict|kind|reached\", got: %s\n", FILENAME, FNR, $0 }
      END { exit bad }' "$flaky_file" || exit 2
 flaky=$(awk '{ sub(/\r$/, "") } NF == 3 && $1 !~ /^#/ { print $1 "\t" $2 "\t" $3 }' "$flaky_file" \
   | jq -Rsc 'split("\n") | map(select(. != "") | split("\t") | {target: .[0], scenario: .[1], mode: .[2]})')
 
-# Stale lines. A pair that no committed results file has is a typo. A `kind` line is
-# only right for a pair committed as FAIL, and a `verdict` line never for one committed
-# as ERROR or SKIP. Lines for the other job's file are checked there.
+# Stale lines. A pair that no committed results file has is a typo. A `kind` or `reached`
+# line is only right for a pair committed as FAIL, and a `verdict` line never for one
+# committed as ERROR or SKIP. Lines for the other job's file are checked there.
 stale=$(jq -rn --argjson flaky "$flaky" --slurpfile c "$committed" '
   [inputs | .results[] | "\(.target) \(.scenario)"] as $known
   | ($c[0].results | map({key: "\(.target) \(.scenario)", value: .result}) | from_entries) as $mine
   | $flaky[] | "\(.target) \(.scenario)" as $k
   | if ($known | index($k)) == null then "\($k): in no results/*.json"
     elif $mine[$k] == null then empty
-    elif .mode == "kind" and $mine[$k] != "fail" then "\($k): kind, but committed as \($mine[$k])"
+    elif (.mode == "kind" or .mode == "reached") and $mine[$k] != "fail" then "\($k): \(.mode), but committed as \($mine[$k])"
     elif .mode == "verdict" and ($mine[$k] == "error" or $mine[$k] == "skip") then "\($k): verdict, but committed as \($mine[$k])"
     else empty end' results/*.json)
 if [ -n "$stale" ]; then
@@ -77,6 +80,9 @@ verdicts() {
     | ([$flaky[] | select(.target == $r.target and .scenario == $r.scenario) | .mode] | first) as $mode
     | (if $mode == "verdict" and (.result == "pass" or .result == "fail") then "pass or fail (known flaky)"
        elif $mode == "kind" and .result == "fail" then "fail (known flaky)"
+       elif $mode == "reached" and (.result == "fail"
+         or (.result == "skip" and ((.reason // "") | startswith("passed, but"))))
+         then "fail or not reached (known flaky)"
        else "\(.result) \(.mismatch.kind // "")" end) as $v
     | "\(.target) \(.scenario) \($v)"' "$1" | sort
 }
