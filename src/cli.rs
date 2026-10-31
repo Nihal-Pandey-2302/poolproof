@@ -87,7 +87,8 @@ enum Command {
         files: Vec<PathBuf>,
         /// Show one input's targets under a heading of their own, apart from the others:
         /// `--label 'variant targets=results/variants.json'`. The file is read as an
-        /// input if it isn't one already. Repeat for several.
+        /// input if it isn't one already. It splits at the last '=', so the file name
+        /// can't contain one. Repeat for several.
         #[arg(long = "label", value_name = "LABEL=FILE", id = "labels")]
         labels: Vec<String>,
         #[arg(long, value_enum, default_value_t = ReportFormat::Markdown)]
@@ -638,9 +639,13 @@ fn man(command: Option<&str>, out: &mut dyn std::io::Write) -> Result<()> {
 
 /// `report`'s inputs in order, each with its label: the files as given, then any file
 /// a `--label LABEL=FILE` names that isn't one of them. The label is everything before
-/// the last `=`.
+/// the last `=`. Files are compared as absolute paths, so `./a.json` is `a.json`.
 fn labeled_inputs(files: &[PathBuf], labels: &[String]) -> Result<Vec<(PathBuf, Option<String>)>> {
     let mut inputs: Vec<(PathBuf, Option<String>)> = files.iter().map(|f| (f.clone(), None)).collect();
+    let same = |a: &PathBuf, b: &PathBuf| match (std::path::absolute(a), std::path::absolute(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a == b,
+    };
     for arg in labels {
         let Some((label, file)) = arg
             .rsplit_once('=')
@@ -648,8 +653,11 @@ fn labeled_inputs(files: &[PathBuf], labels: &[String]) -> Result<Vec<(PathBuf, 
         else {
             bail!("--label {arg:?}: expected LABEL=FILE");
         };
+        if label.chars().any(char::is_control) {
+            bail!("--label {arg:?}: the label can't contain control characters such as a newline");
+        }
         let file = PathBuf::from(file);
-        match inputs.iter_mut().find(|(f, _)| *f == file) {
+        match inputs.iter_mut().find(|(f, _)| same(f, &file)) {
             Some((_, Some(_))) => bail!("--label: {} has a label already", file.display()),
             Some((_, slot)) => *slot = Some(label.trim().to_string()),
             None => inputs.push((file, Some(label.trim().to_string()))),
@@ -736,6 +744,13 @@ mod tests {
         }
         let twice = labeled_inputs(&files, &[label("a=core.json"), label("b=core.json")]);
         assert!(twice.unwrap_err().to_string().contains("has a label already"));
+        // The same file by another path is the same input.
+        let dot = labeled_inputs(&files, &[label("a=./core.json")]).unwrap();
+        assert_eq!(dot, vec![(PathBuf::from("core.json"), Some("a".to_string()))]);
+        for bad in ["two\nlines=v.json", "tab\there=v.json", "bell\u{7}=v.json"] {
+            let err = labeled_inputs(&files, &[label(bad)]).unwrap_err().to_string();
+            assert!(err.contains("control characters"), "{bad:?}: {err}");
+        }
     }
 
     #[test]
