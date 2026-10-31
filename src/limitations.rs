@@ -63,8 +63,10 @@ struct Limitation {
     fixed_in: Option<Version>,
     postgres_since: Option<Version>,
     postgres_fixed_in: Option<Version>,
-    /// The scenario's steps as `describe()` gives them, when the entry was checked.
+    /// The scenario's steps as `describe()` gives them, and how each is compared, when
+    /// the entry was checked.
     steps: Vec<String>,
+    compare: Vec<Compare>,
     /// Every step (from 0) where the pooler differs, with what it returns there.
     differs: Vec<(usize, Outcome)>,
     expected: Expected,
@@ -280,6 +282,7 @@ fn check(product: &str, e: Entry, scenarios: &[Scenario]) -> Result<Limitation> 
     Ok(Limitation {
         product: product.to_string(),
         steps: scenario.steps.iter().map(|st| st.describe()).collect(),
+        compare: scenario.steps.iter().map(|st| st.compare).collect(),
         scenario: e.scenario,
         mode: e.mode,
         config,
@@ -330,10 +333,10 @@ impl Limitation {
         ) && (&self.postgres_since, &self.postgres_fixed_in) == (&other.postgres_since, &other.postgres_fixed_in)
     }
 
-    /// Whether the entry is about this scenario, with the steps it was checked against,
-    /// on this target.
-    fn about(&self, scenario: &str, steps: &[String], t: &TargetInfo) -> bool {
-        self.scenario == scenario && self.steps == steps && self.applies(t)
+    /// Whether the entry is about this scenario, with the steps and compare modes it was
+    /// checked against, on this target.
+    fn about(&self, scenario: &str, steps: &[String], compare: &[Compare], t: &TargetInfo) -> bool {
+        self.scenario == scenario && self.steps == steps && self.compare == compare && self.applies(t)
     }
 
     /// Whether the entry is about this target: product, mode, config, pooler version
@@ -426,7 +429,7 @@ impl Limitations {
             for entry in self
                 .entries
                 .iter()
-                .filter(|e| e.about(&row.scenario, &info.steps, target))
+                .filter(|e| e.about(&row.scenario, &info.steps, compare, target))
             {
                 match entry.mismatch(compare, row) {
                     None if row.expected.is_none() => row.expected = Some(entry.expected.clone()),
@@ -456,7 +459,7 @@ impl Limitations {
         let steps: Vec<String> = scenario.steps.iter().map(|s| s.describe()).collect();
         self.entries
             .iter()
-            .filter(|e| e.about(&row.scenario, &steps, target))
+            .filter(|e| e.about(&row.scenario, &steps, &compare, target))
             .find(|e| e.mismatch(&compare, row).is_none())
             .map(|e| e.expected.clone())
     }
@@ -796,6 +799,22 @@ quote = "SET/RESET | Yes | Never"
         )
         .unwrap();
         assert!(set.expected_for(&t, &custom, &row(&t, ok(&["9MB"]))).is_none());
+        // The same steps compared another way are another scenario too.
+        let mut loose = report(vec![t.clone()], vec![row(&t, ok(&["9MB"]))]);
+        loose.scenarios[0].compare = vec![Compare::Full, Compare::Full, Compare::Status];
+        set.apply(&mut loose, &[]);
+        assert!(loose.results[0].expected.is_none());
+        assert!(loose.stale_expectations.is_empty());
+        let mut status: Scenario = toml::from_str(
+            "name = 'set-isolated-between-clients'\ndescription = ''\n\
+             [[step]]\nclient = 'a'\nsimple = \"SET work_mem = '7MB'\"\n\
+             [[step]]\nclient = 'b'\nsimple = \"SET work_mem = '9MB'\"\n\
+             [[step]]\nclient = 'a'\nsimple = 'SHOW work_mem'\n",
+        )
+        .unwrap();
+        assert!(set.expected_for(&t, &status, &row(&t, ok(&["9MB"]))).is_some());
+        status.steps[2].compare = Compare::Status;
+        assert!(set.expected_for(&t, &status, &row(&t, ok(&["9MB"]))).is_none());
     }
 
     #[test]
