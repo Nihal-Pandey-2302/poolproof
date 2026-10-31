@@ -49,7 +49,8 @@ pub struct PoolerCheck {
 pub enum PoolerStatus {
     /// A related scenario fails silently: wrong results, no error.
     Breaks,
-    /// The pooler refuses the pattern with an error (or hangs), so it fails loudly.
+    /// A related scenario fails with an error or hangs: the pooler refuses the pattern,
+    /// or another client's query fails because of it.
     Rejected,
     /// The pooler passes every related scenario.
     Ok,

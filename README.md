@@ -155,8 +155,9 @@ OK       session-set                 calls=1        SET search_path TO public;
 9 queries scanned, 5 findings. On pgdog-0.1.62 (Postgres 18.4): 2 break silently, 1 rejected, 2 handled.
 ```
 
-BREAKS means a related scenario fails silently on that pooler; REJECTED means the pooler
-returns an error, so the query would fail loudly in production; OK means it passes. With
+BREAKS means a related scenario fails silently on that pooler; REJECTED means a related
+scenario fails with an error or hangs: the pooler refuses the query, or another client's
+query fails because of it; OK means it passes. With
 `--pooler`, BREAKS and REJECTED fail the exit code; a finding poolproof's results don't
 cover (no related scenario, or only SKIP or ERROR verdicts) counts as it would without
 `--pooler`. `--postgres 17.11` picks the Postgres version (default: newest), and
