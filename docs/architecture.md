@@ -5,6 +5,8 @@ poolproof has two independent halves that share a report format:
 - `run` is a differential tester. It plays each scenario against plain Postgres, then
   through a pooler, and compares what clients saw. Postgres is the oracle: scenarios
   never hardcode expected output.
+- `drivers` is `run` with real drivers as the clients: psycopg, pgx, node-postgres and
+  pgjdbc, each a small program in a Docker image.
 - `scan` is a static checker. It parses queries with the Postgres parser
   (`pg_query`) and flags patterns that break under transaction pooling. With
   `--pooler`, it looks up what `run` found on that pooler.
@@ -56,16 +58,23 @@ src/scan/
   input.rs               pg_stat_statements CSV, csvlog, stderr and jsonlog logs, .sql files;
                          --input, stdin, read as a stream and merged by query text
   rules.rs               the rules, on the parsed statement tree
+src/drivers/mod.rs       `drivers`: drivers.toml and cases.toml as scenarios whose steps a
+                         driver program runs, the docker run, its output checked and read
 src/output/
   text.rs                `run` results on the terminal
   scan.rs, sarif.rs      `scan` results as text and SARIF (cli.rs prints JSON directly)
 scenarios/               one TOML file per scenario
+drivers/                 the driver programs, one directory and image each; drivers.toml
+                         (versions, variants), cases.toml (the steps), targets.txt (where
+                         CI runs them), docker-bake.hcl (builds the images), README.md
+                         (the program contract)
 results/                 committed `run --format json` reports, one per Postgres version
 schemas/v1/              JSON Schemas for reports, scenario and targets files, generated from
                          the Rust types and published with the site
 docker/compose.yml       the test bed: Postgres and every pooler version in the matrix
 targets.toml             the test bed's targets
 scripts/update-results.sh  regenerates results/ and RESULTS.md from a fresh test bed
+scripts/update-driver-results.sh  regenerates results/drivers-*.json and DRIVERS.md
 scripts/testbed.sh       a second test bed with shifted ports, to run several side by side
 tools/pp-proxy/          self-test proxies (own crate, not shipped): a passthrough that must
                          pass every scenario, and fault injectors that must fail known ones
@@ -132,7 +141,17 @@ Details that matter when changing this:
   whose `prepare` failed). A raw `send` client records these as a final reply line
   (`TIMEOUT`, `CLOSED`) instead of an error outcome. If a baseline step ends in
   `CONNECT`, `TIMEOUT`, `CLIENT` or `CLOSED`, Postgres gave no real answer, so the
-  scenario is ERROR rather than compared.
+  scenario is ERROR rather than compared. Driver programs (`drivers`) add
+  `DRIVER:<class>`, an error the driver raised without a SQLSTATE, which counts the
+  same way.
+- A `drivers` scenario has `program` set: `run_once` runs that driver program instead of
+  `run_steps`, once with both of its connections on Postgres and once on the pooler.
+  Everything around it (reset, setup, teardown, the comparison) is the same. The
+  program's output must name the version `drivers.toml` pins and report its steps in
+  order, or the scenario is ERROR. A program that stops early, fails on the way out or
+  reconnects keeps the outcomes it reported (the rest are `DRIVER:Stopped`) and returns
+  a `Broken` note: on Postgres it makes the scenario ERROR, and through the pooler
+  `compare` adds it to the FAIL the steps found, or makes one at the last step.
 - Anything that stops a comparison is `Verdict::Error` for that scenario only, and the
   run goes on: a failing reset, setup or teardown, a pooler that doesn't answer after a
   reset, or a direct step on the pooler run that can't connect (unless the pooler
@@ -190,6 +209,7 @@ report given with `--results`.
 | Any field of a report, scenario or targets file | also regenerate `schemas/v1` with `UPDATE_SCHEMAS=1 cargo test schema`; a test fails until it matches |
 | The results table or page | `report/markdown.rs`, `report/html.rs` and `report/report.html` |
 | A `scan` rule | `scan/rules.rs`, `RULES` and the rule -> scenario map in `scan/mod.rs`, README's rule list, expected findings in the corpus (`tests/fixtures/scan/*.toml`, run by `tests/scan_corpus.rs`) |
+| A driver, variant or driver case | `drivers/` (the program and its lockfile, `drivers.toml`, `cases.toml`; the contract is in `drivers/README.md`), the Dependabot ignore list in `.github/dependabot.yml`, then `scripts/update-driver-results.sh` |
 | A `scan` input format | `scan/input.rs` (`InputFormat` is also the list of `--input` values) |
 | Terminal or SARIF output | `output/` |
 | A command or flag | `cli.rs`, README |

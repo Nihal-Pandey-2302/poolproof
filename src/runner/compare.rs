@@ -51,7 +51,9 @@ pub fn same_failure(compare: &[Compare], a: &[(Outcome, Outcome)], b: &[(Outcome
 /// An outcome the harness made up because the step never got a real answer.
 pub fn from_harness(outcome: &Outcome) -> bool {
     match outcome {
-        Outcome::Error { code, connect, .. } => *connect || HARNESS_CODES.contains(&code.as_str()),
+        Outcome::Error { code, connect, .. } => {
+            *connect || HARNESS_CODES.contains(&code.as_str()) || code.starts_with(DRIVER_CODE)
+        }
         Outcome::Messages { messages } => messages.iter().any(|l| l == "TIMEOUT" || l == "CLOSED"),
         Outcome::Ok { .. } | Outcome::Abandoned | Outcome::NotRun => false,
     }
@@ -103,6 +105,11 @@ fn is_failure_line(line: &str) -> bool {
 /// NO_STATEMENT isn't one: it follows a prepare that failed, and if Postgres rejected
 /// that prepare, the outcome is deterministic and worth comparing.
 const HARNESS_CODES: &[&str] = &["CONNECT", "TIMEOUT", "CLIENT", "CLOSED"];
+
+/// Start of the code for a driver error without a SQLSTATE (`poolproof drivers`), e.g.
+/// `DRIVER:OperationalError`. A harness code too: on the baseline it means the driver
+/// failed, not Postgres.
+pub const DRIVER_CODE: &str = "DRIVER:";
 
 /// The first baseline step that failed in the harness rather than in Postgres. Postgres
 /// is the oracle, so a baseline like that can't be compared: an unreachable server
@@ -243,6 +250,17 @@ mod tests {
         // An execute after a prepare that Postgres itself rejected: deterministic, so
         // it's compared like any other outcome.
         assert!(baseline_failure(&[Outcome::error("25P02", "x"), Outcome::error("NO_STATEMENT", "x")]).is_none());
+    }
+
+    #[test]
+    fn driver_errors_without_sqlstate() {
+        let driver = Outcome::error("DRIVER:OperationalError", "");
+        // Baseline: the driver failed, not Postgres, so nothing to compare.
+        let reason = baseline_failure(&[Outcome::empty(), driver.clone()]).unwrap();
+        assert!(reason.contains("step 2"), "{reason}");
+        // Pooler side: an error Postgres didn't give.
+        assert_eq!(FailKind::of(&Outcome::empty(), &driver), FailKind::Error);
+        assert!(!Outcome::empty().matches(&driver, Compare::Full));
     }
 
     #[test]

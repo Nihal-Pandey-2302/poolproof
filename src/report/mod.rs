@@ -392,6 +392,24 @@ mod tests {
     }
 
     #[test]
+    fn only_core_reports_are_bundled() {
+        // A drivers report reuses the core targets' names, so find_target would pick
+        // whichever report came last.
+        for (name, _) in BUNDLED {
+            assert!(name.starts_with("postgres-"), "{name} is bundled");
+        }
+        let results = Path::new(env!("CARGO_MANIFEST_DIR")).join("results");
+        let core = std::fs::read_dir(results)
+            .map(|d| {
+                d.filter_map(|e| e.ok()?.file_name().into_string().ok())
+                    .filter(|n| n.starts_with("postgres-") && n.ends_with(".json"))
+                    .count()
+            })
+            .unwrap_or(0);
+        assert_eq!(BUNDLED.len(), core);
+    }
+
+    #[test]
     fn markdown_has_a_row_per_scenario() {
         let md = markdown(&[sample()]);
         assert!(md.contains("| `s` | pass |"));
