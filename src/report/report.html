@@ -150,6 +150,7 @@ footer { color: var(--muted); font-size: 12px; max-width: 1400px; margin: 0 auto
     <span><i class="hang"></i>hang: no reply</span>
     <span><i class="exp-silent"></i><i class="exp-error"></i>documented limitation: still breaks apps that rely on it</span>
     <span><i class="skip"></i>skipped / not run</span>
+    <span id="legend-once" hidden>✓¹ pass that rests on one run: its precondition held only once</span>
   </div>
 </header>
 <main><div class="scroll" id="grid"></div></main>
@@ -206,6 +207,22 @@ footer { color: var(--muted); font-size: 12px; max-width: 1400px; margin: 0 auto
   // A FAIL that a pooler's documentation explains. Still a failure, never a pass.
   const expected = (x) => !!(x && x.result === "fail" && x.expected);
   const bug = (x) => ["silent", "error", "hang"].includes(state(x)) && !expected(x);
+  // For a scenario with a precondition: how many runs met it, out of how many ran. Runs
+  // that didn't meet it aren't in runs or failures. Null when there's nothing to say.
+  const precondition = (x) => {
+    if (!x || x.precondition_unmet == null || !(x.precondition_unmet > 0 || x.runs > 1)) return null;
+    const ran = x.runs + x.precondition_unmet;
+    return { met: x.runs, ran, once: x.result === "pass" && x.runs === 1 && ran > 1 };
+  };
+  const preconditionText = (p) => `precondition met in ${p.met} of ${p.ran} runs`;
+  // What the pool probes saw: whether a second client shares, waits for or gets its own
+  // server connection.
+  const probeWord = { shared: "shared", separate: "separate", waited: "waited", refused: "refused", unknown: "unknown" };
+  const probeText = (t) => {
+    if (!t.idle_probe && !t.busy_probe) return null;
+    const one = (p) => !p ? "not probed" : (probeWord[p.result] || String(p.result)) + (p.detail ? ` (${p.detail})` : "");
+    return `pool probe: idle ${one(t.idle_probe)}, in a transaction ${one(t.busy_probe)}`;
+  };
   // Only silent and error failures can be expected; anything else keeps its own look.
   const expClass = (x) => expected(x) && ["silent", "error"].includes(state(x)) ? "exp-" + state(x) : state(x);
   const symbol = { pass: "✓", silent: "✕", error: "!", hang: "⏱", skip: "–", none: "·", error_run: "?" };
@@ -307,10 +324,13 @@ footer { color: var(--muted); font-size: 12px; max-width: 1400px; margin: 0 auto
       prev = c.product;
       c.first = first;
       const pgLabel = pgSel === "all" && pgs.length > 1 ? " · pg " + c.pg : "";
-      head2.append(el("th", { class: "col" + (first ? " first" : ""), title: c.t.name + " on Postgres " + c.pg }, el("div", {}, c.label + pgLabel)));
+      const probe = probeText(c.t);
+      head2.append(el("th", { class: "col" + (first ? " first" : ""), title: c.t.name + " on Postgres " + c.pg + (probe ? "; " + probe : "") },
+        el("div", {}, c.label + pgLabel)));
     });
 
     const body = el("tbody");
+    let once = false;
     for (const s of rows) {
       const tr = el("tr", {}, el("td", { class: "name" },
         el("div", { class: "mono" }, s.name), el("div", { class: "desc" }, s.description),
@@ -324,6 +344,9 @@ footer { color: var(--muted); font-size: 12px; max-width: 1400px; margin: 0 auto
         let what = x && x.result === "error" ? "could not run" : word[st];
         if (expected(x) && hideExp) { cls = "exp-hidden"; sym = "≈"; what = "expected failure, hidden"; }
         else if (expected(x)) { cls = expClass(x); what += ", expected: documented limitation"; }
+        const pre = precondition(x);
+        if (pre) what += `, ${preconditionText(pre)}`;
+        if (pre && pre.once) { sym += "¹"; what += ": the pass rests on one run"; once = true; }
         const label = `${s.name} on ${c.t.name}, Postgres ${c.pg}: ${what}${flaky}`;
         tr.append(el("td", { class: "cell" + (c.first ? " first" : "") },
           el("button", { class: "chip " + cls, title: label, "aria-label": label, onclick: () => x && show(s, c, x) }, sym)));
@@ -338,11 +361,13 @@ footer { color: var(--muted); font-size: 12px; max-width: 1400px; margin: 0 auto
         e ? el("small", {}, "+" + e + " exp.") : null));
     }
     grid.replaceChildren(el("table", {}, el("thead", {}, head1, head2), body, el("tfoot", {}, foot)));
+    document.getElementById("legend-once").hidden = !once;
   }
 
   function outcome(o) {
     if (!o) return "";
     if (o.status === "abandoned") return "abandoned (connection dropped)";
+    if (o.status === "not_run") return "not run";
     if (o.status === "messages") return o.messages.join("\n");
     if (o.status === "error") return `error ${o.code}: ${o.message}`;
     const rows = o.rows.map(r => "(" + r.map(v => v === null ? "NULL" : JSON.stringify(v)).join(", ") + ")").join(" ");
@@ -358,7 +383,8 @@ footer { color: var(--muted); font-size: 12px; max-width: 1400px; margin: 0 auto
       el("div", {},
         el("h2", { id: "dlg-title" }, el("span", { class: "mono" }, s.name)),
         el("p", {}, `${c.t.name} · Postgres ${c.pg} · `,
-          el("span", { class: "badge " + (x.result === "error" ? "skip" : expClass(x)) }, badge))),
+          el("span", { class: "badge " + (x.result === "error" ? "skip" : expClass(x)) }, badge)),
+        probeText(c.t) ? el("p", {}, probeText(c.t)) : null),
       el("button", { class: "close", "aria-label": "Close", onclick: () => dlg.close() }, "×"));
     const body = el("div", { class: "dlg-body" }, el("p", {}, s.description));
     if (s.refs.length) body.append(el("p", {}, "From: ", s.refs.flatMap((r, i) => [i ? ", " : null, refLink(r)])));
@@ -374,6 +400,11 @@ footer { color: var(--muted); font-size: 12px; max-width: 1400px; margin: 0 auto
     }
     if (x.runs > 1) body.append(el("p", {}, `Timing-sensitive: the pooler side ran ${x.runs} times and failed ${x.failures} of them.` +
       (x.failures ? " The trace below is from the first failing run." : "") + " The worst case can vary between machines."));
+    const pre = precondition(x);
+    if (pre) body.append(el("p", {}, `The scenario has a precondition, met in ${pre.met} of ${pre.ran} runs. ` +
+      "Only those runs count." +
+      (pre.met === 0 ? " It was never met, so the scenario tested nothing here." : "") +
+      (pre.once ? " This PASS rests on one run." : "")));
     if (x.result === "error") body.append(el("p", { class: "mono" }, x.reason));
     if (x.result === "skip") body.append(el("p", {}, x.reason));
     if (x.steps.length) {
@@ -384,8 +415,12 @@ footer { color: var(--muted); font-size: 12px; max-width: 1400px; margin: 0 auto
         const cls = failStep === i + 1 ? "diff" : failStep && i + 1 > failStep ? "after" : "";
         // A send step lists its messages one per line, like the replies.
         const shown = step.includes("] send: ") ? step.replace("] send: ", "] send:\n").split(" / ").join("\n") : step;
+        // A precondition runs only through the pooler; steps after one that wasn't met never run.
+        const pg = o.postgres && o.postgres.status === "not_run" && /^\[[^\]]*\] precondition /.test(step)
+          ? "not run on Postgres (precondition)" : outcome(o.postgres);
+        const pooled = o.pooler && o.pooler.status === "not_run" ? "not run: an earlier precondition wasn't met" : outcome(o.pooler);
         tb.append(el("tr", { class: cls }, el("td", {}, String(i + 1)), el("td", { class: "mono" }, shown),
-          el("td", { class: "mono out" }, outcome(o.postgres)), el("td", { class: "mono out" }, outcome(o.pooler))));
+          el("td", { class: "mono out" }, pg), el("td", { class: "mono out" }, pooled)));
       });
       t.append(tb);
       body.append(t);

@@ -1,6 +1,6 @@
 use std::fmt::Write;
 
-use super::{Report, ScenarioInfo, TargetInfo};
+use super::{Report, ResultRow, ScenarioInfo, TargetInfo};
 use crate::runner::{FailKind, Verdict};
 
 /// One table column: a target in one report.
@@ -36,6 +36,13 @@ fn scenarios(reports: &[Report]) -> Vec<&ScenarioInfo> {
     all
 }
 
+/// For a scenario with a precondition, (runs that met it, runs in all), when there's
+/// something to say: some run didn't meet it, or it ran more than once.
+fn precondition(row: &ResultRow) -> Option<(u32, u32)> {
+    let unmet = row.precondition_unmet.filter(|u| *u > 0 || row.runs > 1)?;
+    Some((row.runs, row.runs + unmet))
+}
+
 pub fn markdown(reports: &[Report]) -> String {
     let columns = columns(reports);
     let scenarios = scenarios(reports);
@@ -47,7 +54,9 @@ pub fn markdown(reports: &[Report]) -> String {
     out.push_str("marked (expected) is a limitation the pooler's own documentation describes: not a bug, but\n");
     out.push_str("it still breaks apps that rely on the feature, and it fails the run unless\n");
     out.push_str("--ignore-expected is given. Links point to the report each scenario came from. A\n");
-    out.push_str("fraction like 2/5 means the scenario is timing-sensitive and failed in 2 of 5 runs.\n\n");
+    out.push_str("fraction like 2/5 means the scenario is timing-sensitive and failed in 2 of 5 runs.\n");
+    out.push_str("(precondition 1/5) means the scenario's precondition held in 1 of 5 runs, and only that\n");
+    out.push_str("run counts.\n\n");
     let _ = write!(out, "| Scenario |");
     for c in &columns {
         let _ = write!(out, " {} |", c.label);
@@ -76,7 +85,11 @@ pub fn markdown(reports: &[Report]) -> String {
                 Some(r) if r.runs > 1 && r.failures > 0 => format!(" {}/{}", r.failures, r.runs),
                 _ => String::new(),
             };
-            let _ = write!(out, " {cell}{runs} |");
+            let pre = match row.and_then(precondition) {
+                Some((met, ran)) => format!(" (precondition {met}/{ran})"),
+                None => String::new(),
+            };
+            let _ = write!(out, " {cell}{runs}{pre} |");
         }
         out.push('\n');
     }
@@ -128,6 +141,9 @@ pub fn markdown(reports: &[Report]) -> String {
                         if let Some(note) = &e.note {
                             let _ = writeln!(text, "- note: {note}");
                         }
+                    }
+                    if let Some((met, ran)) = precondition(row) {
+                        let _ = writeln!(text, "- precondition met in {met} of {ran} runs");
                     }
                     let _ = writeln!(text, "- step {}: `{}`", m.step, m.action);
                     let _ = writeln!(text, "- postgres: `{}`", m.expected);
