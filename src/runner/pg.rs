@@ -124,45 +124,105 @@ pub(super) async fn tcp_connect(config: &Config, host: &str, port: u16) -> Resul
     if let Some(parsed) = config.get_tcp_user_timeout() {
         // libpq's tcp_user_timeout is in milliseconds; tokio-postgres reads the number
         // as seconds.
-        let limit = Duration::from_millis(parsed.as_secs());
-        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-        socket.set_tcp_user_timeout(Some(limit))?;
-        #[cfg(not(any(target_os = "android", target_os = "fuchsia", target_os = "linux")))]
-        bail!("not supported on this system: tcp_user_timeout ({limit:?})");
+        set_user_timeout(&socket, Duration::from_millis(parsed.as_secs()))?;
     }
     if config.get_keepalives() {
-        let mut keepalive = socket2::TcpKeepalive::new().with_time(config.get_keepalives_idle());
-        if let Some(interval) = config.get_keepalives_interval() {
-            #[cfg(not(any(target_os = "aix", target_os = "openbsd", target_os = "redox", target_os = "solaris")))]
-            {
-                keepalive = keepalive.with_interval(interval);
-            }
-            #[cfg(any(target_os = "aix", target_os = "openbsd", target_os = "redox", target_os = "solaris"))]
-            bail!("not supported on this system: keepalives_interval ({interval:?})");
-        }
-        if let Some(retries) = config.get_keepalives_retries() {
-            #[cfg(not(any(
-                target_os = "aix",
-                target_os = "openbsd",
-                target_os = "redox",
-                target_os = "solaris",
-                target_os = "windows"
-            )))]
-            {
-                keepalive = keepalive.with_retries(retries);
-            }
-            #[cfg(any(
-                target_os = "aix",
-                target_os = "openbsd",
-                target_os = "redox",
-                target_os = "solaris",
-                target_os = "windows"
-            ))]
-            bail!("not supported on this system: keepalives_retries ({retries})");
-        }
+        let keepalive = socket2::TcpKeepalive::new().with_time(config.get_keepalives_idle());
+        let keepalive = with_interval_and_retries(
+            keepalive,
+            config.get_keepalives_interval(),
+            config.get_keepalives_retries(),
+        )?;
         socket.set_tcp_keepalive(&keepalive)?;
     }
     Ok(stream)
+}
+
+// The targets socket2 0.6.5 sets each option on, copied from its cfgs.
+#[cfg(any(
+    target_os = "android",
+    target_os = "cygwin",
+    target_os = "fuchsia",
+    target_os = "linux"
+))]
+fn set_user_timeout(socket: &socket2::SockRef<'_>, limit: Duration) -> Result<()> {
+    Ok(socket.set_tcp_user_timeout(Some(limit))?)
+}
+
+#[cfg(not(any(
+    target_os = "android",
+    target_os = "cygwin",
+    target_os = "fuchsia",
+    target_os = "linux"
+)))]
+fn set_user_timeout(_: &socket2::SockRef<'_>, limit: Duration) -> Result<()> {
+    bail!("not supported on this system: tcp_user_timeout ({limit:?})")
+}
+
+#[cfg(any(
+    target_os = "android",
+    target_os = "cygwin",
+    target_os = "dragonfly",
+    target_os = "emscripten",
+    target_os = "freebsd",
+    target_os = "fuchsia",
+    target_os = "illumos",
+    target_os = "ios",
+    target_os = "linux",
+    target_os = "macos",
+    target_os = "netbsd",
+    target_os = "nuttx",
+    target_os = "tvos",
+    target_os = "visionos",
+    target_os = "watchos",
+    target_os = "windows",
+    all(target_os = "wasi", not(target_env = "p1")),
+))]
+fn with_interval_and_retries(
+    mut keepalive: socket2::TcpKeepalive,
+    interval: Option<Duration>,
+    retries: Option<u32>,
+) -> Result<socket2::TcpKeepalive> {
+    if let Some(interval) = interval {
+        keepalive = keepalive.with_interval(interval);
+    }
+    if let Some(retries) = retries {
+        keepalive = keepalive.with_retries(retries);
+    }
+    Ok(keepalive)
+}
+
+#[cfg(not(any(
+    target_os = "android",
+    target_os = "cygwin",
+    target_os = "dragonfly",
+    target_os = "emscripten",
+    target_os = "freebsd",
+    target_os = "fuchsia",
+    target_os = "illumos",
+    target_os = "ios",
+    target_os = "linux",
+    target_os = "macos",
+    target_os = "netbsd",
+    target_os = "nuttx",
+    target_os = "tvos",
+    target_os = "visionos",
+    target_os = "watchos",
+    target_os = "windows",
+    all(target_os = "wasi", not(target_env = "p1")),
+)))]
+fn with_interval_and_retries(
+    keepalive: socket2::TcpKeepalive,
+    interval: Option<Duration>,
+    retries: Option<u32>,
+) -> Result<socket2::TcpKeepalive> {
+    if let Some(interval) = interval {
+        bail!("not supported on this system: keepalives_interval ({interval:?})");
+    }
+    if let Some(retries) = retries {
+        bail!("not supported on this system: keepalives_retries ({retries})");
+    }
+    Ok(keepalive)
 }
 
 /// Opens the socket to an endpoint's first host. Returns it with the host name, for TLS.
