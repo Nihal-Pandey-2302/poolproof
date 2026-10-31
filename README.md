@@ -40,7 +40,10 @@ A failure is one of three kinds:
 - **silent**: the pooler returned a result, but not the one Postgres returned. The
   application gets wrong data and no error. These are the dangerous ones.
 - **error**: the pooler refused with an error where Postgres didn't. Loud, so you notice.
-- **hang**: no reply within 10 seconds, or replies that stop short of what Postgres sent.
+- **hang**: no reply within the step timeout (10 seconds, or `--step-timeout 30s`), or
+  replies that stop short of what Postgres sent. Keep the step timeout above the
+  pooler's own checkout and query timeouts, so you see its error instead of a hang; 10
+  seconds is above PgDog's 5 second checkout timeout.
 
 An ERROR verdict means nothing was compared: a target URL didn't answer before the run, a
 step on the Postgres side got no reply (timeout, connection failure), or setup, teardown
@@ -251,6 +254,7 @@ Options on any step: `delay_ms` sleeps first, e.g. so a cancel lands while a que
 `compare` can be `full` (default), `status` or `ignore`.
 
 Scenario options: `setup` and `teardown` run directly on Postgres around each run;
+`timeout_ms` overrides the step timeout for this scenario;
 `modes` limits which pooling modes a scenario applies to; `repeat = 5` runs the pooler side
 five times and fails if any run fails. Use `repeat` when the outcome depends on timing
 inside the pooler, as with pipelines: reports then show how many runs failed, and CI

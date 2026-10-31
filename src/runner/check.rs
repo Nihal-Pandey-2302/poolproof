@@ -15,14 +15,6 @@ pub const POOLER_UNREACHABLE: &str = "target unreachable: pooler:";
 /// Same for the target's direct (plain Postgres) URL.
 pub const DIRECT_UNREACHABLE: &str = "target unreachable: direct:";
 
-/// Limits for setup, teardown and reset statements. A pooler can leak a lock (some
-/// scenarios test exactly that), and a teardown blocked on it must fail, not hang the
-/// run. The statement timeout stays well above reset's 5 s wait per terminated backend.
-const DIRECT_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
-const DIRECT_STATEMENT_TIMEOUT: Duration = Duration::from_secs(30);
-/// Extra time on top of the statement timeout before giving up on the server itself.
-const DIRECT_GRACE: Duration = Duration::from_secs(5);
-
 async fn run_direct(url: &str, statements: &[String], t: &Timeouts) -> Result<()> {
     if statements.is_empty() {
         return Ok(());
@@ -30,25 +22,25 @@ async fn run_direct(url: &str, statements: &[String], t: &Timeouts) -> Result<()
     let (client, driver, _) = connect(url, t).await?;
     let limits = format!(
         "SET lock_timeout = '{}ms'; SET statement_timeout = '{}ms'",
-        DIRECT_LOCK_TIMEOUT.as_millis(),
-        DIRECT_STATEMENT_TIMEOUT.as_millis()
+        t.direct_lock.as_millis(),
+        t.direct_statement.as_millis()
     );
-    let mut res = execute(&client, &limits).await;
+    let mut res = execute(&client, &limits, t).await;
     for sql in statements {
         if res.is_err() {
             break;
         }
-        res = execute(&client, sql).await;
+        res = execute(&client, sql, t).await;
     }
     // Close the session even after an error, so it's gone before the next phase
     // (e.g. a failed setup's session while teardown runs).
     drop(client);
-    let _ = timeout(t.step, driver).await;
+    let _ = timeout(t.housekeeping, driver).await;
     res
 }
 
-async fn execute(client: &tokio_postgres::Client, sql: &str) -> Result<()> {
-    let limit = DIRECT_STATEMENT_TIMEOUT + DIRECT_GRACE;
+async fn execute(client: &tokio_postgres::Client, sql: &str, t: &Timeouts) -> Result<()> {
+    let limit = t.direct_statement + t.direct_grace;
     match timeout(limit, client.batch_execute(sql)).await {
         Ok(res) => res.with_context(|| format!("running `{sql}`")),
         Err(_) => Err(anyhow!("running `{sql}`: no reply within {limit:?}")),
@@ -58,9 +50,9 @@ async fn execute(client: &tokio_postgres::Client, sql: &str) -> Result<()> {
 /// Connect and run `SELECT 1` once.
 async fn probe(url: &str, t: &Timeouts) -> Result<()> {
     let (client, driver, _) = connect(url, t).await?;
-    let res = timeout(t.step, client.simple_query("SELECT 1")).await;
+    let res = timeout(t.housekeeping, client.simple_query("SELECT 1")).await;
     drop(client);
-    let _ = timeout(t.step, driver).await;
+    let _ = timeout(t.housekeeping, driver).await;
     res.context("SELECT 1 timed out")??;
     Ok(())
 }
@@ -454,7 +446,7 @@ mod tests {
         );
         assert!(reason.contains("lock timeout"), "{reason}");
         assert!(
-            started.elapsed() < DIRECT_STATEMENT_TIMEOUT,
+            started.elapsed() < Timeouts::default().direct_statement,
             "took {:?}",
             started.elapsed()
         );
@@ -518,6 +510,25 @@ mod tests {
         assert_eq!(passed.steps.len(), 1);
         let clean = after_teardown(compare(&s, &expected, vec![one]), Ok(()));
         assert!(matches!(clean.verdict, Verdict::Pass));
+    }
+
+    #[tokio::test]
+    #[ignore = "needs POOLPROOF_TEST_PG"]
+    async fn the_step_timeout_is_configurable() {
+        let url = test_pg();
+        let s = scenario("name = 't'\ndescription = 't'\n[[step]]\nclient = 'a'\nsimple = 'SELECT pg_sleep(2)'\n");
+        let short = Timeouts {
+            step: Duration::from_secs(1),
+            ..Timeouts::default()
+        };
+        let checked = check(&s, &url, &url, &[], &short).await;
+        let reason = reason(&checked);
+        assert!(
+            reason.starts_with("baseline failed at step 1: error TIMEOUT"),
+            "{reason}"
+        );
+        let checked = check(&s, &url, &url, &[], &Timeouts::default()).await;
+        assert!(matches!(checked.verdict, Verdict::Pass));
     }
 
     #[tokio::test]

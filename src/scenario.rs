@@ -51,6 +51,8 @@ pub struct Scenario {
     /// whose outcome depends on timing inside the pooler, such as pipelines.
     #[serde(default = "one")]
     pub repeat: u32,
+    /// How long each step may take, overriding `run --step-timeout`.
+    pub timeout_ms: Option<u64>,
     /// Statements run directly on Postgres before each run.
     #[serde(default)]
     pub setup: Vec<String>,
@@ -227,6 +229,9 @@ fn parse(origin: &str, text: &str) -> Result<Scenario> {
     if scenario.repeat == 0 {
         bail!("{origin}: repeat must be at least 1");
     }
+    if scenario.timeout_ms == Some(0) {
+        bail!("{origin}: timeout_ms must be at least 1");
+    }
     let mut prepared = std::collections::HashSet::new();
     for step in &scenario.steps {
         match step.action().with_context(|| format!("in {origin}"))? {
@@ -296,6 +301,13 @@ mod tests {
         assert!(parse("t", &format!("{head}{}{disconnect}{execute}", prepare("a"))).is_err());
         let abandon = "[[step]]\nclient = 'a'\nsimple = 'SELECT 1'\nabandon_after_ms = 100\n";
         assert!(parse("t", &format!("{head}{}{abandon}{execute}", prepare("a"))).is_err());
+    }
+
+    #[test]
+    fn timeout_ms_must_be_positive() {
+        let text = |ms: u64| format!("name = 't'\ndescription = 't'\ntimeout_ms = {ms}\nstep = []\n");
+        assert_eq!(parse("t", &text(1500)).unwrap().timeout_ms, Some(1500));
+        assert!(parse("t", &text(0)).is_err());
     }
 
     #[test]

@@ -1,6 +1,7 @@
 //! The loop over targets and scenarios behind `poolproof run`.
 
 use std::collections::HashMap;
+use std::time::Duration;
 
 use anyhow::{Result, bail};
 
@@ -24,6 +25,8 @@ pub struct RunOptions<'a> {
     /// Run each baseline twice and report a scenario whose results differ as ERROR.
     /// Done once per scenario and Postgres server, not once per target.
     pub check_scenarios: bool,
+    /// A scenario's `timeout_ms` overrides `step`.
+    pub timeouts: Timeouts,
 }
 
 /// Runs every scenario on every target, in order.
@@ -32,8 +35,7 @@ pub async fn run(
     scenarios: &[Scenario],
     opts: &RunOptions<'_>,
 ) -> Result<(Vec<TargetInfo>, Vec<ResultRow>)> {
-    // Not configurable yet; F2 adds the flags.
-    let timeouts = Timeouts::default();
+    let timeouts = opts.timeouts;
     let targets = select(targets, opts.targets)?;
     let wanted = |s: &&Scenario| opts.filter.is_none_or(|f| s.name.contains(f));
     let total = targets.len() * scenarios.iter().filter(wanted).count();
@@ -75,12 +77,22 @@ pub async fn run(
             } else {
                 let key = (s.name.as_str(), target.direct.as_str());
                 if opts.check_scenarios && !determinism.contains_key(&key) {
-                    determinism.insert(key, deterministic(s, &target.direct, &target.reset, &timeouts).await);
+                    determinism.insert(
+                        key,
+                        deterministic(s, &target.direct, &target.reset, &for_scenario(&timeouts, s)).await,
+                    );
                 }
                 match determinism.get(&key) {
                     Some(Err(reason)) => (Verdict::Error { reason: reason.clone() }, vec![], 0, 0),
                     _ => {
-                        let checked = check(s, &target.pooler, &target.direct, &target.reset, &timeouts).await;
+                        let checked = check(
+                            s,
+                            &target.pooler,
+                            &target.direct,
+                            &target.reset,
+                            &for_scenario(&timeouts, s),
+                        )
+                        .await;
                         (checked.verdict, checked.steps, checked.runs, checked.failures)
                     }
                 }
@@ -148,6 +160,17 @@ impl FailOn {
             FailOn::Error => kind != FailKind::Hang,
             FailOn::Any => true,
         }
+    }
+}
+
+/// The timeouts for one scenario: its own step timeout, if it sets one.
+fn for_scenario(timeouts: &Timeouts, s: &Scenario) -> Timeouts {
+    match s.timeout_ms {
+        Some(ms) => Timeouts {
+            step: Duration::from_millis(ms),
+            ..*timeouts
+        },
+        None => *timeouts,
     }
 }
 
@@ -226,6 +249,22 @@ mod tests {
         // 2 for the shared check, then baseline + target run on each target.
         assert_eq!(rows.get::<_, i64>(0), 2 + 2 * 2);
         client.batch_execute("DROP TABLE pp_runs").await.unwrap();
+    }
+
+    #[test]
+    fn a_scenario_timeout_overrides_only_the_step_timeout() {
+        let cli = Timeouts {
+            step: Duration::from_secs(3),
+            ..Timeouts::default()
+        };
+        let mut s: Scenario = toml::from_str("name = 't'\ndescription = 't'\nstep = []\n").unwrap();
+        assert_eq!(for_scenario(&cli, &s), cli);
+        s.timeout_ms = Some(1500);
+        let t = for_scenario(&cli, &s);
+        assert_eq!(t.step, Duration::from_millis(1500));
+        assert_eq!(Timeouts { step: cli.step, ..t }, cli);
+        // Housekeeping waits keep their own timeout, however short the step is.
+        assert_eq!(t.housekeeping, cli.housekeeping);
     }
 
     #[test]
