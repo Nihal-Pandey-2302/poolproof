@@ -71,13 +71,14 @@ fn got(r: &Value) -> (String, String) {
 fn check(expected: &Expected, report: &Value, scenario_names: &BTreeSet<String>) -> Vec<String> {
     let mut problems = Vec::new();
     for (name, t) in &expected.targets {
-        for want in std::iter::once(&t.default).chain(t.scenarios.values()) {
+        let rows = std::iter::once(("default", &t.default)).chain(t.scenarios.iter().map(|(s, w)| (s.as_str(), w)));
+        for (row, want) in rows {
             if !RESULTS.contains(&want.result()) {
-                problems.push(format!("{name}: unknown expected result {:?}", want.result()));
+                problems.push(format!("{name} / {row}: unknown expected result {:?}", want.result()));
             }
             if want.reason_prefix().is_some() && !WITH_REASON.contains(&want.result()) {
                 problems.push(format!(
-                    "{name}: reason_prefix on a {} row, which has no reason to check",
+                    "{name} / {row}: reason_prefix on a {} row, which has no reason to check",
                     want.result()
                 ));
             }
@@ -337,14 +338,18 @@ mod tests {
 
     #[test]
     fn reason_prefix_only_on_results_with_a_reason() {
-        let e = expected("[targets.t]\ndefault = \"pass\"\nb = { result = \"silent\", reason_prefix = \"x\" }\n");
+        let e = expected(
+            "[targets.t]\ndefault = { result = \"pass\", reason_prefix = \"y\" }\nb = { result = \"silent\", reason_prefix = \"x\" }\n",
+        );
         let r = report(json!([{"target": "t", "scenario": "a", "result": "pass"}]));
         let p = check(&e, &r, &names());
-        assert!(
-            p.iter()
-                .any(|l| l == "t: reason_prefix on a silent row, which has no reason to check"),
-            "{p:?}"
-        );
+        for row in [
+            "t / default: reason_prefix on a pass row",
+            "t / b: reason_prefix on a silent row",
+        ] {
+            let line = format!("{row}, which has no reason to check");
+            assert!(p.contains(&line), "{line} in {p:?}");
+        }
     }
 
     #[test]
