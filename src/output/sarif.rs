@@ -1,4 +1,4 @@
-use super::scan::pooler_summary;
+use super::scan::{fix_summary, pooler_summary};
 use crate::scan;
 
 pub fn sarif(report: &scan::Report, input: &std::path::Path) -> serde_json::Value {
@@ -18,11 +18,12 @@ pub fn sarif(report: &scan::Report, input: &std::path::Path) -> serde_json::Valu
                 (Some(_), _) | (None, scan::Severity::Breaks) => "error",
                 (None, scan::Severity::Warn) => "warning",
             };
-            let pooler = f
-                .on_pooler
-                .as_ref()
-                .map(|c| format!(" Checked {}.", pooler_summary(c)))
-                .unwrap_or_default();
+            let fix = |c: &scan::PoolerCheck| c.fix.as_ref().map(|x| format!(" {}.", fix_summary(x)));
+            let pooler = match (&f.on_pooler, &f.pooler_note) {
+                (Some(c), _) => format!(" Checked {}.{}", pooler_summary(c), fix(c).unwrap_or_default()),
+                (None, Some(note)) => format!(" {note}."),
+                (None, None) => String::new(),
+            };
             json!({
                 "ruleId": f.rule,
                 "level": level,
@@ -74,6 +75,9 @@ fn notifications(report: &scan::Report) -> Vec<serde_json::Value> {
                 report.uninspected
             )},
         }));
+    }
+    for note in &report.notes {
+        out.push(json!({"level": "note", "message": {"text": note}}));
     }
     out
 }

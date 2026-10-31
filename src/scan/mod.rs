@@ -4,9 +4,11 @@ use serde::Serialize;
 
 mod input;
 mod rules;
+mod statements;
 
 pub use input::{InputFormat, load_queries, read_queries};
 pub use rules::scan;
+pub use statements::check_driver;
 
 /// Severity of a finding under transaction pooling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
@@ -33,6 +35,13 @@ pub struct Finding {
     /// What those scenarios showed on the pooler given with `--pooler`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub on_pooler: Option<PoolerCheck>,
+    /// For `driver-prepared-statements`: the driver whose statement names these look
+    /// like, as `poolproof drivers` names it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub driver: Option<&'static str>,
+    /// With `--pooler`, why there is no `on_pooler`, e.g. no driver results for it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pooler_note: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -46,6 +55,20 @@ pub struct PoolerCheck {
     /// status doesn't change: it still breaks the app.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub documented: Vec<String>,
+    /// For a driver finding: how the driver does on the pooler with the setting its docs
+    /// give for poolers. Shown beside the status, never changing it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fix: Option<FixCheck>,
+    /// The results are from another Postgres version than the rest of `--pooler`'s
+    /// (driver results exist for fewer versions), so the text says which.
+    #[serde(skip)]
+    pub other_postgres: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FixCheck {
+    pub setting: String,
+    pub status: PoolerStatus,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -66,6 +89,32 @@ pub struct Query {
     pub text: String,
     pub calls: u64,
     pub line: usize,
+}
+
+/// A prepared statement name from a log's `parse`, `bind` or `execute` lines.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StatementName {
+    pub name: String,
+    /// How many `execute` lines name it. Zero if only `parse` or `bind` lines do, as
+    /// in a log that samples durations.
+    pub executions: u64,
+    /// The first line that names it, and the SQL there.
+    pub line: usize,
+    pub query: String,
+}
+
+/// What scan reads from its input.
+#[derive(Debug, Default)]
+pub struct Input {
+    pub queries: Vec<Query>,
+    /// Only from logs: pg_stat_statements and SQL files have no statement names.
+    pub statement_names: Vec<StatementName>,
+}
+
+impl Input {
+    pub fn is_empty(&self) -> bool {
+        self.queries.is_empty() && self.statement_names.is_empty()
+    }
 }
 
 /// Scenarios that exercise each rule. `session-set` is refined by parameter below.
@@ -99,6 +148,10 @@ pub const RULES: &[(&str, &str)] = &[
     ("deallocate-all", "DEALLOCATE ALL on a shared server connection"),
     ("load", "LOAD of a library into the session"),
     (
+        "driver-prepared-statements",
+        "A driver's named prepared statements, recognized by their names in the log",
+    ),
+    (
         "multi-statement-transaction",
         "Several statements in one query string that starts a transaction",
     ),
@@ -114,4 +167,7 @@ pub struct Report {
     /// DO blocks and function bodies that could not be parsed (PL/pgSQL even after a
     /// retry), so only their words were checked.
     pub uninspected: usize,
+    /// What scan could tell but isn't a finding, e.g. statements a pooler renamed.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
 }

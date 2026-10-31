@@ -307,7 +307,13 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
                 }
                 let (results, target) = report::find_target(&reports, pooler, postgres.as_deref())?;
                 for finding in &mut report.findings {
-                    finding.on_pooler = report::check_finding(results, target, &finding.scenarios);
+                    match finding.driver {
+                        // From the driver results, not the core ones.
+                        Some(_) => {
+                            scan::check_driver(finding, &target.name, target.postgres.as_deref(), postgres.is_some())
+                        }
+                        None => finding.on_pooler = report::check_finding(results, target, &finding.scenarios),
+                    }
                 }
                 // Proven problems first. Findings without results keep their place after them.
                 let rank = |f: &scan::Finding| match f.on_pooler.as_ref().map(|c| c.status) {

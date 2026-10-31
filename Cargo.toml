@@ -9,9 +9,10 @@ readme = "README.md"
 rust-version = "1.88"
 keywords = ["postgres", "pgbouncer", "connection-pool", "testing", "pooler"]
 categories = ["command-line-utilities", "database", "development-tools::testing"]
-# The test bed and CI files are for this repo, not for `cargo install`. results/ stays:
-# `scan --pooler` reads it. Of drivers/, the binary only needs drivers.toml and cases.toml.
-exclude = [".github/", "action.yml", ".gitguardian.yaml", ".taplo.toml", "docker/", "drivers/*/", "fuzz/", "scripts/", "selftest/", "tools/", "DRIVERS.md", "RESULTS.md", "results/drivers-*.json", "targets.toml", "targets-variants.toml"]
+# The test bed and CI files are for this repo, not for `cargo install`. results/ stays,
+# drivers results too: `scan --pooler` reads them. Of drivers/, the binary only needs
+# drivers.toml and cases.toml.
+exclude = [".github/", "action.yml", ".gitguardian.yaml", ".taplo.toml", "docker/", "drivers/*/", "fuzz/", "scripts/", "selftest/", "tools/", "DRIVERS.md", "RESULTS.md", "results/known-flaky.txt", "targets.toml", "targets-variants.toml"]
 
 # cargo binstall poolproof: download the release archive instead of compiling.
 [package.metadata.binstall]
@@ -48,6 +49,10 @@ tokio-postgres = "0.7.18"
 tokio-postgres-rustls = "0.14.0"
 tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12"] }
 toml = "1.1.8"
+
+[build-dependencies]
+# Already a dependency; build.rs reads the drivers reports with it.
+serde_json = "1.0.154"
 
 [dev-dependencies]
 rcgen = { version = "0.14.10", default-features = false, features = ["crypto", "pem", "ring"] }

@@ -27,7 +27,8 @@ struct Entry {
 }
 
 /// The query as scan would read it in its `form`: a pg_stat_statements CSV export,
-/// a stderr log line (continuation lines start with a tab), or a SQL file.
+/// a stderr log line (continuation lines start with a tab), stderr log lines whose
+/// messages are given as they are (`log-lines`, one per line), or a SQL file.
 fn as_input(form: &str, sql: &str) -> Option<(String, Option<InputFormat>)> {
     match form {
         // No format given, so the CSV detection runs too.
@@ -37,6 +38,12 @@ fn as_input(form: &str, sql: &str) -> Option<(String, Option<InputFormat>)> {
                 "2026-10-31 09:00:00.000 UTC [4242] app@db LOG:  statement: {}\n",
                 sql.replace('\n', "\n\t")
             ),
+            Some(InputFormat::Log),
+        )),
+        "log-lines" => Some((
+            sql.lines()
+                .map(|message| format!("2026-10-31 09:00:00.000 UTC [4242] app@db LOG:  {}\n", message.trim()))
+                .collect(),
             Some(InputFormat::Log),
         )),
         "sql" => Some((format!("{sql};\n"), Some(InputFormat::Sql))),

@@ -200,6 +200,9 @@ First release.
   not inspected.
 - `scan` counts the bodies the PL/pgSQL parser could not read, which are only checked for
   words: in the text summary, as `uninspected` in JSON, and as a SARIF notification.
+- `scan` names the driver behind a log's prepared statements and, with `--pooler`, checks
+  psycopg, pgjdbc and pgx against their driver results; a `scan --pooler` step on such
+  logs can now fail.
 
 ### Changed
 

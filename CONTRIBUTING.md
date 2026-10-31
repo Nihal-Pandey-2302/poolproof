@@ -83,7 +83,9 @@ The file format is in [README.md](README.md#writing-a-scenario). The workflow:
   only when it touches `drivers/`, `src/drivers/` or the driver results, or has the
   `drivers` label; add the label to a PR that changes how scenarios run or are compared.
   It always runs on main. If it goes red there, the next merge waits until it is green
-  again or the change that broke it is reverted.
+  again or the change that broke it is reverted. A run the label starts reports as
+  "drivers label / drivers", not "drivers", so it can't stand in for a required "drivers"
+  check.
 
 ## Reporting a security problem
 

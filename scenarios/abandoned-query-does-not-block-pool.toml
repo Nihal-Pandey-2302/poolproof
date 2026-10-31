@@ -1,5 +1,8 @@
 name = "abandoned-query-does-not-block-pool"
 description = "A client that drops its connection mid-query must not block the next client until the query ends."
+# Only means something when the pool has no spare server connection: with one, the
+# next client just gets another, and a pass would test nothing.
+requires = ["one_server_connection"]
 # The sleep must outlast the 10s step timeout, or a pooler that blocks and then serves would pass.
 
 [[step]]

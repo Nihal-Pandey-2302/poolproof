@@ -437,6 +437,25 @@ own `SET` clause are restored on return, so setting them in its body is fine. Dy
 `EXECUTE` strings are not inspected, and a body the PL/pgSQL parser can't read is only
 checked for words, with a count at the end.
 
+### Which driver prepares statements
+
+From a log, scan also reads the names of prepared statements (`parse`, `bind` and
+`execute` lines; pg_stat_statements doesn't keep them). Statement names like psycopg 3's
+(`_pg3_0`), pgjdbc's (`S_1`), pgx v5's (`stmtcache_...`), asyncpg's
+(`__asyncpg_stmt_1__`) and sqlx's (`sqlx_s_1`) give one `driver-prepared-statements`
+warning per driver, with the driver's setting for transaction pooling. Any app could
+use the same names, so it says the names look like that driver's. Other names, an app's
+own or other drivers' (ActiveRecord's `a1`, ...), give no finding, which doesn't mean
+they are safe. Behind PgBouncer, PgDog or Odyssey the server sees the pooler's own names
+(`PGBOUNCER_1`, `__pgdog_1`, `odyssey_pstmt_1`), so scan notes that instead.
+
+With `--pooler`, psycopg, pgjdbc and pgx findings are checked against that driver's
+results on the pooler (see [Real drivers](#real-drivers)), from the same Postgres version
+when there are some, else the newest. The line under it says how the driver does with its
+setting for poolers. asyncpg and sqlx aren't tested yet, so theirs say "no driver results"
+and stay warnings. Like any finding, BREAKS or REJECTED makes the exit code 1, so a
+`scan --pooler` step on a log with these names can fail where it passed before.
+
 ## Real drivers
 
 Scenarios talk to the pooler the way poolproof's own clients do. Apps talk through a

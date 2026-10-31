@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# Compares the verdicts of a CI run with the committed results:
+#   .github/compare-verdicts.sh COMMITTED.json NEW.json
+# Only verdicts (result and FAIL kind) are compared, by target and scenario. Not compared:
+# scenarios with repeat > 1 in NEW.json, whose worst case can differ between machines.
+# Pairs in results/known-flaky.txt are compared loosely, as their line says:
+#   verdict  PASS and FAIL (any kind) match each other; ERROR, SKIP or a missing
+#            result still differ
+#   kind     a FAIL matches a FAIL of any kind
+# Exits 1 when verdicts differ, 2 on a bad or stale known-flaky line.
+set -euo pipefail
+committed=$1 new=$2
+flaky_file=results/known-flaky.txt
+summary=${GITHUB_STEP_SUMMARY:-/dev/null}
+
+# "<target> <scenario> <verdict|kind>", one per line. sub() drops a trailing \r, so a
+# file saved with CRLF line ends still matches.
+awk '{ sub(/\r$/, "") }
+     NF && $1 !~ /^#/ && NF == 2 { bad = 1
+       printf "::error file=%s,line=%d::add verdict or kind: %s\n", FILENAME, FNR, $0 }
+     NF && $1 !~ /^#/ && NF != 2 && (NF != 3 || ($3 != "verdict" && $3 != "kind")) { bad = 1
+       printf "::error file=%s,line=%d::expected \"<target> <scenario> verdict|kind\", got: %s\n", FILENAME, FNR, $0 }
+     END { exit bad }' "$flaky_file" || exit 2
+flaky=$(awk '{ sub(/\r$/, "") } NF == 3 && $1 !~ /^#/ { print $1 "\t" $2 "\t" $3 }' "$flaky_file" \
+  | jq -Rsc 'split("\n") | map(select(. != "") | split("\t") | {target: .[0], scenario: .[1], mode: .[2]})')
+
+# Stale lines. A pair that no committed results file has is a typo. A `kind` line is
+# only right for a pair committed as FAIL, and a `verdict` line never for one committed
+# as ERROR or SKIP. Lines for the other job's file are checked there.
+stale=$(jq -rn --argjson flaky "$flaky" --slurpfile c "$committed" '
+  [inputs | .results[] | "\(.target) \(.scenario)"] as $known
+  | ($c[0].results | map({key: "\(.target) \(.scenario)", value: .result}) | from_entries) as $mine
+  | $flaky[] | "\(.target) \(.scenario)" as $k
+  | if ($known | index($k)) == null then "\($k): in no results/*.json"
+    elif $mine[$k] == null then empty
+    elif .mode == "kind" and $mine[$k] != "fail" then "\($k): kind, but committed as \($mine[$k])"
+    elif .mode == "verdict" and ($mine[$k] == "error" or $mine[$k] == "skip") then "\($k): verdict, but committed as \($mine[$k])"
+    else empty end' results/*.json)
+if [ -n "$stale" ]; then
+  while IFS= read -r line; do echo "::error file=$flaky_file::stale: $line"; done <<<"$stale"
+  exit 2
+fi
+
+# The pairs this comparison has, for the job summary.
+loose=$(jq -r --argjson flaky "$flaky" '
+  [.results[] | "\(.target) \(.scenario)"] as $here
+  | $flaky[] | select("\(.target) \(.scenario)" as $k | $here | index($k))
+  | "- \(.target) \(.scenario): \(.mode)"' "$committed")
+if [ -n "$loose" ]; then
+  { echo "### Compared loosely (results/known-flaky.txt)"; echo "$loose"; } >> "$summary"
+fi
+
+# The timing list comes from this run, so a scenario that just got repeat > 1 is skipped
+# on both sides before results/ is regenerated.
+timing=$(jq -c '[.scenarios[]? | select((.repeat // 1) > 1) | .name]' "$new")
+verdicts() {
+  jq -r --argjson timing "$timing" --argjson flaky "$flaky" '
+    .results[] | select(.scenario as $s | $timing | index($s) | not)
+    | . as $r
+    | ([$flaky[] | select(.target == $r.target and .scenario == $r.scenario) | .mode] | first) as $mode
+    | (if $mode == "verdict" and (.result == "pass" or .result == "fail") then "pass or fail (known flaky)"
+       elif $mode == "kind" and .result == "fail" then "fail (known flaky)"
+       else "\(.result) \(.mismatch.kind // "")" end) as $v
+    | "\(.target) \(.scenario) \($v)"' "$1" | sort
+}
+diff <(verdicts "$committed") <(verdicts "$new")
