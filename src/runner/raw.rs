@@ -257,6 +257,8 @@ async fn negotiate_tls(mut tcp: TcpStream, tls: &Tls, host: &str) -> Result<RawS
 pub struct RawConn {
     stream: RawStream,
     buf: BytesMut,
+    /// The last exchange ended with ReadyForQuery: no Sync, Query or COPY is pending.
+    idle: bool,
 }
 
 impl RawConn {
@@ -282,6 +284,7 @@ impl RawConn {
         let mut conn = RawConn {
             stream,
             buf: BytesMut::new(),
+            idle: true,
         };
         let mut out = BytesMut::new();
         frontend::startup_message([("user", user.as_str()), ("database", dbname.as_str())], &mut out)?;
@@ -373,6 +376,7 @@ impl RawConn {
         let wait_for_quiet = cycles == 0;
         let deadline = Instant::now() + opts.step;
         let mut lines = Vec::new();
+        self.idle = false;
         while wait_for_quiet || cycles > 0 {
             let until = if wait_for_quiet {
                 (Instant::now() + opts.quiet).min(deadline)
@@ -397,11 +401,21 @@ impl RawConn {
             if let Message::ReadyForQuery(_) | Message::CopyInResponse(_) = message {
                 cycles = cycles.saturating_sub(1);
             }
+            match message {
+                Message::ReadyForQuery(_) => self.idle = true,
+                Message::ParameterStatus(_) | Message::NoticeResponse(_) | Message::NotificationResponse(_) => {}
+                _ => self.idle = false,
+            }
             if let Some(line) = summary(&message, opts.parameter_status)? {
                 lines.push(line);
             }
         }
         Ok(lines)
+    }
+
+    /// Whether the last exchange ended with ReadyForQuery, so a new Query can start one.
+    pub fn idle(&self) -> bool {
+        self.idle
     }
 
     /// Sends Terminate and closes the connection. With `wait_for_exit` (on Postgres),

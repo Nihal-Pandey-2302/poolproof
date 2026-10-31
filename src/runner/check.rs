@@ -6,7 +6,7 @@ use tokio::time::{Instant, timeout};
 use super::compare::{FailKind, Mismatch, Verdict, baseline_failure, same_failure};
 use super::exact::Exact;
 use super::pg::{connect, connect_with, wait_ready};
-use super::steps::{precondition_met, run_steps_on};
+use super::steps::{MID_EXCHANGE, precondition_met, run_steps_on};
 use super::tls::TlsSetup;
 use super::{Outcome, Timeouts};
 use crate::drivers::Broken;
@@ -494,6 +494,23 @@ fn compare_with(
         return Checked {
             verdict: Verdict::Error {
                 reason: format!("postgres side failed at step {} (target run): {}", i + 1, actual[i]),
+            },
+            steps: expected.iter().cloned().zip(actual).collect(),
+            runs: 1,
+            failures: 0,
+            varied: false,
+            unmet: 0,
+            reuse_unmet: 0,
+        };
+    }
+    // Evidence asked mid-exchange is the scenario's mistake, not the pooler's.
+    if let Some(i) = scenario.steps.iter().zip(&actual).position(|(step, outcome)| {
+        step.evidence
+            && matches!(outcome, Outcome::Error { code, message, .. } if code == "CLIENT" && message == MID_EXCHANGE)
+    }) {
+        return Checked {
+            verdict: Verdict::Error {
+                reason: format!("evidence at step {} (target run): {}", i + 1, actual[i]),
             },
             steps: expected.iter().cloned().zip(actual).collect(),
             runs: 1,
@@ -1115,6 +1132,27 @@ mod tests {
         // side still runs the precondition.
         let passthrough = check(&with("SELECT false", 1), &direct, &direct, &Isolation::None, &t).await;
         assert!(matches!(passthrough.verdict, Verdict::Skip { .. }));
+    }
+
+    #[tokio::test]
+    #[ignore = "needs POOLPROOF_TEST_PG"]
+    async fn evidence_mid_copy_is_the_scenarios_mistake() {
+        let direct = Endpoint::parse(&test_pg()).unwrap();
+        let sep = if test_pg().contains('?') { '&' } else { '?' };
+        let pooled = Endpoint::parse(&format!("{}{sep}application_name=pp_pooled", test_pg())).unwrap();
+        // Built in code: loading refuses evidence after a Query that starts a COPY.
+        let s = scenario(
+            "name = 't'\ndescription = 't'\nsetup = ['CREATE TABLE pp_copy_ev (x int)']\n\
+             teardown = ['DROP TABLE pp_copy_ev']\n\
+             [[step]]\nclient = 'r'\nsend = ['query COPY pp_copy_ev FROM STDIN']\n\
+             [[step]]\nclient = 'r'\nevidence = true\n",
+        );
+        let checked = check(&s, &pooled, &direct, &Isolation::None, &Timeouts::default()).await;
+        let reason = reason(&checked);
+        assert!(
+            reason.starts_with("evidence at step 2 (target run): error CLIENT"),
+            "{reason}"
+        );
     }
 
     #[tokio::test]

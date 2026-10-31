@@ -458,19 +458,28 @@ fn check_evidence(origin: &str, scenario: &Scenario) -> Result<()> {
             .iter()
             .any(|s| s.client == step.client && s.send.is_some());
         if raw && !before.evidence {
-            // After a Sync or a simple Query the server sends ReadyForQuery: the exchange is
-            // complete, and the evidence Query starts a new one. Not after a CopyDone: in an
-            // extended-protocol COPY, ReadyForQuery only follows the next Sync.
-            let complete = before
-                .send
-                .as_ref()
-                .and_then(|m| m.last())
-                .and_then(|m| m.parse::<RawMessage>().ok())
-                .is_some_and(|m| matches!(m, RawMessage::Sync | RawMessage::Query(_)));
+            // Everything after the step's last Sync must be simple Queries: then the
+            // exchange is complete, and the evidence Query starts a new one. Anything else
+            // leaves one open: after a failed Parse the server discards until a Sync, and
+            // in an extended-protocol COPY ReadyForQuery only follows the next Sync.
+            let messages: Vec<RawMessage> = before.send.iter().flatten().filter_map(|m| m.parse().ok()).collect();
+            let after_sync = match messages.iter().rposition(|m| matches!(m, RawMessage::Sync)) {
+                Some(i) => &messages[i + 1..],
+                None => &messages[..],
+            };
+            // A Query that starts COPY ... FROM STDIN leaves the server waiting for data.
+            let copy_in = |sql: &str| {
+                let sql = sql.to_lowercase();
+                sql.trim_start().starts_with("copy") && sql.contains("from stdin")
+            };
+            let complete = !messages.is_empty()
+                && after_sync
+                    .iter()
+                    .all(|m| matches!(m, RawMessage::Query(sql) if !copy_in(sql)));
             if !complete {
                 bail!(
                     "{origin}: the evidence at step {n} must follow a send step of client '{}' that ends with sync \
-                     (or a query)",
+                     or a query (not one starting COPY FROM STDIN), with only queries after its last sync",
                     step.client
                 );
             }
@@ -647,6 +656,34 @@ mod tests {
         ]
         .concat();
         assert!(with(&copy, "").unwrap_err().contains("ends with sync"));
+        // A Query that starts COPY FROM STDIN leaves the server waiting for data.
+        let copy_in = [
+            step("r", "send = ['query copy pp_copy FROM stdin']"),
+            step("r", "evidence = true"),
+        ]
+        .concat();
+        assert!(with(&copy_in, "").unwrap_err().contains("ends with sync"));
+        // A Parse after the Query: still mid-exchange.
+        let query_then_parse = [
+            step("r", "send = ['query SELECT 1', 'parse s1 SELECT 1']"),
+            step("r", "evidence = true"),
+        ]
+        .concat();
+        assert!(with(&query_then_parse, "").unwrap_err().contains("ends with sync"));
+        // A Query after a Parse with no Sync: if the Parse fails, the server discards
+        // until a Sync and the evidence would hang. Refused.
+        let parse_then_query = [
+            step("r", "send = ['parse s1 SELECT 1', 'query SELECT 1']"),
+            step("r", "evidence = true"),
+        ]
+        .concat();
+        assert!(with(&parse_then_query, "").unwrap_err().contains("ends with sync"));
+        let synced_then_query = [
+            step("r", "send = ['parse s1 SELECT 1', 'sync', 'query SELECT 1']"),
+            step("r", "evidence = true"),
+        ]
+        .concat();
+        assert_eq!(with(&synced_then_query, ""), Ok(()));
         // After a Parse with no Sync, the exchange isn't over: refused.
         let parsed = [
             step("r", "send = ['query SELECT 1', 'parse - SELECT 2']"),
