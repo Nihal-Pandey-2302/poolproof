@@ -66,7 +66,10 @@ First release.
   `comparison`.
 - Release binaries for Linux (x86_64, arm64), macOS (x86_64, arm64) and Windows (x86_64),
   with SHA256SUMS and build provenance attestations. `cargo binstall poolproof` installs
-  them.
+  them. CI also runs the Windows build: every scenario against PostgreSQL on Windows, and
+  the error paths and exit codes of `run`, `scan` and `doctor`.
+- Guides: testing a managed pooler such as RDS Proxy or hosted Supavisor
+  (`docs/managed-poolers.md`), and a code tour for new contributors (`docs/code-tour.md`).
 - A harness self-test: a small proxy (`tools/pp-proxy`) puts known faults between
   poolproof and Postgres, and CI checks that every scenario gets the verdicts listed in
   `selftest/expected.toml`.
