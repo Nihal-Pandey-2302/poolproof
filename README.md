@@ -137,7 +137,8 @@ system's store (which needs `verify-full`, and makes it the default). Without it
 exists, and `require` then checks the chain like `verify-ca`; `verify-ca` and
 `verify-full` with no root certificate at all are an error. `send` steps, cancel requests
 and the reset and setup connections use the same settings. A Unix socket never uses TLS,
-as in psql. Not supported yet: client certificates and `sslnegotiation=direct`.
+as in psql. Not supported yet: client certificates, and `sslnegotiation=direct` (or
+`PGSSLNEGOTIATION=direct`), which is refused.
 
 A URL names one host and port: several hosts or ports, `hostaddr`,
 `target_session_attrs` and `load_balance_hosts` are refused, since poolproof would
