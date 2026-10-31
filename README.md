@@ -212,17 +212,17 @@ ok    prod-like-pgbouncer reset        ends every session of user app from 10.0.
 ok    prod-like-pgbouncer mode         transaction or statement pooling (b got a's server connection)
 ```
 
-It checks that both URLs answer and reach the same Postgres (database, start time,
-version and port; the addresses are only shown, since the pooler often reaches Postgres
-on another network), TLS on each side, which scenarios would SKIP for missing
-privileges, what reset would end and whether the direct user can end it, and the pooling
-mode: a second client gets the first one's server connection (transaction pooling), or
-waits for it (session mode with a full pool). A user that isn't a superuser needs
-`pg_signal_backend` and `pg_read_all_stats` to end other roles' sessions, and can never
-end a superuser's. If that rules out the pooler's own sessions, the reset check fails;
-other sessions that `reset = "all"` would leave are a warning, since whatever they hold
-(locks, `pp_*` objects) can still change results. doctor only reads: it runs no reset, setup or scenario, ends no
-session and sets nothing through the pooler. Exit code 1 if a check fails (with
+It checks that both URLs answer and reach the same Postgres (database, start time, version
+and port; the addresses are only shown, since the pooler often reaches Postgres on another
+network), TLS on each side, which scenarios would SKIP for missing privileges, what reset
+would end and whether the direct user can end it, and the pooling mode: a second client
+gets the first one's server connection (transaction pooling), or waits for it (session
+mode with a full pool). A user that isn't a superuser needs `pg_signal_backend` and
+`pg_read_all_stats` to end other roles' sessions, and can never end a superuser's. If that
+rules out the pooler's own sessions, the reset check fails; other sessions that
+`reset = "all"` would leave are a warning, since whatever they hold (locks, `pp_*`
+objects) can still change results. doctor only reads: it runs no reset, setup or scenario,
+ends no session and sets nothing through the pooler. Exit code 1 if a check fails (with
 `--strict`, also on a warning). `--format json` is for scripts and issues: it leaves out
 URLs, hosts, users and addresses, which the text output shows. Text output also shows
 server and TLS error messages in full; JSON shows only their class (e.g. `authentication
