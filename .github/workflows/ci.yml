@@ -380,13 +380,15 @@ jobs:
           pattern: results-postgres-*
       - name: Build site
         env:
-          # "true" adds the committed variant targets (results/variants-postgres-*.json,
-          # nightly, Postgres 18.4 only) to the site. Off until the page labels them.
-          SITE_VARIANTS: "false"
+          # "true" adds the committed variant targets (results/variants-postgres-18.4.json,
+          # from the nightly variants job) to the site, under a heading of their own.
+          SITE_VARIANTS: "true"
         run: |
           mkdir site
           set -- results-postgres-*/new.json
-          if [ "$SITE_VARIANTS" = true ]; then set -- "$@" results/variants-postgres-*.json; fi
+          if [ "$SITE_VARIANTS" = true ]; then
+            set -- "$@" --label 'variant targets (nightly, PG 18.4 only)=results/variants-postgres-18.4.json'
+          fi
           cargo run -q --release -- report "$@" --format html > site/index.html
           cp -r schemas site/schemas
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
