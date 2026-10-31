@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use pg_query::protobuf::{FuncCall, OnCommitAction, VariableSetKind, a_const};
 use pg_query::{NodeEnum, NodeRef};
 
-use super::{Finding, Query, RULES, Report, Severity, scenarios_for};
+use super::{Finding, Input, RULES, Report, Severity, scenarios_for};
 
 // CURSOR_OPT_HOLD from parsenodes.h
 const CURSOR_OPT_HOLD: i32 = 0x0020;
@@ -15,10 +15,10 @@ const SESSION_ADVISORY_LOCKS: &[&str] = &[
     "pg_try_advisory_lock_shared",
 ];
 
-pub fn scan(queries: &[Query]) -> Report {
+pub fn scan(input: &Input) -> Report {
     // Merge duplicates so each query is reported once with its total calls.
     let mut merged: BTreeMap<&str, (u64, usize)> = BTreeMap::new();
-    for q in queries {
+    for q in &input.queries {
         let entry = merged.entry(q.text.as_str()).or_insert((0, q.line));
         entry.0 += q.calls;
         entry.1 = entry.1.min(q.line);
@@ -69,8 +69,12 @@ pub fn scan(queries: &[Query]) -> Report {
             line: *line,
             scenarios: hit.scenarios,
             on_pooler: None,
+            driver: None,
+            pooler_note: None,
         }));
     }
+    let (drivers, notes) = super::statements::findings(&input.statement_names);
+    findings.extend(drivers);
 
     findings.sort_by(|a, b| b.severity.cmp(&a.severity).then(b.calls.cmp(&a.calls)));
     Report {
@@ -78,6 +82,7 @@ pub fn scan(queries: &[Query]) -> Report {
         queries: merged.len(),
         unparsed,
         uninspected: uninspected_bodies,
+        notes,
     }
 }
 
@@ -777,7 +782,15 @@ fn parse_bool(s: &str) -> Option<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scan::RULES;
+    use crate::scan::{Query, RULES};
+
+    /// The queries alone, as from pg_stat_statements.
+    fn scan(queries: &[Query]) -> Report {
+        super::scan(&Input {
+            queries: queries.to_vec(),
+            statement_names: vec![],
+        })
+    }
 
     fn query(text: &str, calls: u64) -> Query {
         Query {

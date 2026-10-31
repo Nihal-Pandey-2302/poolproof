@@ -1,0 +1,99 @@
+# Prepared statement names in statement logs. Most lines are as Postgres 17.11 logged
+# them in the test bed, with log_statement = 'all' and log_min_duration_statement = 0,
+# for each driver's default settings: straight to Postgres, and through PgBouncer,
+# PgDog and Odyssey, which prepare under their own names. The rule recognizes five
+# drivers' names; anything else gives no finding.
+
+[[query]]
+form = "log-lines"
+sql = """
+duration: 0.013 ms  parse _pg3_0: SELECT ($1::int * 2)::text AS doubled
+duration: 0.022 ms  bind _pg3_0: SELECT ($1::int * 2)::text AS doubled
+execute _pg3_0: SELECT ($1::int * 2)::text AS doubled
+duration: 0.009 ms  execute _pg3_0: SELECT ($1::int * 2)::text AS doubled
+"""
+expect = ["driver-prepared-statements"]
+note = "psycopg 3.3.6, prepare_threshold = 5: the sixth run of a query is prepared as _pg3_0"
+
+[[query]]
+form = "log-lines"
+sql = """
+duration: 0.020 ms  parse S_1: SELECT ($1::int * 2)::text AS doubled
+execute S_1: SELECT ($1::int * 2)::text AS doubled
+"""
+expect = ["driver-prepared-statements"]
+note = "pgjdbc 42.7.14, prepareThreshold = 5"
+
+[[query]]
+form = "log-lines"
+sql = "statement: SET application_name = 'PostgreSQL JDBC Driver'"
+expect = ["session-set"]
+note = "pgjdbc 42.7.14 sends this after connecting, with any prepareThreshold"
+
+[[query]]
+form = "log-lines"
+sql = """
+duration: 0.031 ms  parse stmtcache_f511a4ab4af9922ce03043515e8726414f332f6366c5eaca: SELECT ($1::int * 2)::text AS doubled
+execute stmtcache_f511a4ab4af9922ce03043515e8726414f332f6366c5eaca: SELECT ($1::int * 2)::text AS doubled
+"""
+expect = ["driver-prepared-statements"]
+note = "pgx 5.11.0, default QueryExecModeCacheStatement: every query, from its first run"
+
+[[query]]
+form = "log-lines"
+sql = """
+duration: 0.025 ms  parse __asyncpg_stmt_1__: SELECT ($1::int * 2)::text
+execute __asyncpg_stmt_1__: SELECT ($1::int * 2)::text
+"""
+expect = ["driver-prepared-statements"]
+note = "asyncpg 0.30.0 defaults, run once against the test bed's Postgres"
+
+[[query]]
+form = "log-lines"
+sql = "execute sqlx_s_1/sqlx_p_1: SELECT id FROM users WHERE id = $1"
+expect = ["driver-prepared-statements"]
+note = "sqlx-postgres 0.8 names statements sqlx_s_N and portals sqlx_p_N (src/io/mod.rs); a named portal is logged as statement/portal"
+
+[[query]]
+form = "log-lines"
+sql = """
+duration: 1.204 ms  parse S_3: SELECT * FROM orders WHERE customer_id = $1
+duration: 0.051 ms  bind S_3: SELECT * FROM orders WHERE customer_id = $1
+"""
+expect = ["driver-prepared-statements"]
+note = "a log that only samples slow parse and bind steps still shows the name"
+
+[[query]]
+form = "log-lines"
+sql = "execute fetch from S_2/C_3: SELECT * FROM orders"
+expect = ["driver-prepared-statements"]
+note = "pgjdbc fetching more rows of a portal (setFetchSize)"
+
+[[query]]
+form = "log-lines"
+sql = """
+duration: 0.012 ms  parse <unnamed>: SELECT ($1::int * 2)::text AS doubled
+duration: 0.010 ms  bind <unnamed>: SELECT ($1::int * 2)::text AS doubled
+execute <unnamed>: SELECT ($1::int * 2)::text AS doubled
+"""
+expect = []
+note = "the unnamed statement (psycopg before its threshold, node-postgres, pgx with exec)"
+
+[[query]]
+form = "log-lines"
+sql = """
+duration: 0.015 ms  parse pp_7b9b071af95b: SELECT ($1::int * 2)::text AS doubled
+execute pp_7b9b071af95b: SELECT ($1::int * 2)::text AS doubled
+"""
+expect = []
+note = "node-postgres named query: the name is the app's own, so no driver to name"
+
+[[query]]
+form = "log-lines"
+sql = """
+execute PGBOUNCER_2: SELECT ($1::int * 2)::text AS doubled
+execute __pgdog_2: SELECT ($1::int * 2)::text AS doubled
+execute odyssey_pstmt_1: SELECT ($1::int * 2)::text AS doubled
+"""
+expect = []
+note = "pgx through PgBouncer 1.26.1, PgDog 0.1.62 and Odyssey 1.5.2: renamed, so a note, not a finding"
