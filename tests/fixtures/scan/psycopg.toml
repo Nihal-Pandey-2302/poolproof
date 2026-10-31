@@ -1,0 +1,73 @@
+# Python: psycopg 3, SQLAlchemy, asyncpg.
+
+[[query]]
+sql = 'DECLARE "report" CURSOR WITH HOLD FOR SELECT id, payload FROM events WHERE ts > $1'
+form = "pgss"
+expect = ["with-hold-cursor"]
+note = "psycopg 3 conn.cursor(name, withhold=True)"
+
+[[query]]
+sql = 'DECLARE "report" CURSOR FOR SELECT id, payload FROM events WHERE ts > $1'
+form = "pgss"
+expect = []
+note = "psycopg 3 named cursor, default withhold=False"
+
+[[query]]
+sql = 'BEGIN ISOLATION LEVEL SERIALIZABLE'
+form = "pgss"
+expect = []
+note = "psycopg 3 with isolation_level set"
+
+[[query]]
+sql = 'SAVEPOINT "_pg3_1"'
+form = "pgss"
+expect = []
+note = "nested conn.transaction()"
+
+[[query]]
+sql = 'LISTEN mychan'
+form = "pgss"
+expect = ["listen"]
+note = "conn.execute('LISTEN mychan') then conn.notifies()"
+
+[[query]]
+sql = 'select pg_catalog.version()'
+form = "pgss"
+expect = []
+note = "SQLAlchemy dialect initialize"
+
+[[query]]
+sql = 'select current_schema()'
+form = "pgss"
+expect = []
+note = "SQLAlchemy dialect initialize"
+
+[[query]]
+sql = 'show standard_conforming_strings'
+form = "pgss"
+expect = []
+note = "SQLAlchemy dialect initialize"
+
+[[query]]
+sql = 'SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL REPEATABLE READ'
+form = "pgss"
+expect = ["session-set"]
+note = "SQLAlchemy PGDialect.set_isolation_level (pg8000 and other drivers without a native setter)"
+
+[[query]]
+sql = 'SELECT pg_advisory_unlock_all(); CLOSE ALL; UNLISTEN *; RESET ALL;'
+form = "log"
+expect = ["session-set"]
+note = "asyncpg pool reset query on release"
+
+[[query]]
+sql = 'RESET ALL'
+form = "pgss"
+expect = ["session-set"]
+note = "same, pg_stat_statements splits the string"
+
+[[query]]
+sql = 'COPY events (id, payload) FROM STDIN'
+form = "pgss"
+expect = []
+note = "cursor.copy()"

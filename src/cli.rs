@@ -67,11 +67,15 @@ enum Command {
         #[arg(long, value_enum, default_value_t = FailOn::Any)]
         fail_on: FailOn,
     },
-    /// Scan queries (pg_stat_statements CSV or a .sql file) for patterns that
-    /// break under transaction pooling.
+    /// Scan queries (pg_stat_statements CSV, Postgres logs or a .sql file) for
+    /// patterns that break under transaction pooling.
     Scan {
-        /// pg_stat_statements CSV, Postgres log (.log stderr, .json jsonlog) or .sql file.
+        /// pg_stat_statements CSV, Postgres log (.log stderr, .json jsonlog, .csv csvlog)
+        /// or .sql file. `-` reads stdin (needs --input).
         input: PathBuf,
+        /// What the input is. Without it, the file extension decides.
+        #[arg(long = "input", value_enum, value_name = "FORMAT")]
+        input_format: Option<scan::InputFormat>,
         #[arg(long, value_enum, default_value_t = ScanFormat::Text)]
         format: ScanFormat,
         /// Exit non-zero on warnings too, not just on queries that break.
@@ -217,13 +221,14 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
         }
         Command::Scan {
             input,
+            input_format,
             format,
             strict,
             pooler,
             postgres,
             results,
         } => {
-            let queries = scan::load_queries(&input)?;
+            let queries = scan::load_queries(&input, input_format)?;
             let mut report = scan::scan(&queries);
             if let Some(pooler) = &pooler {
                 let reports = match &results {
@@ -244,7 +249,7 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
                 report.findings.sort_by_key(rank);
             }
             match format {
-                ScanFormat::Json => println!("{}", serde_json::to_string_pretty(&report.findings)?),
+                ScanFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
                 ScanFormat::Sarif => println!("{}", serde_json::to_string_pretty(&sarif(&report, &input))?),
                 ScanFormat::Text => print_scan(&report),
             }

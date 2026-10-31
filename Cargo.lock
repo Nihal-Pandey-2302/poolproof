@@ -742,6 +742,7 @@ name = "poolproof"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64",
  "bytes",
  "clap",
  "csv",
@@ -751,6 +752,7 @@ dependencies = [
  "postgres-protocol",
  "serde",
  "serde_json",
+ "sha2",
  "tokio",
  "tokio-postgres",
  "toml",

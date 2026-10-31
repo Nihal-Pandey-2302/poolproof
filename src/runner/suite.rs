@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use anyhow::{Result, bail};
 
-use super::{FailKind, Verdict, check, deterministic, preflight, server_version};
+use super::{FailKind, Timeouts, Verdict, check, deterministic, preflight, server_version};
 use crate::output::text::{Style, print_progress, print_result};
 use crate::report::{ResultRow, StepOutcomes, TargetInfo};
 use crate::scenario::Scenario;
@@ -32,6 +32,8 @@ pub async fn run(
     scenarios: &[Scenario],
     opts: &RunOptions<'_>,
 ) -> Result<(Vec<TargetInfo>, Vec<ResultRow>)> {
+    // Not configurable yet; F2 adds the flags.
+    let timeouts = Timeouts::default();
     let targets = select(targets, opts.targets)?;
     let wanted = |s: &&Scenario| opts.filter.is_none_or(|f| s.name.contains(f));
     let total = targets.len() * scenarios.iter().filter(wanted).count();
@@ -46,7 +48,7 @@ pub async fn run(
             version: target.version.clone(),
             config: target.config.clone(),
             mode: target.mode,
-            postgres: server_version(&target.direct).await.ok(),
+            postgres: server_version(&target.direct, &timeouts).await.ok(),
         });
         if target.reset.is_empty() {
             eprintln!(
@@ -57,7 +59,7 @@ pub async fn run(
         let applies = |s: &&Scenario| wanted(s) && s.modes.contains(&target.mode);
         // Without both URLs answering, every scenario would compare two failures.
         let unreachable = if scenarios.iter().any(|s| applies(&s)) {
-            preflight(&target.pooler, &target.direct).await.err()
+            preflight(&target.pooler, &target.direct, &timeouts).await.err()
         } else {
             None
         };
@@ -73,12 +75,12 @@ pub async fn run(
             } else {
                 let key = (s.name.as_str(), target.direct.as_str());
                 if opts.check_scenarios && !determinism.contains_key(&key) {
-                    determinism.insert(key, deterministic(s, &target.direct, &target.reset).await);
+                    determinism.insert(key, deterministic(s, &target.direct, &target.reset, &timeouts).await);
                 }
                 match determinism.get(&key) {
                     Some(Err(reason)) => (Verdict::Error { reason: reason.clone() }, vec![], 0, 0),
                     _ => {
-                        let checked = check(s, &target.pooler, &target.direct, &target.reset).await;
+                        let checked = check(s, &target.pooler, &target.direct, &target.reset, &timeouts).await;
                         (checked.verdict, checked.steps, checked.runs, checked.failures)
                     }
                 }
