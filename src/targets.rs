@@ -28,10 +28,43 @@ pub struct Target {
     pub product: Option<String>,
     pub version: Option<String>,
     pub config: Option<String>,
-    /// Statements run on `direct` before every run to drop state leaked on the
-    /// pooler's server connections, usually by terminating them. Without it,
-    /// one scenario's leak can change the next one's result.
-    pub reset: Vec<Statement>,
+    /// What runs on `direct` before every run to drop state leaked on the pooler's
+    /// server connections. Without it, one scenario's leak can change the next one's
+    /// result.
+    pub reset: Reset,
+}
+
+/// A target's `reset`. The runner turns `Auto` and `All` into statements.
+#[derive(Debug, Clone)]
+pub enum Reset {
+    None,
+    /// End the sessions the pooler opened, found by the address and user Postgres
+    /// sees them come from.
+    Auto,
+    /// End every other session on the database.
+    All,
+    /// The user's own statements.
+    Statements(Vec<Statement>),
+}
+
+impl Reset {
+    /// For reports: how isolated the runs were, without the SQL.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Reset::None => "none",
+            Reset::Auto => "auto",
+            Reset::All => "all",
+            Reset::Statements(_) => "custom",
+        }
+    }
+}
+
+/// `reset` as written: "auto", "all", or a list of statements.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum ResetFile {
+    Kind(String),
+    Statements(Vec<String>),
 }
 
 /// A SQL statement to run on Postgres. Errors show it as written, with `${NAME}`
@@ -109,7 +142,7 @@ struct TargetFile {
     #[serde(default)]
     config: Option<String>,
     #[serde(default)]
-    reset: Vec<String>,
+    reset: Option<ResetFile>,
 }
 
 impl Targets {
@@ -128,8 +161,9 @@ impl Targets {
         Ok(Targets { targets })
     }
 
-    /// The one target given with `run --pooler URL --direct URL`.
-    pub fn single(pooler: &str, direct: &str, mode: PoolMode) -> Result<Self> {
+    /// The one target given with `run --pooler URL --direct URL`, with `reset` from
+    /// `--reset`.
+    pub fn single(pooler: &str, direct: &str, mode: PoolMode, reset: Reset) -> Result<Self> {
         Ok(Targets {
             targets: vec![Target {
                 name: "pooler".into(),
@@ -139,7 +173,7 @@ impl Targets {
                 product: None,
                 version: None,
                 config: None,
-                reset: vec![],
+                reset,
             }],
         })
     }
@@ -162,16 +196,27 @@ impl Target {
         Ok(Target {
             pooler: endpoint("pooler", &t.pooler)?,
             direct: endpoint("direct", &t.direct)?,
-            reset: t
-                .reset
-                .iter()
-                .map(|sql| {
-                    Ok(Statement {
-                        sql: expand_vars(sql, env, |v| v.to_string(), &|_, _| true).context("reset")?,
-                        written: sql.clone(),
-                    })
-                })
-                .collect::<Result<_>>()?,
+            reset: match t.reset {
+                None => Reset::None,
+                Some(ResetFile::Kind(kind)) => match kind.as_str() {
+                    "auto" => Reset::Auto,
+                    "all" => Reset::All,
+                    _ => bail!("reset must be \"auto\", \"all\" or a list of statements"),
+                },
+                // An empty list resets nothing, and should warn like a missing one.
+                Some(ResetFile::Statements(statements)) if statements.is_empty() => Reset::None,
+                Some(ResetFile::Statements(statements)) => Reset::Statements(
+                    statements
+                        .iter()
+                        .map(|sql| {
+                            Ok(Statement {
+                                sql: expand_vars(sql, env, |v| v.to_string(), &|_, _| true).context("reset")?,
+                                written: sql.clone(),
+                            })
+                        })
+                        .collect::<Result<_>>()?,
+                ),
+            },
             name: t.name,
             mode: t.mode,
             product: t.product,
@@ -312,6 +357,18 @@ impl Endpoint {
 
     pub(crate) fn tls(&self) -> &Tls {
         &self.tls
+    }
+
+    /// `host:port` (or the socket directory), for messages.
+    pub fn host(&self) -> String {
+        let port = self.config.get_ports().first().copied().unwrap_or(5432);
+        match self.config.get_hosts().first() {
+            Some(Host::Tcp(h)) if h.contains(':') => format!("[{h}]:{port}"),
+            Some(Host::Tcp(h)) => format!("{h}:{port}"),
+            #[cfg(unix)]
+            Some(Host::Unix(dir)) => dir.display().to_string(),
+            None => String::new(),
+        }
     }
 }
 
@@ -610,10 +667,35 @@ mod tests {
     }
 
     #[test]
-    fn bundled_targets_parse_with_reset() {
+    fn bundled_targets_reset_everything() {
+        // Several poolers share the test bed's Postgres, so one pooler's leak can only
+        // be cleared by ending every session, not just that pooler's.
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("targets.toml");
         let targets = Targets::load(&path).unwrap();
-        assert!(targets.targets.iter().all(|t| !t.reset.is_empty()));
+        assert!(targets.targets.iter().all(|t| matches!(t.reset, Reset::All)));
+    }
+
+    #[test]
+    fn reset_forms() {
+        let reset = |line: &str| {
+            let file: TargetFile = toml::from_str(&format!(
+                "name = 't'\nmode = 'transaction'\npooler = 'postgres://u@h/db'\ndirect = 'postgres://u@h/db'\n{line}"
+            ))?;
+            Target::from_file(file, &env_of(&[("X", "1")])).map(|t| t.reset)
+        };
+        assert!(matches!(reset("").unwrap(), Reset::None));
+        assert!(matches!(reset("reset = []").unwrap(), Reset::None));
+        assert!(matches!(reset("reset = 'auto'").unwrap(), Reset::Auto));
+        assert!(matches!(reset("reset = 'all'").unwrap(), Reset::All));
+        let Reset::Statements(s) = reset("reset = ['SELECT ${X}', 'SELECT 2']").unwrap() else {
+            panic!("statements")
+        };
+        assert_eq!(
+            (s[0].sql(), s[0].to_string(), s.len()),
+            ("SELECT 1", "SELECT ${X}".into(), 2)
+        );
+        let err = format!("{:#}", reset("reset = 'everything'").unwrap_err());
+        assert!(err.contains("\"auto\", \"all\" or a list"), "{err}");
     }
 
     #[test]

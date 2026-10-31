@@ -6,12 +6,12 @@ use anyhow::{Result, bail};
 
 use super::{
     DIRECT_UNREACHABLE, FailKind, Privileges, Timeouts, Verdict, check, deterministic, preflight, privileges,
-    server_version,
+    resolve_reset, server_version,
 };
 use crate::output::text::{Style, print_progress, print_result};
 use crate::report::{ResultRow, StepOutcomes, TargetInfo};
 use crate::scenario::Scenario;
-use crate::targets::{Endpoint, Target};
+use crate::targets::{Endpoint, Reset, Target};
 
 /// How `run` goes about it.
 #[derive(Default)]
@@ -29,6 +29,8 @@ pub struct RunOptions<'a> {
     pub check_scenarios: bool,
     /// A scenario's `timeout_ms` overrides `step`.
     pub timeouts: Timeouts,
+    /// Allow reset = "all" against a Postgres that isn't on this machine.
+    pub yes: bool,
 }
 
 /// Runs every scenario on every target, in order.
@@ -54,16 +56,18 @@ pub async fn run(
             config: target.config.clone(),
             mode: target.mode,
             postgres: server_version(&target.direct, &timeouts).await.ok(),
+            reset: Some(target.reset.kind().to_string()),
         });
-        if target.reset.is_empty() {
+        if matches!(target.reset, Reset::None) {
             eprintln!(
                 "warning: target '{}' has no reset; leaked state can carry over between scenarios",
                 target.name
             );
         }
         let applies = |s: &&Scenario| wanted(s) && s.modes.contains(&target.mode);
+        let any_applies = scenarios.iter().any(|s| applies(&s));
         // Without both URLs answering, every scenario would compare two failures.
-        let unreachable = if scenarios.iter().any(|s| applies(&s)) {
+        let unreachable = if any_applies {
             preflight(&target.pooler, &target.direct, &timeouts).await.err()
         } else {
             None
@@ -71,10 +75,29 @@ pub async fn run(
         if let Some(reason) = &unreachable {
             eprintln!("error: target '{}': {reason}", target.name);
         }
+        // What reset will touch, said before it touches anything; a reset that can't
+        // be done safely makes the target an ERROR like an unreachable one. Same gate
+        // as preflight: nothing is asked or printed when no scenario will run.
+        let (reset, unreachable) = match &unreachable {
+            Some(_) => (vec![], unreachable),
+            None if !any_applies => (vec![], None),
+            None => match resolve_reset(target, opts.yes, &timeouts).await {
+                Ok((statements, line)) => {
+                    if !line.is_empty() {
+                        eprintln!("{line}");
+                    }
+                    (statements, None)
+                }
+                Err(reason) => {
+                    eprintln!("error: target '{}': {reason}", target.name);
+                    (vec![], Some(reason))
+                }
+            },
+        };
         // Same gate as preflight: no connection when nothing will run.
         let privs = match unreachable {
             Some(_) => Err(String::new()),
-            None if !scenarios.iter().any(|s| applies(&s)) => Err(String::new()),
+            None if !any_applies => Err(String::new()),
             None => privileges(&target.direct, &timeouts)
                 .await
                 .map_err(|e| format!("{DIRECT_UNREACHABLE} privilege check: {e:#}")),
@@ -82,8 +105,7 @@ pub async fn run(
         if let Ok(p) = &privs
             && !p.superuser
             && !p.pg_signal_backend
-            && target
-                .reset
+            && reset
                 .iter()
                 .any(|s| s.sql().to_lowercase().contains("pg_terminate_backend"))
         {
@@ -100,20 +122,14 @@ pub async fn run(
                 None => {
                     let seen = |(name, direct, _): &&(&str, &Endpoint, _)| *name == s.name && *direct == &target.direct;
                     if opts.check_scenarios && !determinism.iter().any(|d| seen(&d)) {
-                        let result = deterministic(s, &target.direct, &target.reset, &for_scenario(&timeouts, s)).await;
+                        let result = deterministic(s, &target.direct, &reset, &for_scenario(&timeouts, s)).await;
                         determinism.push((&s.name, &target.direct, result));
                     }
                     match determinism.iter().find(seen) {
                         Some((_, _, Err(reason))) => (Verdict::Error { reason: reason.clone() }, vec![], 0, 0),
                         _ => {
-                            let checked = check(
-                                s,
-                                &target.pooler,
-                                &target.direct,
-                                &target.reset,
-                                &for_scenario(&timeouts, s),
-                            )
-                            .await;
+                            let checked =
+                                check(s, &target.pooler, &target.direct, &reset, &for_scenario(&timeouts, s)).await;
                             (checked.verdict, checked.steps, checked.runs, checked.failures)
                         }
                     }
@@ -246,6 +262,7 @@ mod tests {
             "postgres://u@127.0.0.1:1/db",
             "postgres://u@127.0.0.1:1/db",
             PoolMode::Transaction,
+            Reset::None,
         )
         .unwrap()
         .targets
@@ -332,13 +349,19 @@ mod tests {
              [[step]]\nclient = 'a'\nsimple = 'SELECT 1'\n",
         )
         .unwrap();
-        let mut targets = Targets::single(&url, &url, PoolMode::Transaction).unwrap().targets;
-        let mut second = Targets::single(&url, &url, PoolMode::Transaction).unwrap().targets;
+        let mut targets = Targets::single(&url, &url, PoolMode::Transaction, Reset::None)
+            .unwrap()
+            .targets;
+        let mut second = Targets::single(&url, &url, PoolMode::Transaction, Reset::None)
+            .unwrap()
+            .targets;
         second[0].name = "b".into();
         targets.append(&mut second);
         // Same server, other options: may behave differently, so it's checked again.
         let other = format!("{url}{}application_name=pp", if url.contains('?') { '&' } else { '?' });
-        let mut third = Targets::single(&url, &other, PoolMode::Transaction).unwrap().targets;
+        let mut third = Targets::single(&url, &other, PoolMode::Transaction, Reset::None)
+            .unwrap()
+            .targets;
         third[0].name = "c".into();
         targets.append(&mut third);
         let opts = RunOptions {
@@ -352,6 +375,67 @@ mod tests {
         // each target.
         assert_eq!(rows.get::<_, i64>(0), 2 + 2 + 3 * 2);
         client.batch_execute("DROP TABLE pp_runs").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn reset_is_not_resolved_when_no_scenario_applies() {
+        // reset = "auto" asks the pooler first; it must not even connect.
+        let pooler = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        pooler.set_nonblocking(true).unwrap();
+        let port = pooler.local_addr().unwrap().port();
+        let targets = Targets::single(
+            &format!("postgres://u@127.0.0.1:{port}/db"),
+            "postgres://u@127.0.0.1:1/db",
+            PoolMode::Session,
+            Reset::Auto,
+        )
+        .unwrap()
+        .targets;
+        let s: Scenario = toml::from_str("name = 's'\ndescription = ''\nmodes = ['transaction']\nstep = []\n").unwrap();
+        let (_, results) = run(&targets, std::slice::from_ref(&s), &RunOptions::default())
+            .await
+            .unwrap();
+        assert!(
+            matches!(&results[0].verdict, Verdict::Skip { .. }),
+            "{:?}",
+            results[0].verdict
+        );
+        assert!(pooler.accept().is_err(), "the pooler was asked");
+    }
+
+    #[tokio::test]
+    #[ignore = "needs POOLPROOF_TEST_PG"]
+    async fn a_refused_reset_runs_no_baseline() {
+        let url = std::env::var("POOLPROOF_TEST_PG").expect("set POOLPROOF_TEST_PG to a Postgres URL");
+        let endpoint = crate::targets::Endpoint::parse(&url).unwrap();
+        let (client, _driver, _) = crate::runner::pg::connect(&endpoint, &Timeouts::default())
+            .await
+            .unwrap();
+        client
+            .batch_execute("DROP TABLE IF EXISTS pp_refused; CREATE TABLE pp_refused ()")
+            .await
+            .unwrap();
+        let s: Scenario = toml::from_str(
+            "name = 't'\ndescription = 't'\nsetup = ['INSERT INTO pp_refused DEFAULT VALUES']\n\
+             [[step]]\nclient = 'a'\nsimple = 'SELECT 1'\n",
+        )
+        .unwrap();
+        // The pooler is Postgres itself, on this machine: "auto" refuses that address.
+        let targets = Targets::single(&url, &url, PoolMode::Transaction, Reset::Auto)
+            .unwrap()
+            .targets;
+        let opts = RunOptions {
+            check_scenarios: true,
+            ..RunOptions::default()
+        };
+        let (_, results) = run(&targets, std::slice::from_ref(&s), &opts).await.unwrap();
+        let Verdict::Error { reason } = &results[0].verdict else {
+            panic!("expected ERROR, got {:?}", results[0].verdict)
+        };
+        assert!(reason.contains("the same address as poolproof"), "{reason}");
+        let rows = client.query_one("SELECT count(*) FROM pp_refused", &[]).await.unwrap();
+        assert_eq!(rows.get::<_, i64>(0), 0, "a baseline ran");
+        client.batch_execute("DROP TABLE pp_refused").await.unwrap();
     }
 
     #[test]
@@ -372,12 +456,22 @@ mod tests {
 
     #[test]
     fn select_keeps_file_order_and_rejects_unknown_names() {
-        let mut targets = Targets::single("postgres://u@p/db", "postgres://u@d/db", PoolMode::Transaction)
-            .unwrap()
-            .targets;
-        let mut second = Targets::single("postgres://u@p/db", "postgres://u@d/db", PoolMode::Transaction)
-            .unwrap()
-            .targets;
+        let mut targets = Targets::single(
+            "postgres://u@p/db",
+            "postgres://u@d/db",
+            PoolMode::Transaction,
+            Reset::None,
+        )
+        .unwrap()
+        .targets;
+        let mut second = Targets::single(
+            "postgres://u@p/db",
+            "postgres://u@d/db",
+            PoolMode::Transaction,
+            Reset::None,
+        )
+        .unwrap()
+        .targets;
         second[0].name = "b".into();
         targets.append(&mut second);
         let names = |v: Vec<&Target>| v.into_iter().map(|t| t.name.clone()).collect::<Vec<_>>();

@@ -138,9 +138,31 @@ pooler = "postgres://user:${POOLER_PASSWORD}@pooler-host:6432/db"
 direct = "postgres://user@postgres-host:5432/db"   # password from PGPASSWORD or ~/.pgpass
 mode = "transaction"
 # Run on `direct` before every run so one scenario's leaked state can't change the next
-# one's result. This terminates every other session on the database.
-reset = ["SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'"]
+# one's result: "auto", "all", or a list of your own statements.
+reset = "auto"
 ```
+
+`reset` decides how much each run is isolated from the one before:
+
+- `"auto"` ends the sessions from the address and user Postgres sees the pooler connect
+  as (asked once per target, through the pooler). That is every such session, not only
+  the pooler's: behind a NAT (Kubernetes, a cloud NAT in front of RDS) or next to an app
+  on the same host, other sessions share that address and user and end too. It refuses
+  to run when the pooler is on a Unix socket or on the same address as poolproof. It
+  assumes one pooler per Postgres: another pooler's leaked locks stay, and so do
+  sessions the pooler opens from a second address (clusters, several nodes, a restart on
+  a new IP). Other applications using the same pooler lose their server connections,
+  which the pooler then reopens.
+- `"all"` ends every other session on the database. Against a Postgres that isn't on
+  this machine it needs `run --yes`.
+- A list of statements runs as written.
+- Without `reset`, nothing is reset: leaks carry over between scenarios, and `run`
+  warns. With `--pooler` and `--direct`, `--reset auto` or `--reset all` picks one.
+
+Before the first scenario, `run` prints what the reset will touch, e.g.
+`reset: 'prod-like-pgbouncer': ends every session of user app from 10.0.0.7 (not only the
+pooler's) on database db at postgres-host:5432 (auto)`. The JSON report records which
+kind each target used.
 
 `--target NAME` runs only that target from the file (repeat it for several).
 
@@ -151,9 +173,8 @@ these formats, a progress line per result goes to stderr. Text output is colored
 terminal unless `NO_COLOR` is set; `FORCE_COLOR` or `CLICOLOR_FORCE` colors it anywhere.
 
 Scenarios create and drop their own objects (prefixed `pp_`), so use a scratch database.
-That matters even more with `reset`, which kills every session on it. Without `reset`,
-leaks carry over between scenarios and `run` prints a warning. `--reverse` runs the
-scenarios in reverse order; verdicts should not change.
+That matters even more with `reset = "all"`, which kills every session on it.
+`--reverse` runs the scenarios in reverse order; verdicts should not change.
 
 ## Scanning your queries
 
