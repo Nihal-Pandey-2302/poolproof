@@ -13,6 +13,8 @@ simple = "SET search_path = ''"
 client = "b"
 simple = "SET search_path = public"
 
+# b's evidence is also b's first query after its SET, which is what makes a pooler that
+# applies SET lazily send it to the server.
 [[step]]
 client = "b"
 evidence = true
