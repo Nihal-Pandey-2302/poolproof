@@ -4,11 +4,13 @@
 #   verdict  PASS and FAIL (any kind) match each other; ERROR, SKIP or a missing
 #            result still fail the comparison
 #   kind     a FAIL matches a FAIL of any kind; anything else must match exactly
-#   reached  as kind, and a SKIP "passed, but ..." (the evidence showed the clients never
-#            shared a server connection, so the run didn't count) matches it too
-# CI fails on a line without a mode, a `kind` or `reached` line whose committed result
-# isn't FAIL, a `verdict` line committed as ERROR or SKIP, and a pair no results/*.json
-# has. Remove a line once the scenario has repeat or the cause is fixed.
+#   reached  as the committed result (PASS, or a FAIL of any kind), and a SKIP "passed,
+#            but ..." (the evidence showed the clients never shared a server
+#            connection, so the run didn't count) matches it too
+# CI fails on a line without a mode, a `kind` line whose committed result isn't FAIL, a
+# `reached` line whose committed result isn't PASS or FAIL, a `verdict` line committed
+# as ERROR or SKIP, and a pair no results/*.json has. Remove a line once the scenario
+# has repeat or the cause is fixed.
 
 # 2026-10-31: a single client can lose its own session state. Supavisor 2.10 opens a
 # second server connection when the only one isn't back in the pool yet (pool_size 1 is
@@ -39,6 +41,11 @@ supavisor-2.10.0-rc.1 driver/pgjdbc-no-prepare/set-leak kind
 supavisor-2.10.0-rc.1-strict protocol-statement-names-isolated kind
 # Seen in run 41238169659 (17.11, PASS -> FAIL error).
 supavisor-2.10.0-rc.1 prepared-statement-survives-other-clients verdict
+# Seen in run 41244128107 (17.11, PASS -> FAIL error).
+supavisor-2.10.0-rc.1-strict prepared-statement-survives-other-clients verdict
+# Seen in run 41244449211 (17.11, PASS -> SKIP "passed, but b never reached b's server
+# connection"): the overflow connection moved b between its evidence steps.
+supavisor-2.10.0-rc.1 cancel-from-idle-client-is-harmless reached
 
 # Same mechanism: a named statement prepared on one server, reused after Supavisor moved
 # the client to another, gives 26000. Seen in CI on pgx-default/transaction (both
