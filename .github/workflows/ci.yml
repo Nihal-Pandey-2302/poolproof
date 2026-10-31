@@ -226,6 +226,19 @@ jobs:
           CODE: ${{ steps.bad-args.outputs.exit-code }}
         run: '[ "$CODE" = 2 ]'
 
+      # Pinned by commit with no version: the install step stops before downloading.
+      # GitHub sets the ref only for a remote action, so its script runs here directly.
+      - name: A commit-pinned action needs version
+        run: |
+          yq '.runs.steps[0].run' action.yml > install.sh
+          set +e
+          ACTION_REF=$(printf '%040d' 0) INPUT_VERSION= INPUT_BINARY= \
+            bash --noprofile --norc -eo pipefail install.sh > install.out 2>&1
+          code=$?
+          set -e
+          cat install.out
+          [ "$code" = 1 ] && grep -q 'pinned by commit' install.out
+
   # Advisories, licenses, banned crates and sources (deny.toml).
   deny:
     runs-on: ubuntu-latest
