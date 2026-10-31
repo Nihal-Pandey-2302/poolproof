@@ -37,9 +37,11 @@ direct = "postgres://postgres:postgres@127.0.0.1:55432/app?sslmode=disable"
 mode = "session"
 reset = "all"
 
-# Pool of four server connections, transaction mode. Pools open connections only when
-# needed, so a lone client still stays on one; the *-survives-server-change scenarios
-# make one client move. Scenarios that need a pool of one SKIP.
+# pool_size = 4, transaction mode. Pools open connections only when needed, so a lone
+# client still stays on one; the *-survives-server-change scenarios make one client
+# move. Scenarios that need a pool of one SKIP. PgBouncer and PgDog hold four (doctor
+# --reset exact --pool-size 4: "held 4 transactions, client 5 waited"); Supavisor may
+# open more than pool_size (there, client 5 got its own server connection).
 
 [[target]]
 name = "pgbouncer-1.26.1-pool4"

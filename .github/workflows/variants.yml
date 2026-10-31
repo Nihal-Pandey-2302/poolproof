@@ -11,10 +11,15 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - "scenarios/**"
-      - "src/runner/**"
+      - "src/**"
+      - "build.rs"
+      - "Cargo.toml"
+      - "Cargo.lock"
       - "docker/**"
       - "targets-variants.toml"
       - "results/variants-postgres-*.json"
+      - "results/known-flaky.txt"
+      - ".github/compare-verdicts.sh"
       - ".github/workflows/variants.yml"
 
 concurrency:
@@ -28,6 +33,7 @@ jobs:
   variants:
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     env:
       POSTGRES_IMAGE: postgres:18.4
       COMPOSE_PROFILES: variants
@@ -38,8 +44,15 @@ jobs:
           toolchain: stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
+      # Only what the variant targets use: the services in the variants profile, plus
+      # Supavisor 2.10 and its tenants for the Supavisor variants. Postgres and the
+      # metadata database come up as their dependencies.
       - name: Start test bed
-        run: docker compose -f docker/compose.yml up -d --wait --wait-timeout 300
+        run: |
+          services=$(docker compose -f docker/compose.yml config --format json |
+            jq -r '.services | to_entries[] | select(.value.profiles // [] | index("variants")) | .key')
+          docker compose -f docker/compose.yml up -d --wait --wait-timeout 300 \
+            $services supavisor-2.10.0-rc.1 supavisor-2.10.0-rc.1-tenants
 
       - name: Run scenarios
         id: run
@@ -55,8 +68,12 @@ jobs:
 
       - name: Compare with committed results
         run: |
+          # A PR may add or change scenarios before the variants file is regenerated, so
+          # it compares only the pairs both files have; nightly and by hand, all of them.
+          mode=
+          if [ "${{ github.event_name }}" = pull_request ]; then mode=--common-only; fi
           set +e
-          .github/compare-verdicts.sh results/variants-postgres-18.4.json new.json
+          .github/compare-verdicts.sh $mode results/variants-postgres-18.4.json new.json
           code=$?
           set -e
           if [ "$code" = 1 ]; then

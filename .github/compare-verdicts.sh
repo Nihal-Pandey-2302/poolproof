@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Compares the verdicts of a CI run with the committed results:
-#   .github/compare-verdicts.sh COMMITTED.json NEW.json
+#   .github/compare-verdicts.sh [--common-only] COMMITTED.json NEW.json
+# --common-only compares only the (target, scenario) pairs both files have, and lists
+# the others in the job summary: for a PR that adds or changes scenarios before the
+# file is regenerated.
 # Only verdicts (result and FAIL kind) are compared, by target and scenario. Not compared:
 # scenarios with repeat > 1 in NEW.json, whose worst case can differ between machines.
 # Pairs in results/known-flaky.txt are compared loosely, as their line says:
@@ -9,6 +12,10 @@
 #   kind     a FAIL matches a FAIL of any kind
 # Exits 1 when verdicts differ, 2 on a bad or stale known-flaky line.
 set -euo pipefail
+# One collation for sort and comm.
+export LC_ALL=C
+common_only=false
+if [ "${1:-}" = --common-only ]; then common_only=true; shift; fi
 committed=$1 new=$2
 flaky_file=results/known-flaky.txt
 summary=${GITHUB_STEP_SUMMARY:-/dev/null}
@@ -63,4 +70,20 @@ verdicts() {
        else "\(.result) \(.mismatch.kind // "")" end) as $v
     | "\(.target) \(.scenario) \($v)"' "$1" | sort
 }
-diff <(verdicts "$committed") <(verdicts "$new")
+if $common_only; then
+  pairs() { jq -r '.results[] | "\(.target) \(.scenario)"' "$1" | sort -u; }
+  only_new=$(comm -13 <(pairs "$committed") <(pairs "$new"))
+  only_committed=$(comm -23 <(pairs "$committed") <(pairs "$new"))
+  if [ -n "$only_new" ]; then
+    { echo "### Not in the committed file yet"; sed 's/^/- /' <<<"$only_new"; } >> "$summary"
+  fi
+  if [ -n "$only_committed" ]; then
+    { echo "### In the committed file, not in this run"; sed 's/^/- /' <<<"$only_committed"; } >> "$summary"
+  fi
+  # Both sides keep only the pairs the other has: "target scenario" is the start of a line.
+  both=$(comm -12 <(pairs "$committed") <(pairs "$new"))
+  keep() { awk 'NR == FNR { k[$0]; next } ($1 " " $2) in k' <(printf '%s\n' "$both") -; }
+  diff <(verdicts "$committed" | keep) <(verdicts "$new" | keep)
+else
+  diff <(verdicts "$committed") <(verdicts "$new")
+fi
