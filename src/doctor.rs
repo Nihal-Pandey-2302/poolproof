@@ -21,7 +21,8 @@ pub enum Status {
 
 impl std::fmt::Display for Status {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
+        // pad, not write_str, so `{:<5}` lines the column up.
+        f.pad(match self {
             Status::Ok => "ok",
             Status::Warn => "warn",
             Status::Fail => "fail",
@@ -37,7 +38,7 @@ pub struct Check {
 }
 
 impl Check {
-    fn new(check: &'static str, status: Status, detail: impl Into<String>) -> Self {
+    pub fn new(check: &'static str, status: Status, detail: impl Into<String>) -> Self {
         Check {
             check,
             status,
@@ -52,37 +53,45 @@ pub struct TargetReport {
     pub checks: Vec<Check>,
 }
 
-/// 0 when nothing failed, 1 otherwise. With `strict`, a warning fails too.
-pub fn exit_code(reports: &[TargetReport], strict: bool) -> i32 {
+/// Whether anything failed. With `strict`, a warning counts too.
+pub fn failed(reports: &[TargetReport], strict: bool) -> bool {
     let limit = if strict { Status::Warn } else { Status::Fail };
-    let bad = reports.iter().flat_map(|r| &r.checks).any(|c| c.status >= limit);
-    i32::from(bad)
+    reports.iter().flat_map(|r| &r.checks).any(|c| c.status >= limit)
 }
 
-/// One line per check, then a summary.
-pub fn text(reports: &[TargetReport]) -> String {
-    let width = reports.iter().map(|r| r.name.len()).max().unwrap_or(0);
-    let mut out = String::new();
-    let (mut warn, mut fail) = (0, 0);
-    for r in reports {
-        for c in &r.checks {
-            out.push_str(&format!(
-                "{:<5} {:<width$} {:<12} {}\n",
-                c.status, r.name, c.check, c.detail
-            ));
-            warn += usize::from(c.status == Status::Warn);
-            fail += usize::from(c.status == Status::Fail);
-        }
-    }
-    out.push_str(&format!(
-        "\n{} targets checked: {fail} failed, {warn} warnings.\n",
-        reports.len()
-    ));
-    out
+/// One target's lines, `status target check detail`, with target names padded to
+/// `width` so several targets line up.
+pub fn text(report: &TargetReport, width: usize) -> String {
+    report
+        .checks
+        .iter()
+        .map(|c| format!("{:<5} {:<width$} {:<12} {}\n", c.status, report.name, c.check, c.detail))
+        .collect()
+}
+
+/// The line after all targets' checks.
+pub fn summary(reports: &[TargetReport]) -> String {
+    let count = |status| {
+        reports
+            .iter()
+            .flat_map(|r| &r.checks)
+            .filter(|c| c.status == status)
+            .count()
+    };
+    format!(
+        "\n{} targets checked: {} failed, {} warnings\n",
+        reports.len(),
+        count(Status::Fail),
+        count(Status::Warn)
+    )
 }
 
 pub fn json(reports: &[TargetReport]) -> String {
-    serde_json::to_string_pretty(&serde_json::json!({ "targets": reports })).unwrap()
+    #[derive(Serialize)]
+    struct Doc<'a> {
+        targets: &'a [TargetReport],
+    }
+    serde_json::to_string_pretty(&Doc { targets: reports }).unwrap()
 }
 
 /// What tells two connections apart as the same Postgres server.
@@ -100,7 +109,7 @@ pub struct ServerFacts {
 
 pub const FACTS_SQL: &str = "SELECT current_database(), \
      to_char(pg_postmaster_start_time() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'), \
-     current_setting('server_version'), inet_server_port()::text, host(inet_server_addr())";
+     split_part(current_setting('server_version'), ' ', 1), inet_server_port()::text, host(inet_server_addr())";
 
 pub async fn server_facts(client: &Client, within: Duration) -> anyhow::Result<ServerFacts> {
     let row = first_row(client, FACTS_SQL, within).await?;
@@ -237,7 +246,7 @@ async fn backend_pid(client: &Client, within: Duration) -> anyhow::Result<String
         .ok_or_else(|| anyhow::anyhow!("pg_backend_pid() returned NULL"))
 }
 
-async fn first_row(client: &Client, sql: &str, within: Duration) -> anyhow::Result<Vec<Option<String>>> {
+pub async fn first_row(client: &Client, sql: &str, within: Duration) -> anyhow::Result<Vec<Option<String>>> {
     let messages = timeout(within, client.simple_query(sql))
         .await
         .map_err(|_| anyhow::anyhow!("no reply within {within:?}"))??;
@@ -310,10 +319,10 @@ mod tests {
             name: "t".into(),
             checks: vec![Check::new("mode", status, "")],
         };
-        assert_eq!(exit_code(&[report(Status::Ok)], true), 0);
-        assert_eq!(exit_code(&[report(Status::Warn)], false), 0);
-        assert_eq!(exit_code(&[report(Status::Warn)], true), 1);
-        assert_eq!(exit_code(&[report(Status::Fail)], false), 1);
+        assert!(!failed(&[report(Status::Ok)], true));
+        assert!(!failed(&[report(Status::Warn)], false));
+        assert!(failed(&[report(Status::Warn)], true));
+        assert!(failed(&[report(Status::Fail)], false));
     }
 
     /// How the fake pooler hands out backend pids.

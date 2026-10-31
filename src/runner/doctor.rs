@@ -1,0 +1,394 @@
+//! The live side of `poolproof doctor`: connects to one target and runs its checks.
+//! SELECTs only. Through the pooler nothing that changes session state, since in
+//! transaction mode it would stay on a server connection other clients get next.
+
+use anyhow::{Context, Result};
+use bytes::BytesMut;
+use postgres_protocol::message::frontend;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::task::JoinHandle;
+use tokio::time::timeout;
+use tokio_postgres::Client;
+use tokio_postgres::config::Host;
+
+use super::Timeouts;
+use super::check::{DIRECT_UNREACHABLE, POOLER_UNREACHABLE};
+use super::pg::{Privileges, connect, privileges, resolve_reset, tcp_connect};
+use super::tls::SslMode;
+use crate::doctor::{
+    Check, Connected, Status, TargetReport, first_row, mode_check, probe_mode, same_server, server_facts,
+};
+use crate::scenario::Scenario;
+use crate::targets::{Endpoint, Reset, Target};
+
+/// Counts the other sessions on the database, as `reset = "all"` sees them; more
+/// conditions can follow. Without pg_read_all_stats, other roles' sessions have no
+/// backend_type here, so they count only when it is NULL.
+const OTHER_SESSIONS_COUNT: &str = "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() \
+    AND pid <> pg_backend_pid() AND (backend_type = 'client backend' OR backend_type IS NULL)";
+
+pub async fn inspect(target: &Target, scenarios: &[Scenario], yes: bool, t: &Timeouts) -> TargetReport {
+    let mut checks = vec![];
+    let direct = open_side(&mut checks, "direct", &target.direct, t).await;
+    let pooler = open_side(&mut checks, "pooler", &target.pooler, t).await;
+
+    // Who Postgres sees the pooler's sessions come from, for the reset preview.
+    let mut pooler_session = None;
+    if let (Some((d, _)), Some((p, _))) = (&direct, &pooler) {
+        match (
+            server_facts(p, t.housekeeping).await,
+            server_facts(d, t.housekeeping).await,
+        ) {
+            (Ok(p), Ok(d)) => checks.push(same_server(&p, &d)),
+            (p, d) => {
+                let e = p.err().or(d.err()).unwrap();
+                checks.push(Check::new("same server", Status::Fail, format!("{e:#}")));
+            }
+        }
+        pooler_session = row(p, "SELECT host(inet_client_addr()), session_user", t).await.ok();
+    }
+    // Before the mode probe: in session mode with a pool of one, this client would
+    // hold the only server connection.
+    if let Some(pooler) = pooler {
+        close(pooler, t).await;
+    }
+
+    if let Some((d, _)) = &direct {
+        match privileges(&target.direct, t).await {
+            Ok(have) => {
+                checks.push(requirements(target, scenarios, have));
+                checks.push(reset(target, yes, have, d, pooler_session.as_deref(), t).await);
+            }
+            Err(e) => checks.push(Check::new("privileges", Status::Fail, format!("{e:#}"))),
+        }
+    }
+    if let Some(direct) = direct {
+        close(direct, t).await;
+    }
+
+    if checks.iter().any(|c| c.check == "pooler" && c.status == Status::Ok) {
+        let connect = || async {
+            let (client, driver, _) = connect(&target.pooler, t).await?;
+            Ok::<Connected, anyhow::Error>((client, driver))
+        };
+        checks.push(match probe_mode(connect, t.housekeeping).await {
+            Ok(observed) => mode_check(observed, target.mode),
+            Err(e) => Check::new("mode", Status::Warn, format!("probe failed: {e:#}")),
+        });
+    }
+    TargetReport {
+        name: target.name.clone(),
+        checks,
+    }
+}
+
+/// Connects to one side and pushes its connect and TLS lines. Direct sessions are
+/// also made read-only, as a guard: doctor never writes.
+async fn open_side(
+    checks: &mut Vec<Check>,
+    side: &'static str,
+    endpoint: &Endpoint,
+    t: &Timeouts,
+) -> Option<(Client, JoinHandle<()>)> {
+    let unreachable = if side == "direct" {
+        DIRECT_UNREACHABLE
+    } else {
+        POOLER_UNREACHABLE
+    };
+    let connected = async {
+        let (client, driver, _) = connect(endpoint, t).await?;
+        let first = if side == "direct" {
+            "SET default_transaction_read_only = on"
+        } else {
+            "SELECT 1"
+        };
+        match timeout(t.housekeeping, client.simple_query(first)).await {
+            Ok(Ok(_)) => Ok((client, driver)),
+            Ok(Err(e)) => Err(anyhow::Error::from(e)),
+            Err(_) => Err(anyhow::anyhow!("no reply within {:?}", t.housekeeping)),
+        }
+    };
+    match connected.await {
+        Ok((client, driver)) => {
+            checks.push(Check::new(side, Status::Ok, format!("connected to {endpoint}")));
+            checks.push(tls(side, endpoint, &client, t).await);
+            Some((client, driver))
+        }
+        Err(e) => {
+            checks.push(Check::new(side, Status::Fail, format!("{unreachable} {e:#}")));
+            None
+        }
+    }
+}
+
+async fn tls(side: &'static str, endpoint: &Endpoint, client: &Client, t: &Timeouts) -> Check {
+    let check = if side == "direct" { "direct tls" } else { "pooler tls" };
+    let mode = endpoint.tls().mode;
+    #[cfg(unix)]
+    if matches!(endpoint.config().get_hosts().first(), Some(Host::Unix(_))) {
+        return Check::new(check, Status::Ok, "Unix socket, no TLS");
+    }
+    if mode == SslMode::Disable {
+        return Check::new(check, Status::Ok, "plaintext (sslmode=disable)");
+    }
+    // On direct Postgres says what this session uses. Through a pooler that would
+    // describe the pooler's own server connection, so ask the pooler instead.
+    let encrypted = if side == "direct" {
+        row(
+            client,
+            "SELECT ssl, version FROM pg_stat_ssl WHERE pid = pg_backend_pid()",
+            t,
+        )
+        .await
+        .map(|r| {
+            (
+                r.first().cloned().flatten() == Some("t".into()),
+                r.get(1).cloned().flatten(),
+            )
+        })
+    } else if mode == SslMode::Prefer {
+        offers_tls(endpoint).await.map(|offered| (offered, None))
+    } else {
+        // Anything stricter than prefer fails to connect without TLS.
+        Ok((true, None))
+    };
+    match encrypted {
+        Ok((true, version)) => {
+            let version = version.map(|v| format!("{v}, ")).unwrap_or_default();
+            Check::new(check, Status::Ok, format!("TLS ({version}sslmode={mode})"))
+        }
+        Ok((false, _)) => Check::new(
+            check,
+            Status::Warn,
+            "plaintext: sslmode=prefer and the server declined TLS; set sslmode=require to insist",
+        ),
+        Err(e) => Check::new(check, Status::Warn, format!("couldn't tell: {e:#}")),
+    }
+}
+
+/// Sends an SSLRequest and reads the one-byte answer, then hangs up.
+async fn offers_tls(endpoint: &Endpoint) -> Result<bool> {
+    let config = endpoint.config();
+    let port = config.get_ports().first().copied().unwrap_or(5432);
+    let Some(Host::Tcp(host)) = config.get_hosts().first() else {
+        return Ok(false);
+    };
+    let mut stream = tcp_connect(config, host, port).await?;
+    let mut out = BytesMut::new();
+    frontend::ssl_request(&mut out);
+    stream.write_all(&out).await?;
+    let answer = stream.read_u8().await.context("reading the SSLRequest answer")?;
+    Ok(answer == b'S')
+}
+
+/// The scenarios that would SKIP for privileges the direct user lacks.
+fn requirements(target: &Target, scenarios: &[Scenario], have: Privileges) -> Check {
+    let skipped: Vec<String> = scenarios
+        .iter()
+        .filter(|s| s.modes.contains(&target.mode))
+        .filter_map(|s| have.missing(&s.requires).map(|why| format!("{} ({why})", s.name)))
+        .collect();
+    if skipped.is_empty() {
+        return Check::new("privileges", Status::Ok, "every scenario's requirements are met");
+    }
+    let detail = format!("{} scenarios will SKIP: {}", skipped.len(), skipped.join(", "));
+    Check::new("privileges", Status::Warn, detail)
+}
+
+/// What reset would do, and whether the direct user can end those sessions. For a
+/// backend of a role whose privileges this user doesn't have, pg_terminate_backend
+/// needs pg_signal_backend, and the reset's own filter needs pg_read_all_stats:
+/// without it pg_stat_activity hides that backend's type and address, so it never
+/// matches. Only a superuser can end a superuser's backends, whatever else it has.
+async fn reset(
+    target: &Target,
+    yes: bool,
+    have: Privileges,
+    direct: &Client,
+    pooler_session: Option<&[Option<String>]>,
+    t: &Timeouts,
+) -> Check {
+    let fail = |detail: String| Check::new("reset", Status::Fail, detail);
+    let line = match &target.reset {
+        Reset::None => {
+            return Check::new(
+                "reset",
+                Status::Warn,
+                "none: one scenario's leaked state can change the next one's result",
+            );
+        }
+        Reset::Statements(s) => {
+            return Check::new(
+                "reset",
+                Status::Ok,
+                format!("custom: {} statements, not previewed", s.len()),
+            );
+        }
+        Reset::All | Reset::Auto => resolve_reset(target, yes, t).await,
+    };
+    let sees = row(
+        direct,
+        "SELECT pg_has_role(current_user, 'pg_read_all_stats', 'USAGE')",
+        t,
+    )
+    .await;
+    let sees = match sees {
+        Ok(r) => have.superuser || cell(&r, 0) == "t",
+        Err(e) => return fail(format!("{e:#}")),
+    };
+    let missing: Vec<&str> = [
+        (have.pg_signal_backend, "pg_signal_backend"),
+        (sees, "pg_read_all_stats"),
+    ]
+    .into_iter()
+    .filter(|(has, _)| !has && !have.superuser)
+    .map(|(_, name)| name)
+    .collect();
+    let missing = missing.join(" and ");
+
+    if let Reset::All = target.reset {
+        let counts = row(
+            direct,
+            &format!(
+                "SELECT ({OTHER_SESSIONS_COUNT}), ({OTHER_SESSIONS_COUNT} AND usesysid IS NOT NULL \
+                 AND NOT pg_has_role(current_user, usesysid, 'USAGE')), \
+                 ({OTHER_SESSIONS_COUNT} AND usesysid IN (SELECT oid FROM pg_roles WHERE rolsuper))"
+            ),
+            t,
+        )
+        .await;
+        let (total, others, superusers) = match counts {
+            Ok(r) => (cell(&r, 0), cell(&r, 1), cell(&r, 2)),
+            Err(e) => return fail(format!("{e:#}")),
+        };
+        let now = format!("other sessions now: {total}");
+        return match line {
+            Err(reason) => Check::new("reset", Status::Warn, format!("all: {reason}; {now}")),
+            Ok(_) if superusers != "0" && !have.superuser => fail(format!(
+                "all: {superusers} of the {total} other sessions belong to superusers, and only a superuser can \
+                 end them"
+            )),
+            Ok(_) if others != "0" && !missing.is_empty() => fail(format!(
+                "all: {others} of the {total} other sessions belong to roles whose sessions this user can't end \
+                 without {missing}"
+            )),
+            Ok((_, line)) => Check::new("reset", Status::Ok, format!("{}; {now}", summary(&line))),
+        };
+    }
+
+    let line = match line {
+        Ok((_, line)) => line,
+        Err(reason) => return fail(format!("auto: {reason}")),
+    };
+    let (Some(Some(addr)), Some(Some(user))) = (
+        pooler_session.and_then(|r| r.first()),
+        pooler_session.and_then(|r| r.get(1)),
+    ) else {
+        return Check::new("reset", Status::Ok, summary(&line));
+    };
+    let sql = format!(
+        "SELECT ({OTHER_SESSIONS_COUNT} AND host(client_addr) = $1 AND usename = $2)::text, \
+         pg_has_role(current_user, $2, 'USAGE')::text, \
+         coalesce((SELECT rolsuper FROM pg_roles WHERE rolname = $2), false)::text"
+    );
+    let checked = timeout(t.housekeeping, direct.query_one(&sql, &[addr, user])).await;
+    let (count, member, superuser) = match checked {
+        Ok(Ok(r)) => (
+            r.get::<_, String>(0),
+            r.get::<_, String>(1) == "true",
+            r.get::<_, String>(2) == "true",
+        ),
+        Ok(Err(e)) => return fail(format!("{e:#}")),
+        Err(_) => return fail(format!("no reply within {:?}", t.housekeeping)),
+    };
+    if superuser && !have.superuser {
+        return fail(format!(
+            "{}, but {user} is a superuser, and only a superuser can end its sessions",
+            summary(&line)
+        ));
+    }
+    if !member && !missing.is_empty() {
+        return fail(format!(
+            "{}, but this user can't end sessions of {user} without {missing}",
+            summary(&line)
+        ));
+    }
+    Check::new(
+        "reset",
+        Status::Ok,
+        format!("{}; matching sessions now: {count}", summary(&line)),
+    )
+}
+
+/// resolve_reset's line without its "reset: 'name': " prefix.
+fn summary(line: &str) -> String {
+    line.splitn(3, ": ").nth(2).unwrap_or(line).to_string()
+}
+
+fn cell(row: &[Option<String>], i: usize) -> String {
+    row.get(i).cloned().flatten().unwrap_or_default()
+}
+
+async fn row(client: &Client, sql: &str, t: &Timeouts) -> Result<Vec<Option<String>>> {
+    first_row(client, sql, t.housekeeping).await
+}
+
+async fn close((client, driver): (Client, JoinHandle<()>), t: &Timeouts) {
+    drop(client);
+    let _ = timeout(t.housekeeping, driver).await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::scenario::PoolMode;
+    use crate::targets::Targets;
+
+    #[test]
+    fn summary_drops_the_target_prefix() {
+        assert_eq!(
+            summary("reset: 'pg': ends every other session on database app at h:5432 (all)"),
+            "ends every other session on database app at h:5432 (all)"
+        );
+    }
+
+    /// Plain Postgres (no TLS) as both sides: every check runs; prefer without TLS and
+    /// the missing reset warn.
+    #[tokio::test]
+    #[ignore = "needs POOLPROOF_TEST_PG"]
+    async fn inspect_plain_postgres() {
+        let url = std::env::var("POOLPROOF_TEST_PG").expect("set POOLPROOF_TEST_PG to a Postgres URL");
+        let target = Targets::single(&url, &url, PoolMode::Transaction, Reset::None)
+            .unwrap()
+            .targets
+            .remove(0);
+        let report = inspect(
+            &target,
+            &crate::scenario::bundled().unwrap(),
+            false,
+            &Timeouts::default(),
+        )
+        .await;
+        let checks: Vec<(&str, Status)> = report.checks.iter().map(|c| (c.check, c.status)).collect();
+        assert_eq!(
+            checks,
+            [
+                ("direct", Status::Ok),
+                ("direct tls", Status::Warn),
+                ("pooler", Status::Ok),
+                ("pooler tls", Status::Warn),
+                ("same server", Status::Ok),
+                ("privileges", Status::Ok),
+                ("reset", Status::Warn),
+                ("mode", Status::Ok),
+            ],
+            "{:#?}",
+            report.checks
+        );
+        assert!(
+            report.checks[7].detail.starts_with("not determined"),
+            "{:?}",
+            report.checks[7]
+        );
+    }
+}

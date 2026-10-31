@@ -12,7 +12,7 @@ use crate::runner::suite::FailOn;
 use crate::runner::{self, Verdict};
 use crate::scenario::{self, PoolMode};
 use crate::targets::{Reset, Targets};
-use crate::{report, scan};
+use crate::{doctor, report, scan};
 
 #[derive(Parser)]
 #[command(
@@ -115,6 +115,39 @@ enum Command {
         #[arg(long, value_enum, default_value_t = ReportFormat::Markdown)]
         format: ReportFormat,
     },
+    /// Check a target before a run: both URLs answer and reach the same Postgres,
+    /// TLS, privileges, what reset would end, and the pooling mode. Only reads.
+    Doctor {
+        /// Targets file.
+        #[arg(short, long, default_value = "targets.toml")]
+        targets: PathBuf,
+        /// Check one pooler without a targets file: its connection URL.
+        #[arg(long, requires = "direct")]
+        pooler: Option<String>,
+        /// With --pooler: the URL of the Postgres server behind it.
+        #[arg(long, requires = "pooler")]
+        direct: Option<String>,
+        /// With --pooler: the pooler's mode.
+        #[arg(long, value_enum, default_value_t = PoolMode::Transaction)]
+        mode: PoolMode,
+        /// With --pooler: the reset to preview, as in `run --reset`.
+        #[arg(long, value_enum, requires = "pooler")]
+        reset: Option<ResetArg>,
+        /// Preview reset = "all" as `run --yes` would allow it.
+        #[arg(long)]
+        yes: bool,
+        /// Scenario directory, for the privileges check. Defaults to the built-in ones.
+        #[arg(short, long)]
+        scenarios: Option<PathBuf>,
+        /// Only check this target from the targets file. Repeat for several.
+        #[arg(long = "target", value_name = "NAME")]
+        only: Vec<String>,
+        #[arg(long, value_enum, default_value_t = DoctorFormat::Text)]
+        format: DoctorFormat,
+        /// Exit non-zero on warnings too, not just on failed checks.
+        #[arg(long)]
+        strict: bool,
+    },
     /// List bundled scenarios.
     List {
         /// Scenario directory. Defaults to the scenarios built into poolproof.
@@ -148,6 +181,12 @@ enum RunFormat {
     Html,
 }
 
+#[derive(Clone, Copy, ValueEnum)]
+enum DoctorFormat {
+    Text,
+    Json,
+}
+
 /// `run --reset`.
 #[derive(Clone, Copy, clap::ValueEnum)]
 pub enum ResetArg {
@@ -174,17 +213,7 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
             fail_on,
             step_timeout,
         } => {
-            let targets = match (pooler, direct) {
-                (Some(pooler), Some(direct)) => {
-                    let reset = match reset {
-                        None => Reset::None,
-                        Some(ResetArg::Auto) => Reset::Auto,
-                        Some(ResetArg::All) => Reset::All,
-                    };
-                    Targets::single(&pooler, &direct, mode, reset)?
-                }
-                _ => Targets::load(&targets)?,
-            };
+            let targets = load_targets(&targets, pooler, direct, mode, reset)?;
             let mut scenarios = load_scenarios(scenarios.as_deref())?;
             if reverse {
                 scenarios.reverse();
@@ -309,12 +338,68 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
             }
             Ok(ExitCode::SUCCESS)
         }
+        Command::Doctor {
+            targets,
+            pooler,
+            direct,
+            mode,
+            reset,
+            yes,
+            scenarios,
+            only,
+            format,
+            strict,
+        } => {
+            let targets = load_targets(&targets, pooler, direct, mode, reset)?;
+            let scenarios = load_scenarios(scenarios.as_deref())?;
+            let selected = runner::suite::select(&targets.targets, &only)?;
+            let width = selected.iter().map(|t| t.name.len()).max().unwrap_or(0);
+            let timeouts = runner::Timeouts::default();
+            let mut reports = vec![];
+            for target in selected {
+                let report = runner::doctor::inspect(target, &scenarios, yes, &timeouts).await;
+                if matches!(format, DoctorFormat::Text) {
+                    print!("{}", doctor::text(&report, width));
+                }
+                reports.push(report);
+            }
+            match format {
+                DoctorFormat::Text => print!("{}", doctor::summary(&reports)),
+                DoctorFormat::Json => println!("{}", doctor::json(&reports)),
+            }
+            Ok(if doctor::failed(&reports, strict) {
+                ExitCode::FAILURE
+            } else {
+                ExitCode::SUCCESS
+            })
+        }
         Command::List { scenarios } => {
             for s in load_scenarios(scenarios.as_deref())? {
                 println!("{:<40} {}", s.name, s.description);
             }
             Ok(ExitCode::SUCCESS)
         }
+    }
+}
+
+/// The targets file, or the one target `--pooler` and `--direct` describe.
+fn load_targets(
+    file: &std::path::Path,
+    pooler: Option<String>,
+    direct: Option<String>,
+    mode: PoolMode,
+    reset: Option<ResetArg>,
+) -> Result<Targets> {
+    match (pooler, direct) {
+        (Some(pooler), Some(direct)) => {
+            let reset = match reset {
+                None => Reset::None,
+                Some(ResetArg::Auto) => Reset::Auto,
+                Some(ResetArg::All) => Reset::All,
+            };
+            Targets::single(&pooler, &direct, mode, reset)
+        }
+        _ => Targets::load(file),
     }
 }
 

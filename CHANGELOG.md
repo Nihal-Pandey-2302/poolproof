@@ -19,6 +19,7 @@ These are the stable interfaces. Breaking one is a breaking change:
     `--pooler`: 1 on a finding that pooler's results show as BREAKS or REJECTED;
     findings those results don't cover (no related scenario, or only SKIP or ERROR
     verdicts) count as they would without `--pooler`.
+  - `doctor`: 1 when a check fails, with `--strict` also on a warning, else 0.
   - Any command: 2 when poolproof itself failed (bad arguments, unreadable files).
 - **Scenario files** (`scenarios/*.toml`) and **targets files** (`targets.toml`): a file
   that works in one version works the same way in every later version with the same
@@ -72,6 +73,9 @@ First release.
 - A progress line per result on stderr with JSON, markdown and HTML output, and colored
   labels in text output on a terminal (`NO_COLOR` turns it off, `FORCE_COLOR` or
   `CLICOLOR_FORCE` on).
+- `poolproof doctor`: checks a target before a run (both URLs answer and reach the same
+  Postgres, TLS, privileges, what reset would end, the pooling mode). Only reads. Text and
+  JSON output.
 - `run --step-timeout` (e.g. `30s`, `500ms`; default `10s`) and a per-scenario
   `timeout_ms` that overrides it.
 - Setup, teardown and reset statements run with `lock_timeout` 5s and

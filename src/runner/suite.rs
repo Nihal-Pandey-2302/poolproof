@@ -239,7 +239,7 @@ fn for_scenario(timeouts: &Timeouts, s: &Scenario) -> Timeouts {
 }
 
 /// The targets named in `names`, in file order; all of them when `names` is empty.
-fn select<'t>(targets: &'t [Target], names: &[String]) -> Result<Vec<&'t Target>> {
+pub fn select<'t>(targets: &'t [Target], names: &[String]) -> Result<Vec<&'t Target>> {
     if let Some(unknown) = names.iter().find(|n| !targets.iter().any(|t| &t.name == *n)) {
         let known: Vec<&str> = targets.iter().map(|t| t.name.as_str()).collect();
         bail!("no target named '{unknown}'; targets: {}", known.join(", "));
