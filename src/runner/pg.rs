@@ -43,9 +43,8 @@ impl Conn {
             pending.abort();
         }
         drop(self.client);
-        // TODO(#26): t.housekeeping once Timeouts has it.
-        if timeout(t.step, self.driver).await.is_err() && self.on_postgres {
-            bail!("the backend did not exit within {:?} of the disconnect", t.step);
+        if timeout(t.housekeeping, self.driver).await.is_err() && self.on_postgres {
+            bail!("the backend did not exit within {:?} of the disconnect", t.housekeeping);
         }
         Ok(())
     }
@@ -278,9 +277,9 @@ pub async fn privileges(direct: &Endpoint, t: &Timeouts) -> Result<Privileges> {
     let (client, driver, _) = connect(direct, t).await?;
     let sql = "SELECT rolsuper, rolcreaterole, pg_has_role(current_user, 'pg_signal_backend', 'MEMBER') \
                FROM pg_roles WHERE rolname = current_user";
-    let res = timeout(t.step, client.simple_query(sql)).await;
+    let res = timeout(t.housekeeping, client.simple_query(sql)).await;
     drop(client);
-    let _ = timeout(t.step, driver).await;
+    let _ = timeout(t.housekeeping, driver).await;
     let row = res
         .context("privilege check timed out")??
         .into_iter()
@@ -300,9 +299,9 @@ pub async fn privileges(direct: &Endpoint, t: &Timeouts) -> Result<Privileges> {
 /// The server's version number, e.g. `17.11`.
 pub async fn server_version(endpoint: &Endpoint, t: &Timeouts) -> Result<String> {
     let (client, driver, _) = connect(endpoint, t).await?;
-    let res = timeout(t.step, client.simple_query("SHOW server_version")).await;
+    let res = timeout(t.housekeeping, client.simple_query("SHOW server_version")).await;
     drop(client);
-    let _ = timeout(t.step, driver).await;
+    let _ = timeout(t.housekeeping, driver).await;
     let version = res
         .context("SHOW server_version timed out")??
         .into_iter()
@@ -330,7 +329,7 @@ pub(super) async fn wait_ready(endpoint: &Endpoint, t: &Timeouts) -> Result<bool
     loop {
         let err = match connect(endpoint, t).await {
             Ok((client, driver, _)) => {
-                let res = match timeout(t.step, client.simple_query("SELECT 1")).await {
+                let res = match timeout(t.housekeeping, client.simple_query("SELECT 1")).await {
                     Ok(Ok(_)) if skip_settle => Ok(Settle::Unstable),
                     Ok(Ok(_)) => {
                         answered = true;
@@ -341,7 +340,7 @@ pub(super) async fn wait_ready(endpoint: &Endpoint, t: &Timeouts) -> Result<bool
                 };
                 drop(client);
                 if matches!(res, Ok(Settle::Stable)) || skip_settle {
-                    let _ = timeout(t.step, driver).await;
+                    let _ = timeout(t.housekeeping, driver).await;
                 } else {
                     // A probe may still be waiting for its reply; don't wait for it.
                     driver.abort();
@@ -409,8 +408,7 @@ async fn settle(client: &Client, t: &Timeouts) -> Settle {
     let mut seen = std::collections::HashSet::new();
     while tokio::time::Instant::now() < deadline {
         // Each probe ends by the overall deadline too, so settling never takes longer.
-        // TODO(#26): t.housekeeping once Timeouts has it.
-        let until = deadline.min(tokio::time::Instant::now() + t.step);
+        let until = deadline.min(tokio::time::Instant::now() + t.housekeeping);
         let pid = match timeout_at(until, client.simple_query("SELECT pg_backend_pid()")).await {
             Ok(Ok(messages)) => messages.into_iter().find_map(|m| match m {
                 SimpleQueryMessage::Row(row) => row.get(0).map(str::to_string),
@@ -609,5 +607,16 @@ mod tests {
         );
         assert_eq!(createrole.missing(&[Requirement::Createrole]), None);
         assert_eq!(superuser.missing(&all), None);
+    }
+
+    #[tokio::test]
+    #[ignore = "needs POOLPROOF_TEST_PG"]
+    async fn the_step_timeout_does_not_limit_the_privilege_check() {
+        let url = std::env::var("POOLPROOF_TEST_PG").expect("set POOLPROOF_TEST_PG to a Postgres URL");
+        let t = Timeouts {
+            step: Duration::from_nanos(1),
+            ..Timeouts::default()
+        };
+        privileges(&Endpoint::parse(&url).unwrap(), &t).await.unwrap();
     }
 }
