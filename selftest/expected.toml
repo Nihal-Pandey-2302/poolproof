@@ -29,7 +29,7 @@ cancel-under-saturated-pool = { result = "silent", why = "57014 from the cancel 
 cursor-isolated-between-clients = { result = "silent", why = "the other client's 34000 is dropped" }
 discard-all-in-transaction-fails = { result = "silent", why = "25001 is dropped" }
 prepare-in-aborted-transaction = { result = "silent", why = "22012 that aborts the transaction is dropped" }
-protocol-error-after-flush = { result = "silent", why = "42601 is dropped; with Flush there is no ReadyForQuery, so the reply is empty" }
+protocol-error-after-flush = { result = "hang", why = "42601 is dropped; with Flush nothing else comes back" }
 protocol-pipeline-recovers-after-error = { result = "silent", why = "22012 is dropped" }
 sql-prepare-isolated-between-clients = { result = "silent", why = "the other client's 26000 is dropped" }
 temp-table-isolated-between-clients = { result = "silent", why = "the other client's 42P01 is dropped" }
