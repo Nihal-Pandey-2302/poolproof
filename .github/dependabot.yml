@@ -39,6 +39,8 @@ updates:
       - dependency-name: "*pgbouncer"
       - dependency-name: "*pgdog"
       - dependency-name: "*supavisor"
+      - dependency-name: "*pgcat"
+      - dependency-name: "*odyssey"
 
   # The self-test proxy image (tools/pp-proxy/Dockerfile).
   - package-ecosystem: docker
