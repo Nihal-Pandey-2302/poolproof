@@ -40,7 +40,9 @@ src/runner/
                          checks): one rustls config per Endpoint
   compare.rs             outcome matching, Verdict, Mismatch, FailKind (silent/error/hang)
 src/report/
-  mod.rs                 the JSON report, bundled results, lookups for scan --pooler
+  mod.rs                 the JSON report (schema_version), bundled results, lookups for
+                         scan --pooler
+  compare.rs             run --compare-to: regressions against a saved report
   markdown.rs            RESULTS.md-style table
   html.rs, report.html   the self-contained results page
 src/scan/
@@ -76,7 +78,8 @@ cli ─ targets.toml or --pooler/--direct ─┐
                                                  `requires` -> SKIP
                                                  for each scenario:
                                                    [--check-scenarios: baseline twice,
-                                                    once per scenario and direct URL]
+                                                    once per scenario, direct URL and
+                                                    reset]
                                                    runner::check
                                                      1. reset, setup        (direct)
                                                      2. run_steps baseline  (all direct)
@@ -93,6 +96,8 @@ cli ─ targets.toml or --pooler/--direct ─┐
                                                -> text as it goes, or report::Report
                                                   -> JSON, markdown or HTML (progress
                                                   on stderr)
+                                               -> with --compare-to: report::compare
+                                                  against the saved report
 ```
 
 Details that matter when changing this:
@@ -170,7 +175,8 @@ report given with `--results`.
 | A targets file field | `targets.rs`, README's targets example |
 | Connections, TLS or socket options | `runner/pg.rs` (`connect`, `tcp_connect`), `runner/raw.rs` (`RawConn::connect`), `runner/tls.rs`, URL checks in `targets.rs` |
 | A privilege for `requires` | `scenario.rs` (the names), `privileges` in `runner/pg.rs`, `before_run` in `runner/suite.rs` |
-| A field in the JSON report | `report/mod.rs`; it's a stable format, see the versioning policy in CHANGELOG.md |
+| A field in the JSON report | `report/mod.rs`; it's a stable format, see the versioning policy in CHANGELOG.md. A change old readers would misread bumps `SCHEMA_VERSION` |
+| What `--compare-to` counts as a regression | `report/compare.rs` |
 | The results table or page | `report/markdown.rs`, `report/html.rs` and `report/report.html` |
 | A `scan` rule | `scan/rules.rs`, `RULES` and the rule -> scenario map in `scan/mod.rs`, README's rule list, expected findings in the corpus (`tests/fixtures/scan/*.toml`, run by `tests/scan_corpus.rs`) |
 | A `scan` input format | `scan/input.rs` (`InputFormat` is also the list of `--input` values) |

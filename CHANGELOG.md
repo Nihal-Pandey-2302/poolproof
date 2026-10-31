@@ -27,6 +27,8 @@ These are the stable interfaces. Breaking one is a breaking change:
 - **JSON report** (`run --format json`, read by `report` and `scan --results`): fields
   can be added in any release; removing, renaming or changing the meaning of a field is
   breaking. A newer poolproof reads reports from older versions of the same major.
+  Reports carry `schema_version`, which goes up only for a change that older readers
+  would misread.
 - **`scan --format json`**: same rules as the JSON report.
 - **SARIF output** follows SARIF 2.1.0. Rule IDs only change in a breaking release.
 
@@ -42,17 +44,26 @@ First release.
 - `poolproof run`: replays scenarios against Postgres and through each pooler, and reports
   every step where the results differ (silent, error or hang). Text, JSON, markdown and
   HTML output; `--pooler`/`--direct` for a single target, `--filter`, `--reverse`, `-v`.
-- 30 scenarios: session state leaks (SET, SET ROLE, search_path, temp tables, advisory
-  locks, cursors, prepared statements, LISTEN/NOTIFY), multi-statement transactions,
-  cancel requests, abandoned queries, and protocol-level messages (statement names,
-  Flush vs Sync, pipelines, COPY FROM STDIN) with raw `send` steps.
+- 37 scenarios: session state leaks (SET, SET ROLE, search_path, temp tables, advisory
+  locks, cursors, prepared statements, LISTEN/NOTIFY, DEALLOCATE ALL, LOAD), session
+  state that must survive the client's own transactions, multi-statement transactions,
+  cancel requests, abandoned queries, ParameterStatus after SET, and protocol-level
+  messages (statement names, Flush vs Sync, pipelines, COPY FROM STDIN and TO STDOUT)
+  with raw `send` steps.
 - `poolproof scan`: flags transaction-pooling-unsafe queries in pg_stat_statements CSV,
   Postgres stderr and jsonlog logs, and `.sql` files. Text, JSON and SARIF output.
   `--pooler` checks each finding against what that pooler version did in poolproof's
   own runs.
 - `poolproof report`: renders saved JSON runs as markdown or one self-contained HTML page.
-- Results for PgBouncer 1.24.1, 1.25.2, 1.26.1, PgDog 0.1.50, 0.1.56, 0.1.62 and
-  Supavisor 2.9.13, 2.10.0-rc.1 on Postgres 17.11 and 18.4, built into the binary.
+- Results for PgBouncer 1.24.1, 1.25.2, 1.26.1 (also with TLS between client and
+  pooler), PgDog 0.1.50, 0.1.56, 0.1.62 (also with pub/sub), Supavisor 2.9.13,
+  2.10.0-rc.1 (also in strict mode), PgCat 1.2.0 and Odyssey 1.5.2 on Postgres 17.11 and
+  18.4, built into the binary.
+- `run --compare-to BASE.json`: compares the run with a saved JSON report and fails only
+  on regressions (PASS to FAIL or ERROR, a FAIL getting worse, FAIL to ERROR or back),
+  as far as `--fail-on` counts them. Fixed, milder and one-sided results are listed but
+  don't fail the run. Text and markdown show the comparison; JSON has it under
+  `comparison`.
 - Release binaries for Linux (x86_64, arm64), macOS (x86_64, arm64) and Windows (x86_64),
   with SHA256SUMS and build provenance attestations. `cargo binstall poolproof` installs
   them.
