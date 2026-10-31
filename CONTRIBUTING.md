@@ -21,7 +21,9 @@ runs a second test bed on shifted ports (see the README).
 The test bed keeps Postgres data in tmpfs, so it leaves no volumes behind. A Postgres
 container you start yourself does: the image declares a volume for its data, and
 `docker rm -f` (even of a `--rm` container) leaves it. Remove throwaway containers with
-`docker rm -fv`, or start them with `--rm` and stop them with `docker stop`.
+`docker rm -fv`, or start them with `--rm` and stop them with `docker stop`. Because the
+data is in tmpfs, a restarted `postgres` or `supavisor-meta` comes back empty, and
+Supavisor loses its tenants: take the test bed down and up again instead.
 
 ## Writing a scenario
 
