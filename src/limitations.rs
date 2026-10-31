@@ -505,41 +505,56 @@ mod tests {
         }
     }
 
-    /// set-isolated-between-clients: SET, SET, b's evidence, then SHOW, which leaks on
-    /// the pooler, and a's evidence.
+    /// The bundled set-isolated-between-clients, whose SHOW leaks on the pooler.
+    fn set_isolated() -> Scenario {
+        scenarios()
+            .into_iter()
+            .find(|s| s.name == "set-isolated-between-clients")
+            .unwrap()
+    }
+
+    /// The 0-based index of set-isolated's SHOW.
+    fn show() -> usize {
+        set_isolated()
+            .steps
+            .iter()
+            .position(|st| st.simple.as_deref() == Some("SHOW work_mem"))
+            .unwrap()
+    }
+
+    /// A row for set-isolated-between-clients with `pooler_show` as the SHOW's outcome on
+    /// the pooler; evidence steps never run on Postgres, every other step matches.
     fn row(target: &TargetInfo, pooler_show: Outcome) -> ResultRow {
         let empty = Outcome::Ok {
             rows: vec![],
             tags: vec![],
         };
-        let steps = vec![
-            StepOutcomes {
-                postgres: empty.clone(),
-                pooler: empty.clone(),
-            },
-            StepOutcomes {
-                postgres: empty.clone(),
-                pooler: empty,
-            },
-            StepOutcomes {
-                postgres: ok(&["7MB"]),
-                pooler: pooler_show.clone(),
-            },
-        ];
-        // The evidence steps: never run on Postgres, never compared.
-        let evidence = || StepOutcomes {
-            postgres: Outcome::NotRun,
-            pooler: ok(&["1"]),
-        };
-        let mut steps = steps;
-        steps.insert(2, evidence());
-        steps.push(evidence());
+        let show = show();
+        let steps = set_isolated()
+            .steps
+            .iter()
+            .enumerate()
+            .map(|(i, st)| match (i == show, st.evidence) {
+                (true, _) => StepOutcomes {
+                    postgres: ok(&["7MB"]),
+                    pooler: pooler_show.clone(),
+                },
+                (false, true) => StepOutcomes {
+                    postgres: Outcome::NotRun,
+                    pooler: ok(&["1"]),
+                },
+                (false, false) => StepOutcomes {
+                    postgres: empty.clone(),
+                    pooler: empty.clone(),
+                },
+            })
+            .collect();
         let verdict = if pooler_show == ok(&["7MB"]) {
             Verdict::Pass
         } else {
             Verdict::Fail {
                 mismatch: Mismatch {
-                    step: 4,
+                    step: show + 1,
                     action: String::new(),
                     kind: FailKind::of(&ok(&["7MB"]), &pooler_show),
                     expected: ok(&["7MB"]),
@@ -561,16 +576,22 @@ mod tests {
         }
     }
 
-    const SET_LEAK: &str = r#"
+    /// An entry for set-isolated's SHOW, at whatever step the scenario has it.
+    fn set_leak() -> String {
+        format!(
+            r#"
 [[limitation]]
 scenario = "set-isolated-between-clients"
 mode = "transaction"
 since = "1.24.1"
 fixed_in = "1.30"
-differs = [{ step = 4, pooler = { status = "ok", rows = [["9MB"]], tags = [0] } }]
+differs = [{{ step = {}, pooler = {{ status = "ok", rows = [["9MB"]], tags = [0] }} }}]
 doc = "https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md"
 quote = "SET/RESET | Yes | Never"
-"#;
+"#,
+            show() + 1
+        )
+    }
 
     fn set(text: &str) -> Limitations {
         let entries = parse("pgbouncer.toml", "pgbouncer", text, &scenarios()).unwrap();
@@ -613,7 +634,7 @@ quote = "SET/RESET | Yes | Never"
 
     #[test]
     fn only_the_exact_outcome_on_the_named_target_is_expected() {
-        let set = set(SET_LEAK);
+        let set = set(&set_leak());
         let t = target("pgbouncer", "1.26.1", "default", "17.11");
         assert!(expected(&set, &t, &row(&t, ok(&["9MB"]))));
         // Another value, an error, or a hang at the same step is a bug.
@@ -640,7 +661,7 @@ quote = "SET/RESET | Yes | Never"
 
     #[test]
     fn another_differing_step_makes_it_a_bug() {
-        let set = set(SET_LEAK);
+        let set = set(&set_leak());
         let t = target("pgbouncer", "1.26.1", "default", "17.11");
         // Step 1 differs too, even though the FAIL's first mismatch would be step 1.
         let mut r = row(&t, ok(&["9MB"]));
@@ -712,7 +733,7 @@ quote = "SET/RESET | Yes | Never"
 
     #[test]
     fn repeated_runs_must_all_fail_the_same_known_way() {
-        let set = set(SET_LEAK);
+        let set = set(&set_leak());
         let t = target("pgbouncer", "1.26.1", "default", "17.11");
         let mut r = row(&t, ok(&["9MB"]));
         r.runs = 5;
@@ -730,7 +751,7 @@ quote = "SET/RESET | Yes | Never"
 
     #[test]
     fn postgres_bounds_need_a_known_version() {
-        let set = set(&SET_LEAK.replace("fixed_in = \"1.30\"", "postgres_since = \"18\""));
+        let set = set(&set_leak().replace("fixed_in = \"1.30\"", "postgres_since = \"18\""));
         let t18 = target("pgbouncer", "1.26.1", "default", "18.4");
         let t17 = target("pgbouncer", "1.26.1", "default", "17.11");
         assert!(expected(&set, &t18, &row(&t18, ok(&["9MB"]))));
@@ -742,7 +763,7 @@ quote = "SET/RESET | Yes | Never"
 
     #[test]
     fn apply_marks_rows_and_reports_stale_entries() {
-        let set = set(SET_LEAK);
+        let set = set(&set_leak());
         let leaks = target("pgbouncer", "1.26.1", "default", "17.11");
         let passes = target("pgbouncer", "1.25.2", "default", "17.11");
         let differs = target("pgbouncer", "1.24.1", "default", "17.11");
@@ -767,14 +788,12 @@ quote = "SET/RESET | Yes | Never"
             .iter()
             .map(|s| (s.target.as_str(), s.reason.as_str()))
             .collect();
+        let differently = format!("fails differently: step {} ok rows=[(8MB)] tags=[0]", show() + 1);
         assert_eq!(
             stale,
             [
                 (passes.name.as_str(), "passes now"),
-                (
-                    differs.name.as_str(),
-                    "fails differently: step 4 ok rows=[(8MB)] tags=[0]"
-                ),
+                (differs.name.as_str(), differently.as_str()),
             ]
         );
         assert_eq!(report.limitations.as_deref(), Some("custom"));
@@ -782,7 +801,7 @@ quote = "SET/RESET | Yes | Never"
 
     #[test]
     fn apply_needs_compare_modes_from_the_report_or_the_same_steps() {
-        let set = set(SET_LEAK);
+        let set = set(&set_leak());
         let t = target("pgbouncer", "1.26.1", "default", "17.11");
         let mut old = report(vec![t.clone()], vec![row(&t, ok(&["9MB"]))]);
         // No modes recorded and no scenario to take them from.
@@ -791,30 +810,18 @@ quote = "SET/RESET | Yes | Never"
         set.apply(&mut old, &scenarios());
         assert!(old.results[0].expected.is_some());
         // Recorded modes don't need the scenario at all.
-        old.scenarios[0].compare = vec![
-            Compare::Full,
-            Compare::Full,
-            Compare::Ignore,
-            Compare::Full,
-            Compare::Ignore,
-        ];
+        old.scenarios[0].compare = set_isolated().compare_modes();
         set.apply(&mut old, &[]);
         assert!(old.results[0].expected.is_some());
     }
 
     #[test]
     fn a_scenario_with_other_steps_is_not_judged_by_the_entry() {
-        let set = set(SET_LEAK);
+        let set = set(&set_leak());
         let t = target("pgbouncer", "1.26.1", "default", "17.11");
         let mut changed = report(vec![t.clone()], vec![row(&t, ok(&["9MB"]))]);
         changed.scenarios[0].steps[0] = "[a] simple: SET work_mem = '1MB'".into();
-        changed.scenarios[0].compare = vec![
-            Compare::Full,
-            Compare::Full,
-            Compare::Ignore,
-            Compare::Full,
-            Compare::Ignore,
-        ];
+        changed.scenarios[0].compare = set_isolated().compare_modes();
         set.apply(&mut changed, &[]);
         // Neither expected nor stale: the entry is about another scenario.
         assert!(changed.results[0].expected.is_none());
@@ -830,27 +837,14 @@ quote = "SET/RESET | Yes | Never"
         assert!(set.expected_for(&t, &custom, &row(&t, ok(&["9MB"]))).is_none());
         // The same steps compared another way are another scenario too.
         let mut loose = report(vec![t.clone()], vec![row(&t, ok(&["9MB"]))]);
-        loose.scenarios[0].compare = vec![
-            Compare::Full,
-            Compare::Full,
-            Compare::Ignore,
-            Compare::Status,
-            Compare::Ignore,
-        ];
+        loose.scenarios[0].compare = set_isolated().compare_modes();
+        loose.scenarios[0].compare[show()] = Compare::Status;
         set.apply(&mut loose, &[]);
         assert!(loose.results[0].expected.is_none());
         assert!(loose.stale_expectations.is_empty());
-        let mut status: Scenario = toml::from_str(
-            "name = 'set-isolated-between-clients'\ndescription = ''\n\
-             [[step]]\nclient = 'a'\nsimple = \"SET work_mem = '7MB'\"\n\
-             [[step]]\nclient = 'b'\nsimple = \"SET work_mem = '9MB'\"\n\
-             [[step]]\nclient = 'b'\nevidence = true\n\
-             [[step]]\nclient = 'a'\nsimple = 'SHOW work_mem'\n\
-             [[step]]\nclient = 'a'\nevidence = true\n",
-        )
-        .unwrap();
+        let mut status = set_isolated();
         assert!(set.expected_for(&t, &status, &row(&t, ok(&["9MB"]))).is_some());
-        status.steps[3].compare = Compare::Status;
+        status.steps[show()].compare = Compare::Status;
         assert!(set.expected_for(&t, &status, &row(&t, ok(&["9MB"]))).is_none());
     }
 
@@ -865,7 +859,7 @@ quote = "SET/RESET | Yes | Never"
         // A custom set is checked against the run's scenarios.
         let dir = std::env::temp_dir().join(format!("pp-limitations-run-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("pgbouncer.toml"), SET_LEAK).unwrap();
+        std::fs::write(dir.join("pgbouncer.toml"), set_leak()).unwrap();
         let err = load(Some(&dir), &only).err().map(|e| format!("{e:#}"));
         std::fs::remove_dir_all(&dir).unwrap();
         assert!(err.unwrap().contains("no such scenario"));
@@ -873,10 +867,11 @@ quote = "SET/RESET | Yes | Never"
 
     #[test]
     fn an_entry_explained_by_another_is_not_stale() {
-        let other = SET_LEAK
+        let leak = set_leak();
+        let other = leak
             .replace("[[\"9MB\"]]", "[[\"8MB\"]]")
             .replace("fixed_in = \"1.30\"", "fixed_in = \"1.31\"");
-        let set = set(&format!("{SET_LEAK}\n{other}"));
+        let set = set(&format!("{leak}\n{other}"));
         let t = target("pgbouncer", "1.26.1", "default", "17.11");
         let mut r = report(vec![t.clone()], vec![row(&t, ok(&["9MB"]))]);
         set.apply(&mut r, &scenarios());
@@ -890,8 +885,9 @@ quote = "SET/RESET | Yes | Never"
     #[test]
     fn entries_are_checked_when_loaded() {
         let bad = |from: &str, to: &str, wanted: &str| {
-            let text = SET_LEAK.replace(from, to);
-            assert_ne!(text, SET_LEAK, "{from}");
+            let leak = set_leak();
+            let text = leak.replace(from, to);
+            assert_ne!(text, leak, "{from}");
             let err = match parse("pgbouncer.toml", "pgbouncer", &text, &scenarios()) {
                 Ok(_) => panic!("accepted: {to}"),
                 Err(e) => format!("{e:#}"),
@@ -899,9 +895,17 @@ quote = "SET/RESET | Yes | Never"
             assert!(err.contains(wanted), "{to}: {err}");
         };
         bad("set-isolated-between-clients\"", "nope\"", "no such scenario");
-        bad("step = 4", "step = 6", "step 6 doesn't exist");
-        bad("step = 4", "step = 3", "step 3 is never compared");
-        bad("step = 4", "step = 0", "step 0 doesn't exist");
+        let s = set_isolated();
+        let at = format!("step = {}", show() + 1);
+        let past = s.steps.len() + 1;
+        let evidence = s.steps.iter().rposition(|st| st.evidence).unwrap() + 1;
+        bad(&at, &format!("step = {past}"), &format!("step {past} doesn't exist"));
+        bad(
+            &at,
+            &format!("step = {evidence}"),
+            &format!("step {evidence} is never compared"),
+        );
+        bad(&at, "step = 0", "step 0 doesn't exist");
         bad(
             "status = \"ok\", rows = [[\"9MB\"]], tags = [0]",
             "status = \"error\", code = \"TIMEOUT\"",
@@ -954,8 +958,9 @@ quote = "SET/RESET | Yes | Never"
             "mode = \"transaction\"\nkind = \"silent\"",
             "unknown field `kind`",
         );
+        let leak = set_leak();
         let twice = format!(
-            "{SET_LEAK}\n[[limitation]]\nscenario = \"set-isolated-between-clients\"\nmode = \"transaction\"\nsince = \"1.24.1\"\ndiffers = [{{ step = 2, pooler = {{ status = \"error\", code = \"42P05\" }} }}, {{ step = 2, pooler = {{ status = \"error\", code = \"42P05\" }} }}]\ndoc = \"https://x.org/\"\ndoc_version = \"1\"\nquote = \"q\"\n"
+            "{leak}\n[[limitation]]\nscenario = \"set-isolated-between-clients\"\nmode = \"transaction\"\nsince = \"1.24.1\"\ndiffers = [{{ step = 2, pooler = {{ status = \"error\", code = \"42P05\" }} }}, {{ step = 2, pooler = {{ status = \"error\", code = \"42P05\" }} }}]\ndoc = \"https://x.org/\"\ndoc_version = \"1\"\nquote = \"q\"\n"
         );
         let err = format!("{:#}", parse("p.toml", "p", &twice, &scenarios()).err().unwrap());
         assert!(err.contains("in order, each once"), "{err}");
@@ -966,8 +971,9 @@ quote = "SET/RESET | Yes | Never"
         let dir = std::env::temp_dir().join(format!("pp-limitations-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         // The same versions written two ways are the same scope.
-        let again = SET_LEAK.replace("since = \"1.24.1\"", "since = \"1.24.1.0\"");
-        std::fs::write(dir.join("pgbouncer.toml"), format!("{SET_LEAK}\n{again}")).unwrap();
+        let leak = set_leak();
+        let again = leak.replace("since = \"1.24.1\"", "since = \"1.24.1.0\"");
+        std::fs::write(dir.join("pgbouncer.toml"), format!("{leak}\n{again}")).unwrap();
         let err = load(Some(&dir), &scenarios()).err().map(|e| format!("{e:#}"));
         std::fs::remove_dir_all(&dir).unwrap();
         assert!(err.unwrap().contains("same scope and steps"));
