@@ -1,14 +1,17 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::time::Duration;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 
 use crate::output::sarif::sarif;
 use crate::output::scan::print_scan;
+use crate::output::text::{Style, color_enabled};
+use crate::runner::suite::FailOn;
 use crate::runner::{self, Verdict};
 use crate::scenario::{self, PoolMode};
-use crate::targets::Targets;
+use crate::targets::{Reset, Targets};
 use crate::{report, scan};
 
 #[derive(Parser)]
@@ -37,12 +40,24 @@ enum Command {
         /// With --pooler: the pooler's mode.
         #[arg(long, value_enum, default_value_t = PoolMode::Transaction)]
         mode: PoolMode,
+        /// With --pooler: what to run on --direct before every run. `auto` ends only
+        /// the pooler's own sessions; `all` ends every other session on the database.
+        /// Without it, nothing is reset.
+        #[arg(long, value_enum, requires = "pooler")]
+        reset: Option<ResetArg>,
+        /// Allow reset = "all" against a Postgres that isn't on this machine. It gates
+        /// nothing else.
+        #[arg(long)]
+        yes: bool,
         /// Scenario directory. Defaults to the scenarios built into poolproof.
         #[arg(short, long)]
         scenarios: Option<PathBuf>,
         /// Only run scenarios whose name contains this.
         #[arg(short, long)]
         filter: Option<String>,
+        /// Only run this target from the targets file. Repeat for several.
+        #[arg(long = "target", value_name = "NAME")]
+        only: Vec<String>,
         /// Run scenarios in reverse order. Verdicts should not change; if they do,
         /// state is leaking between scenarios.
         #[arg(long)]
@@ -53,12 +68,28 @@ enum Command {
         verbose: bool,
         #[arg(long, value_enum, default_value_t = RunFormat::Text)]
         format: RunFormat,
+        /// Run each scenario's Postgres side twice first. A scenario whose results
+        /// differ between the two runs is an ERROR: it tests timing, not the pooler.
+        #[arg(long)]
+        check_scenarios: bool,
+        /// How long each step may take before it counts as a hang, e.g. `10s` or
+        /// `500ms` (a bare number is seconds). A scenario's `timeout_ms` overrides it.
+        #[arg(long, value_name = "DURATION", default_value = "10s", value_parser = parse_duration)]
+        step_timeout: Duration,
+        /// Which FAILs make the exit code 1, by kind. An ERROR verdict (nothing
+        /// compared) counts unless this is `none`.
+        #[arg(long, value_enum, default_value_t = FailOn::Any)]
+        fail_on: FailOn,
     },
-    /// Scan queries (pg_stat_statements CSV or a .sql file) for patterns that
-    /// break under transaction pooling.
+    /// Scan queries (pg_stat_statements CSV, Postgres logs or a .sql file) for
+    /// patterns that break under transaction pooling.
     Scan {
-        /// pg_stat_statements CSV, Postgres log (.log stderr, .json jsonlog) or .sql file.
+        /// pg_stat_statements CSV, Postgres log (.log stderr, .json jsonlog, .csv csvlog)
+        /// or .sql file. `-` reads stdin (needs --input).
         input: PathBuf,
+        /// What the input is. Without it, the file extension decides.
+        #[arg(long = "input", value_enum, value_name = "FORMAT")]
+        input_format: Option<scan::InputFormat>,
         #[arg(long, value_enum, default_value_t = ScanFormat::Text)]
         format: ScanFormat,
         /// Exit non-zero on warnings too, not just on queries that break.
@@ -117,6 +148,13 @@ enum RunFormat {
     Html,
 }
 
+/// `run --reset`.
+#[derive(Clone, Copy, clap::ValueEnum)]
+pub enum ResetArg {
+    Auto,
+    All,
+}
+
 pub async fn run(cli: Cli) -> Result<ExitCode> {
     match cli.command {
         Command::Run {
@@ -124,14 +162,27 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
             pooler,
             direct,
             mode,
+            reset,
+            yes,
             scenarios,
             filter,
+            only,
             reverse,
             verbose,
             format,
+            check_scenarios,
+            fail_on,
+            step_timeout,
         } => {
             let targets = match (pooler, direct) {
-                (Some(pooler), Some(direct)) => Targets::single(pooler, direct, mode),
+                (Some(pooler), Some(direct)) => {
+                    let reset = match reset {
+                        None => Reset::None,
+                        Some(ResetArg::Auto) => Reset::Auto,
+                        Some(ResetArg::All) => Reset::All,
+                    };
+                    Targets::single(&pooler, &direct, mode, reset)?
+                }
                 _ => Targets::load(&targets)?,
             };
             let mut scenarios = load_scenarios(scenarios.as_deref())?;
@@ -140,12 +191,35 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
             }
 
             let text = matches!(format, RunFormat::Text);
-            let (target_infos, results) =
-                runner::suite::run(&targets.targets, &scenarios, filter.as_deref(), text, verbose).await?;
+            let opts = runner::suite::RunOptions {
+                filter: filter.as_deref(),
+                targets: &only,
+                text,
+                style: Style {
+                    verbose,
+                    color: color_enabled(),
+                },
+                check_scenarios,
+                yes,
+                timeouts: runner::Timeouts {
+                    step: step_timeout,
+                    ..Default::default()
+                },
+            };
+            let (target_infos, results) = runner::suite::run(&targets.targets, &scenarios, &opts).await?;
 
             let count = |f: fn(&Verdict) -> bool| results.iter().filter(|r| f(&r.verdict)).count();
             let failed = count(|v| matches!(v, Verdict::Fail { .. }));
             let errors = count(|v| matches!(v, Verdict::Error { .. }));
+            let exit_failure = results.iter().any(|r| fail_on.fails(&r.verdict));
+            let ignored = results
+                .iter()
+                .filter(|r| matches!(r.verdict, Verdict::Fail { .. } | Verdict::Error { .. }))
+                .filter(|r| !fail_on.fails(&r.verdict))
+                .count();
+            if ignored > 0 {
+                eprintln!("note: {ignored} failed or errored results ignored by --fail-on {fail_on}");
+            }
             if matches!(format, RunFormat::Text) {
                 let passed = count(|v| matches!(v, Verdict::Pass));
                 let skipped = count(|v| matches!(v, Verdict::Skip { .. }));
@@ -175,7 +249,7 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
                     RunFormat::Text => unreachable!(),
                 }
             }
-            Ok(if failed + errors > 0 {
+            Ok(if exit_failure {
                 ExitCode::FAILURE
             } else {
                 ExitCode::SUCCESS
@@ -183,13 +257,14 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
         }
         Command::Scan {
             input,
+            input_format,
             format,
             strict,
             pooler,
             postgres,
             results,
         } => {
-            let queries = scan::load_queries(&input)?;
+            let queries = scan::load_queries(&input, input_format)?;
             let mut report = scan::scan(&queries);
             if let Some(pooler) = &pooler {
                 let reports = match &results {
@@ -210,7 +285,7 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
                 report.findings.sort_by_key(rank);
             }
             match format {
-                ScanFormat::Json => println!("{}", serde_json::to_string_pretty(&report.findings)?),
+                ScanFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
                 ScanFormat::Sarif => println!("{}", serde_json::to_string_pretty(&sarif(&report, &input))?),
                 ScanFormat::Text => print_scan(&report),
             }
@@ -245,5 +320,36 @@ fn load_scenarios(dir: Option<&std::path::Path>) -> Result<Vec<scenario::Scenari
     match dir {
         Some(dir) => scenario::load_dir(dir),
         None => scenario::bundled(),
+    }
+}
+
+/// `500ms`, `10s` or `10` (seconds). Zero is rejected: every step would time out.
+fn parse_duration(s: &str) -> Result<Duration, String> {
+    let (number, unit) = match s.strip_suffix("ms") {
+        Some(n) => (n, Duration::from_millis(1)),
+        None => (s.strip_suffix('s').unwrap_or(s), Duration::from_secs(1)),
+    };
+    let n: u32 = number
+        .trim()
+        .parse()
+        .map_err(|_| format!("`{s}` is not a duration like 10s or 500ms"))?;
+    if n == 0 {
+        return Err("must be more than 0".into());
+    }
+    Ok(unit * n)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn durations_take_ms_s_or_bare_seconds() {
+        assert_eq!(parse_duration("500ms"), Ok(Duration::from_millis(500)));
+        assert_eq!(parse_duration("10s"), Ok(Duration::from_secs(10)));
+        assert_eq!(parse_duration("3"), Ok(Duration::from_secs(3)));
+        for bad in ["0", "0ms", "", "s", "1.5s", "10m", "-1s"] {
+            assert!(parse_duration(bad).is_err(), "{bad}");
+        }
     }
 }

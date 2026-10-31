@@ -1,0 +1,60 @@
+# Node.js: node-postgres (pg), node-pg-migrate, Knex, pg-boss, TypeORM, Drizzle, Graphile Worker.
+
+[[query]]
+sql = 'SELECT $1::text as message'
+form = "pgss"
+expect = []
+
+[[query]]
+sql = 'SELECT pg_try_advisory_lock($1) AS "lockObtained"'
+form = "pgss"
+expect = ["session-advisory-lock"]
+note = "node-pg-migrate lock 7241865325823964"
+
+[[query]]
+sql = 'SELECT pg_advisory_unlock($1) AS "lockReleased"'
+form = "pgss"
+expect = []
+note = "node-pg-migrate unlock"
+
+[[query]]
+sql = 'update "knex_migrations_lock" set "is_locked" = $1 where "is_locked" = $2'
+form = "pgss"
+expect = []
+note = "Knex migrations lock with a table, not an advisory lock"
+
+[[query]]
+sql = 'SELECT pg_advisory_xact_lock(($1 || encode(sha224((current_database() || $2)::bytea), $3))::bit(64)::bigint)'
+form = "pgss"
+expect = []
+note = "pg-boss, transaction-scoped lock"
+
+[[query]]
+sql = 'START TRANSACTION'
+form = "pgss"
+expect = []
+note = "TypeORM"
+
+[[query]]
+sql = 'SELECT * FROM current_schema()'
+form = "pgss"
+expect = []
+note = "TypeORM"
+
+[[query]]
+sql = 'select "id", "name", "email" from "users" where "users"."id" = $1'
+form = "pgss"
+expect = []
+note = "Drizzle"
+
+[[query]]
+sql = 'LISTEN "jobs:insert"'
+form = "pgss"
+expect = ["listen"]
+note = "Graphile Worker"
+
+[[query]]
+sql = 'LISTEN "events"'
+form = "log"
+expect = ["listen"]
+note = "pg-listen"

@@ -34,6 +34,10 @@ pub struct TargetInfo {
     pub mode: PoolMode,
     /// Version of the Postgres server behind the pooler, if it could be read.
     pub postgres: Option<String>,
+    /// The target's reset: none, auto, all or custom. Never the SQL. Missing in
+    /// reports from before it was recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reset: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]

@@ -1,80 +1,81 @@
 # Targets for the docker test bed (docker compose -f docker/compose.yml up -d --wait).
 # Point these at your own pooler to test your setup.
 #
-# `reset` runs on `direct` before every run. Here it terminates every other session
-# on the database, so each scenario starts on fresh server connections, and waits up
-# to 5s for each to exit (their locks and temp tables go away only then). Only use it
-# on a database nothing else is connected to.
+# `reset` runs on `direct` before every run. Here it is "all": it terminates every other
+# session on the database, so each scenario starts on fresh server connections, and
+# waits up to 5s for each to exit (their locks and temp tables go away only then). The
+# poolers share one Postgres, so "auto" (only the pooler's own sessions) would leave one
+# pooler's leaks in place for the next. Only use "all" on a database nothing else uses.
 
 [[target]]
 name = "pgbouncer-1.24.1"
 product = "pgbouncer"
 version = "1.24.1"
 config = "default"
-pooler = "postgres://postgres:postgres@127.0.0.1:56441/app"
-direct = "postgres://postgres:postgres@127.0.0.1:55432/app"
+pooler = "postgres://postgres:postgres@127.0.0.1:56441/app?sslmode=disable"
+direct = "postgres://postgres:postgres@127.0.0.1:55432/app?sslmode=disable"
 mode = "transaction"
-reset = ["SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'"]
+reset = "all"
 
 [[target]]
 name = "pgbouncer-1.25.2"
 product = "pgbouncer"
 version = "1.25.2"
 config = "default"
-pooler = "postgres://postgres:postgres@127.0.0.1:56442/app"
-direct = "postgres://postgres:postgres@127.0.0.1:55432/app"
+pooler = "postgres://postgres:postgres@127.0.0.1:56442/app?sslmode=disable"
+direct = "postgres://postgres:postgres@127.0.0.1:55432/app?sslmode=disable"
 mode = "transaction"
-reset = ["SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'"]
+reset = "all"
 
 [[target]]
 name = "pgbouncer-1.26.1"
 product = "pgbouncer"
 version = "1.26.1"
 config = "default"
-pooler = "postgres://postgres:postgres@127.0.0.1:56443/app"
-direct = "postgres://postgres:postgres@127.0.0.1:55432/app"
+pooler = "postgres://postgres:postgres@127.0.0.1:56443/app?sslmode=disable"
+direct = "postgres://postgres:postgres@127.0.0.1:55432/app?sslmode=disable"
 mode = "transaction"
-reset = ["SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'"]
+reset = "all"
 
 [[target]]
 name = "pgdog-0.1.50"
 product = "pgdog"
 version = "0.1.50"
 config = "default"
-pooler = "postgres://postgres:postgres@127.0.0.1:56451/app"
-direct = "postgres://postgres:postgres@127.0.0.1:55432/app"
+pooler = "postgres://postgres:postgres@127.0.0.1:56451/app?sslmode=disable"
+direct = "postgres://postgres:postgres@127.0.0.1:55432/app?sslmode=disable"
 mode = "transaction"
-reset = ["SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'"]
+reset = "all"
 
 [[target]]
 name = "pgdog-0.1.56"
 product = "pgdog"
 version = "0.1.56"
 config = "default"
-pooler = "postgres://postgres:postgres@127.0.0.1:56452/app"
-direct = "postgres://postgres:postgres@127.0.0.1:55432/app"
+pooler = "postgres://postgres:postgres@127.0.0.1:56452/app?sslmode=disable"
+direct = "postgres://postgres:postgres@127.0.0.1:55432/app?sslmode=disable"
 mode = "transaction"
-reset = ["SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'"]
+reset = "all"
 
 [[target]]
 name = "pgdog-0.1.62"
 product = "pgdog"
 version = "0.1.62"
 config = "default"
-pooler = "postgres://postgres:postgres@127.0.0.1:56453/app"
-direct = "postgres://postgres:postgres@127.0.0.1:55432/app"
+pooler = "postgres://postgres:postgres@127.0.0.1:56453/app?sslmode=disable"
+direct = "postgres://postgres:postgres@127.0.0.1:55432/app?sslmode=disable"
 mode = "transaction"
-reset = ["SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'"]
+reset = "all"
 
 [[target]]
 name = "pgdog-0.1.62-pubsub"
 product = "pgdog"
 version = "0.1.62"
 config = "pubsub"
-pooler = "postgres://postgres:postgres@127.0.0.1:56454/app"
-direct = "postgres://postgres:postgres@127.0.0.1:55432/app"
+pooler = "postgres://postgres:postgres@127.0.0.1:56454/app?sslmode=disable"
+direct = "postgres://postgres:postgres@127.0.0.1:55432/app?sslmode=disable"
 mode = "transaction"
-reset = ["SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'"]
+reset = "all"
 
 # Supavisor finds the tenant from the user name: <user>.<tenant>.
 [[target]]
@@ -82,27 +83,27 @@ name = "supavisor-2.9.13"
 product = "supavisor"
 version = "2.9.13"
 config = "default"
-pooler = "postgres://postgres.pp:postgres@127.0.0.1:56461/app"
-direct = "postgres://postgres:postgres@127.0.0.1:55432/app"
+pooler = "postgres://postgres.pp:postgres@127.0.0.1:56461/app?sslmode=disable"
+direct = "postgres://postgres:postgres@127.0.0.1:55432/app?sslmode=disable"
 mode = "transaction"
-reset = ["SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'"]
+reset = "all"
 
 [[target]]
 name = "supavisor-2.10.0-rc.1"
 product = "supavisor"
 version = "2.10.0-rc.1"
 config = "default"
-pooler = "postgres://postgres.pp:postgres@127.0.0.1:56462/app"
-direct = "postgres://postgres:postgres@127.0.0.1:55432/app"
+pooler = "postgres://postgres.pp:postgres@127.0.0.1:56462/app?sslmode=disable"
+direct = "postgres://postgres:postgres@127.0.0.1:55432/app?sslmode=disable"
 mode = "transaction"
-reset = ["SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'"]
+reset = "all"
 
 [[target]]
 name = "supavisor-2.10.0-rc.1-strict"
 product = "supavisor"
 version = "2.10.0-rc.1"
 config = "strict"
-pooler = "postgres://postgres.ppstrict:postgres@127.0.0.1:56462/app"
-direct = "postgres://postgres:postgres@127.0.0.1:55432/app"
+pooler = "postgres://postgres.ppstrict:postgres@127.0.0.1:56462/app?sslmode=disable"
+direct = "postgres://postgres:postgres@127.0.0.1:55432/app?sslmode=disable"
 mode = "transaction"
-reset = ["SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'"]
+reset = "all"

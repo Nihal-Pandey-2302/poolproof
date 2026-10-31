@@ -19,6 +19,9 @@ impl Outcome {
             // Error messages can differ in wording between servers, so only the code counts.
             Compare::Full => match (self, other) {
                 (Outcome::Error { code: a, .. }, Outcome::Error { code: b, .. }) => a == b,
+                (Outcome::Messages { messages: a }, Outcome::Messages { messages: b }) => {
+                    split_parameter_status(a) == split_parameter_status(b)
+                }
                 _ => self == other,
             },
         }
@@ -47,6 +50,18 @@ pub enum FailKind {
     Hang,
 }
 
+/// A reply split into its ParameterStatus lines, sorted, and the rest in order. Poolers
+/// move ParameterStatus around within a reply, which is harmless; dropping one or
+/// sending a different value is not. The lines only exist when a step asks for them.
+fn split_parameter_status(lines: &[String]) -> (Vec<&str>, Vec<&str>) {
+    let (mut status, rest): (Vec<&str>, Vec<&str>) = lines
+        .iter()
+        .map(String::as_str)
+        .partition(|l| l.starts_with("ParameterStatus "));
+    status.sort_unstable();
+    (status, rest)
+}
+
 /// A `send` reply line that means something went wrong: an error, a timeout, or
 /// the connection closing.
 fn is_failure_line(line: &str) -> bool {
@@ -54,14 +69,18 @@ fn is_failure_line(line: &str) -> bool {
 }
 
 /// Error codes the harness itself produces when a step never got a real answer.
-const HARNESS_CODES: &[&str] = &["CONNECT", "TIMEOUT", "CLIENT", "CLOSED", "NO_STATEMENT"];
+/// NO_STATEMENT isn't one: it follows a prepare that failed, and if Postgres rejected
+/// that prepare, the outcome is deterministic and worth comparing.
+const HARNESS_CODES: &[&str] = &["CONNECT", "TIMEOUT", "CLIENT", "CLOSED"];
 
 /// The first baseline step that failed in the harness rather than in Postgres. Postgres
 /// is the oracle, so a baseline like that can't be compared: an unreachable server
 /// would otherwise "match" an unreachable pooler.
 pub(super) fn baseline_failure(expected: &[Outcome]) -> Option<String> {
     let failed = |o: &Outcome| match o {
-        Outcome::Error { code, .. } => HARNESS_CODES.contains(&code.as_str()),
+        // A connect Postgres refused (53300 when it's out of connections) would give the
+        // same code on both sides and pass without testing anything.
+        Outcome::Error { code, connect, .. } => *connect || HARNESS_CODES.contains(&code.as_str()),
         Outcome::Messages { messages } => messages.iter().any(|l| l == "TIMEOUT" || l == "CLOSED"),
         Outcome::Ok { .. } | Outcome::Abandoned => false,
     };
@@ -82,7 +101,10 @@ impl FailKind {
                 // Replies that stop short of what Postgres sent, with nothing wrong in
                 // them, are a hang too: after a Flush there's no ReadyForQuery to wait
                 // for, so the step ends when the server goes quiet instead of at TIMEOUT.
-                let cut_short = messages.len() < expected_lines.len() && expected_lines.starts_with(messages);
+                // ParameterStatus lines don't count: a dropped one is a silent failure.
+                let (_, got) = split_parameter_status(messages);
+                let (_, wanted) = split_parameter_status(expected_lines);
+                let cut_short = got.len() < wanted.len() && wanted.starts_with(&got);
                 if cut_short || messages.iter().any(|l| l == "TIMEOUT") {
                     FailKind::Hang
                 } else if messages
@@ -191,6 +213,63 @@ mod tests {
         // Errors from Postgres itself are what scenarios test for.
         assert!(baseline_failure(&[Outcome::error("42P01", "x"), msgs(&["Error 42P05", "ReadyForQuery I"])]).is_none());
         assert!(baseline_failure(&[Outcome::Abandoned]).is_none());
+        // An execute after a prepare that Postgres itself rejected: deterministic, so
+        // it's compared like any other outcome.
+        assert!(baseline_failure(&[Outcome::error("25P02", "x"), Outcome::error("NO_STATEMENT", "x")]).is_none());
+    }
+
+    #[test]
+    fn parameter_status_lines_compare_as_a_set() {
+        let msgs = |m: &[&str]| Outcome::Messages {
+            messages: m.iter().map(|s| s.to_string()).collect(),
+        };
+        let pg = msgs(&[
+            "CommandComplete SET",
+            "ParameterStatus application_name=pp",
+            "ParameterStatus TimeZone=UTC",
+            "ReadyForQuery I",
+        ]);
+        // Moved within the reply: poolers do that, and it's harmless.
+        let moved = msgs(&[
+            "ParameterStatus TimeZone=UTC",
+            "CommandComplete SET",
+            "ReadyForQuery I",
+            "ParameterStatus application_name=pp",
+        ]);
+        assert!(pg.matches(&moved, Compare::Full));
+        let dropped = msgs(&["CommandComplete SET", "ParameterStatus TimeZone=UTC", "ReadyForQuery I"]);
+        assert!(!pg.matches(&dropped, Compare::Full));
+        assert_eq!(FailKind::of(&pg, &dropped), FailKind::Silent);
+        // After a Flush, a dropped ParameterStatus at the end leaves a prefix of the
+        // Postgres reply. That's still silent: the reply itself is complete.
+        let flushed = msgs(&[
+            "ParseComplete",
+            "BindComplete",
+            "CommandComplete SET",
+            "ParameterStatus application_name=x",
+        ]);
+        let no_status = msgs(&["ParseComplete", "BindComplete", "CommandComplete SET"]);
+        assert!(!flushed.matches(&no_status, Compare::Full));
+        assert_eq!(FailKind::of(&flushed, &no_status), FailKind::Silent);
+        // A reply really cut short is still a hang.
+        assert_eq!(FailKind::of(&flushed, &msgs(&["ParseComplete"])), FailKind::Hang);
+        let faked = msgs(&[
+            "CommandComplete SET",
+            "ParameterStatus application_name=other",
+            "ParameterStatus TimeZone=UTC",
+            "ReadyForQuery I",
+        ]);
+        assert!(!pg.matches(&faked, Compare::Full));
+        // The other lines still count in order.
+        let reordered = msgs(&[
+            "ReadyForQuery I",
+            "ParameterStatus application_name=pp",
+            "ParameterStatus TimeZone=UTC",
+            "CommandComplete SET",
+        ]);
+        assert!(!pg.matches(&reordered, Compare::Full));
+        // `status` only looks at failures.
+        assert!(pg.matches(&dropped, Compare::Status));
     }
 
     #[test]
