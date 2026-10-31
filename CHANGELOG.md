@@ -75,9 +75,10 @@ First release.
   pairs make a run count only when the clients really shared a server connection; no
   counted run is a SKIP. `same_backend_or_closed` also counts a run where the first
   client's backend had exited. The scenarios about one client's state reaching another
-  use them, so a PASS means the clients really shared a server connection. A raw
-  client's evidence may follow any step that ends with ReadyForQuery (a Sync or a
-  simple query).
+  use them, so a PASS means the clients really shared a server connection, or, after a
+  disconnect, that the pooler closed it. A raw client's evidence may follow any step
+  that ends with ReadyForQuery (a Sync, or a simple query other than one starting COPY
+  FROM STDIN).
 - Scenario steps can be a `precondition`: a boolean query that decides whether a run
   through the pooler counts. Reports say in how many runs it held ("pass (precondition
   1/5)"), and the HTML trace marks steps that never ran and why. The HTML report shows
