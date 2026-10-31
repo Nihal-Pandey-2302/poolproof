@@ -52,12 +52,18 @@ impl Want {
 
 const RESULTS: [&str; 6] = ["pass", "silent", "error", "hang", "harness-error", "skip"];
 
-/// The verdict as the expected file names it, plus the error reason if any.
+/// The results that carry a reason, so a row can check it with `reason_prefix`.
+const WITH_REASON: [&str; 2] = ["harness-error", "skip"];
+
+/// The verdict as the expected file names it, plus the reason of an ERROR or SKIP.
 fn got(r: &Value) -> (String, String) {
     let text = |v: &Value| v.as_str().unwrap_or("").to_string();
     match r["result"].as_str().unwrap_or("") {
         "fail" => (text(&r["mismatch"]["kind"]), String::new()),
         "error" => ("harness-error".into(), text(&r["reason"])),
+        // Checked too, so a SKIP for another reason (the probe failed instead of the
+        // precondition not being met) doesn't pass as expected.
+        "skip" => ("skip".into(), text(&r["reason"])),
         other => (other.to_string(), String::new()),
     }
 }
@@ -68,6 +74,12 @@ fn check(expected: &Expected, report: &Value, scenario_names: &BTreeSet<String>)
         for want in std::iter::once(&t.default).chain(t.scenarios.values()) {
             if !RESULTS.contains(&want.result()) {
                 problems.push(format!("{name}: unknown expected result {:?}", want.result()));
+            }
+            if want.reason_prefix().is_some() && !WITH_REASON.contains(&want.result()) {
+                problems.push(format!(
+                    "{name}: reason_prefix on a {} row, which has no reason to check",
+                    want.result()
+                ));
             }
         }
     }
@@ -295,6 +307,43 @@ mod tests {
         assert_eq!(
             p,
             vec!["down / b: no result in the report", "t / b: no result in the report"]
+        );
+    }
+
+    #[test]
+    fn skip_rows_check_the_reason() {
+        let e = expected(
+            r#"
+            [targets.t]
+            default = { result = "skip", reason_prefix = "precondition at step" }
+            b = { result = "skip", why = "no prefix: any reason" }
+            "#,
+        );
+        let skip = |scenario: &str, reason: &str| json!({"target": "t", "scenario": scenario, "result": "skip", "reason": reason});
+        let ok = report(json!([
+            skip("a", "precondition at step 4 not met"),
+            skip("b", "server connections unknown")
+        ]));
+        assert_eq!(check(&e, &ok, &names()), Vec::<String>::new());
+        let wrong = report(json!([
+            skip("a", "server connections unknown (probe failed)"),
+            skip("b", "x")
+        ]));
+        assert_eq!(
+            check(&e, &wrong, &names()),
+            vec!["t / a: expected skip, got skip: server connections unknown (probe failed)"]
+        );
+    }
+
+    #[test]
+    fn reason_prefix_only_on_results_with_a_reason() {
+        let e = expected("[targets.t]\ndefault = \"pass\"\nb = { result = \"silent\", reason_prefix = \"x\" }\n");
+        let r = report(json!([{"target": "t", "scenario": "a", "result": "pass"}]));
+        let p = check(&e, &r, &names());
+        assert!(
+            p.iter()
+                .any(|l| l == "t: reason_prefix on a silent row, which has no reason to check"),
+            "{p:?}"
         );
     }
 

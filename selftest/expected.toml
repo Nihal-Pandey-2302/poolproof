@@ -3,7 +3,8 @@
 # Any other verdict is a harness bug, a scenario bug or a proxy bug, and fails CI.
 #
 # Values: pass | silent | error | hang | harness-error | skip, or a table with
-# `result`, optional `reason_prefix` (matched with starts_with) and `why`.
+# `result`, optional `reason_prefix` (matched with starts_with; harness-error and skip
+# rows only, the results that have a reason) and `why`.
 # Every target has `default = "pass"`, so a new scenario that a fault breaks has to be
 # listed here, which keeps each fault's effect narrow and explained.
 
