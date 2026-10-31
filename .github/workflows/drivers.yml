@@ -38,7 +38,7 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
         run: |
           files=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --jq '.[].filename')
-          if grep -qE '^(drivers/|src/drivers/|\.github/workflows/drivers\.yml$|results/drivers-[^/]*\.json$)' <<<"$files"; then
+          if grep -qE '^(drivers/|src/drivers/|\.github/workflows/drivers\.yml$|\.github/compare-verdicts\.sh$|results/drivers-[^/]*\.json$|results/known-flaky\.txt$)' <<<"$files"; then
             echo "drivers=true" >> "$GITHUB_OUTPUT"
           else
             echo "drivers=false" >> "$GITHUB_OUTPUT"
@@ -102,17 +102,18 @@ jobs:
           if [ "$code" -gt 1 ]; then exit "$code"; fi
           ./target/release/poolproof report drivers.json >> "$GITHUB_STEP_SUMMARY"
 
-      # Verdicts only, as in the suite job, skipping the pairs in results/known-flaky.txt.
+      # Verdicts only, as in the suite job: the same script, with the same loose
+      # comparison for the pairs in results/known-flaky.txt.
       - name: Compare with committed results
         run: |
-          flaky=$(awk '{ sub(/\r$/, "") } NF == 2 && $1 !~ /^#/ { print $1 " " $2 }' results/known-flaky.txt | jq -Rsc 'split("\n") | map(select(. != ""))')
-          verdicts='.results[] | select("\(.target) \(.scenario)" as $k | $flaky | index($k) | not)
-            | "\(.target) \(.scenario) \(.result) \(.mismatch.kind // "")"'
-          compare() { jq -r --argjson flaky "$flaky" "$verdicts" "$1" | sort; }
-          if ! diff <(compare results/drivers-postgres-17.11.json) <(compare drivers.json); then
+          set +e
+          .github/compare-verdicts.sh results/drivers-postgres-17.11.json drivers.json
+          code=$?
+          set -e
+          if [ "$code" = 1 ]; then
             echo "::error::Driver verdicts changed. Run scripts/update-driver-results.sh and commit."
-            exit 1
           fi
+          exit "$code"
 
       - name: Cases are deterministic on Postgres
         if: ${{ !cancelled() && steps.run.outcome == 'success' }}
