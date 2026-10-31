@@ -10,7 +10,7 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpStream;
 use tokio::task::JoinHandle;
 use tokio::time::{timeout, timeout_at};
-use tokio_postgres::config::{Host, SslMode};
+use tokio_postgres::config::{Config, Host, SslMode};
 use tokio_postgres::tls::MakeTlsConnect;
 use tokio_postgres::{AsyncMessage, CancelToken, Client, Connection, NoTls, SimpleQueryMessage, Statement};
 use tokio_postgres_rustls::MakeRustlsConnect;
@@ -106,19 +106,71 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for DrainOnShutdown<S> {
     }
 }
 
+/// Opens a TCP connection with the URL's socket options: `connect_timeout` for the TCP
+/// connect (as tokio-postgres; the whole connect also has the harness's own limit),
+/// `tcp_user_timeout` in milliseconds as in libpq, and keepalives (on unless
+/// `keepalives=0`, with `keepalives_idle`, `_interval` and `_retries`). An option this
+/// system can't set is an error, not ignored.
+pub(super) async fn tcp_connect(config: &Config, host: &str, port: u16) -> Result<TcpStream> {
+    let connecting = TcpStream::connect((host, port));
+    let stream = match config.get_connect_timeout() {
+        Some(limit) => timeout(*limit, connecting)
+            .await
+            .with_context(|| format!("no connection within connect_timeout ({limit:?})"))??,
+        None => connecting.await?,
+    };
+    stream.set_nodelay(true)?;
+    let socket = socket2::SockRef::from(&stream);
+    if let Some(parsed) = config.get_tcp_user_timeout() {
+        // libpq's tcp_user_timeout is in milliseconds; tokio-postgres reads the number
+        // as seconds.
+        let limit = Duration::from_millis(parsed.as_secs());
+        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+        socket.set_tcp_user_timeout(Some(limit))?;
+        #[cfg(not(any(target_os = "android", target_os = "fuchsia", target_os = "linux")))]
+        bail!("not supported on this system: tcp_user_timeout ({limit:?})");
+    }
+    if config.get_keepalives() {
+        let mut keepalive = socket2::TcpKeepalive::new().with_time(config.get_keepalives_idle());
+        if let Some(interval) = config.get_keepalives_interval() {
+            #[cfg(not(any(target_os = "aix", target_os = "openbsd", target_os = "redox", target_os = "solaris")))]
+            {
+                keepalive = keepalive.with_interval(interval);
+            }
+            #[cfg(any(target_os = "aix", target_os = "openbsd", target_os = "redox", target_os = "solaris"))]
+            bail!("not supported on this system: keepalives_interval ({interval:?})");
+        }
+        if let Some(retries) = config.get_keepalives_retries() {
+            #[cfg(not(any(
+                target_os = "aix",
+                target_os = "openbsd",
+                target_os = "redox",
+                target_os = "solaris",
+                target_os = "windows"
+            )))]
+            {
+                keepalive = keepalive.with_retries(retries);
+            }
+            #[cfg(any(
+                target_os = "aix",
+                target_os = "openbsd",
+                target_os = "redox",
+                target_os = "solaris",
+                target_os = "windows"
+            ))]
+            bail!("not supported on this system: keepalives_retries ({retries})");
+        }
+        socket.set_tcp_keepalive(&keepalive)?;
+    }
+    Ok(stream)
+}
+
 /// Opens the socket to an endpoint's first host. Returns it with the host name, for TLS.
 async fn open(endpoint: &Endpoint) -> Result<(Box<dyn Io>, String)> {
     let config = endpoint.config();
     let port = config.get_ports().first().copied().unwrap_or(5432);
     match config.get_hosts().first() {
-        Some(Host::Tcp(host)) => {
-            let stream = TcpStream::connect((host.as_str(), port)).await?;
-            stream.set_nodelay(true)?;
-            // As tokio-postgres does on the sockets it opens: keepalives after 2 hours idle.
-            let keepalive = socket2::TcpKeepalive::new().with_time(Duration::from_secs(2 * 60 * 60));
-            socket2::SockRef::from(&stream).set_tcp_keepalive(&keepalive)?;
-            Ok((Box::new(stream), host.clone()))
-        }
+        Some(Host::Tcp(host)) => Ok((Box::new(tcp_connect(config, host, port).await?), host.clone())),
         #[cfg(unix)]
         Some(Host::Unix(dir)) => {
             let stream = tokio::net::UnixStream::connect(dir.join(format!(".s.PGSQL.{port}"))).await?;
@@ -607,6 +659,37 @@ mod tests {
         );
         assert_eq!(createrole.missing(&[Requirement::Createrole]), None);
         assert_eq!(superuser.missing(&all), None);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn sockets_get_the_url_options() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let open = |options: &str| {
+            let url = format!("postgres://u@127.0.0.1:{port}/db?{options}");
+            async move {
+                let endpoint = Endpoint::parse(&url).unwrap();
+                tcp_connect(endpoint.config(), "127.0.0.1", port).await.unwrap()
+            }
+        };
+
+        let stream = open("keepalives_idle=77&keepalives_interval=5&keepalives_retries=3&tcp_user_timeout=9000").await;
+        let socket = socket2::SockRef::from(&stream);
+        assert!(socket.keepalive().unwrap());
+        assert_eq!(socket.tcp_keepalive_time().unwrap(), Duration::from_secs(77));
+        assert_eq!(socket.tcp_keepalive_interval().unwrap(), Duration::from_secs(5));
+        assert_eq!(socket.tcp_keepalive_retries().unwrap(), 3);
+        assert_eq!(socket.tcp_user_timeout().unwrap(), Some(Duration::from_secs(9)));
+
+        // The defaults, as in tokio-postgres: on, after 2 hours idle.
+        let stream = open("").await;
+        let socket = socket2::SockRef::from(&stream);
+        assert!(socket.keepalive().unwrap());
+        assert_eq!(socket.tcp_keepalive_time().unwrap(), Duration::from_secs(2 * 60 * 60));
+
+        let stream = open("keepalives=0").await;
+        assert!(!socket2::SockRef::from(&stream).keepalive().unwrap());
     }
 
     #[tokio::test]
