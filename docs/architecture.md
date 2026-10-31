@@ -20,18 +20,23 @@ src/main.rs              entry point: SIGPIPE, exit code 2 on error
 src/lib.rs               the modules below, as a library for tests/ (no stable API)
 src/cli.rs               clap commands and flags; wires the modules together
 src/scenario.rs          scenario TOML format: Scenario, Step, Action, Compare, PoolMode
-src/targets.rs           targets TOML format, and the single target from --pooler/--direct
+src/targets.rs           targets TOML format, and the single target from --pooler/--direct;
+                         Endpoint (a parsed URL: ${VAR}, password sources, sslmode, one
+                         host only; prints without the password), Reset
 src/runner/
   mod.rs                 Outcome (what a client saw for one step), Timeouts (every limit
                          and its default in one struct)
   suite.rs               the loop over targets and scenarios behind `run`: --target,
-                         preflight, --check-scenarios, --fail-on
+                         preflight, reset resolution, privileges and `requires`,
+                         --check-scenarios, --fail-on
   check.rs               one scenario on one target: reset, setup, baseline, pooler, compare
                          (run_direct runs reset, setup and teardown statements)
   steps.rs               runs a scenario's steps, one connection per client
-  pg.rs                  normal clients on tokio-postgres: connect, wait_ready after a
-                         reset, waiting for a disconnected backend to exit, server version
+  pg.rs                  normal clients on tokio-postgres over a socket poolproof opens
+                         (socket options, TLS, drain on close), cancel, wait_ready after a
+                         reset, privileges, resolve_reset, server version
   raw.rs                 raw protocol clients for `send` steps
+  tls.rs                 sslmode and sslrootcert as in libpq: one rustls config per Endpoint
   compare.rs             outcome matching, Verdict, Mismatch, FailKind (silent/error/hang)
 src/report/
   mod.rs                 the JSON report, bundled results, lookups for scan --pooler
@@ -64,6 +69,10 @@ cli ─ targets.toml or --pooler/--direct ─┐
                                                for each target (--target picks some):
                                                  preflight: both URLs must answer, else
                                                  every scenario of the target is ERROR
+                                                 resolve reset: print what it will end;
+                                                 a refusal is ERROR like preflight
+                                                 privileges of the direct user: unmet
+                                                 `requires` -> SKIP
                                                  for each scenario:
                                                    [--check-scenarios: baseline twice,
                                                     once per scenario and direct URL]
@@ -95,6 +104,11 @@ Details that matter when changing this:
   (`raw.rs`) that writes frontend messages itself and records every reply as a line,
   because drivers hide exactly what those scenarios test (statement names, Sync vs
   Flush, pipelining).
+- poolproof opens every TCP socket itself (`tcp_connect` in `pg.rs`, with the URL's
+  socket options), for both client kinds, then does TLS per `tls.rs`. That is why a URL
+  may name only one host: nothing picks among several. Raw clients read exactly one byte
+  after SSLRequest, so nothing sent ahead of the handshake is read as plaintext.
+  Cancel requests use the same TLS settings.
 - Every step produces an `Outcome`: rows and command tags, an error (SQLSTATE plus
   message), `abandoned`, or reply lines. Harness-side problems are errors with a
   pseudo-code: `TIMEOUT` (no reply in time), `CONNECT` (couldn't connect), `CLOSED` (the
@@ -118,10 +132,17 @@ Details that matter when changing this:
   Postgres's). ParameterStatus lines, recorded only with `compare_parameter_status`, are
   compared as a set; the other reply lines in order.
 - `reset` exists because poolers keep server connections. Without it, state one
-  scenario leaked can change the next scenario's verdict.
-- Closing a direct connection returns before Postgres has ended the backend, so the
-  runner waits for the backend to exit after a direct client disconnects, before the
-  next step looks at server state.
+  scenario leaked can change the next scenario's verdict. `resolve_reset` turns a
+  target's `reset` into statements once per target: `auto` asks the pooler for its
+  address and user and builds a scoped `pg_terminate_backend` query, `all` needs
+  `--yes` off this machine. After a reset, `wait_ready` waits until the same backend
+  answers through the pooler three times in a row.
+- A backend releases its locks and temp tables only when it exits, and Postgres closes
+  the socket only after that. So every close of a connection to Postgres sends
+  Terminate, shuts the write side and reads until EOF (`DrainOnShutdown` in `pg.rs`,
+  below TLS; raw clients do the same above it). Through a pooler the EOF says nothing
+  about a backend, so pooled clients don't wait. An abandoned client isn't waited for.
+  A backend that doesn't exit in time is an error, so the scenario is ERROR.
 
 ## How `scan` works
 
@@ -144,8 +165,10 @@ report given with `--results`.
 | A step action or option | `scenario.rs` (format, and the checks when a file loads: unique names, one side per client, `execute` after `prepare`), `runner/steps.rs`, README's step list |
 | A protocol message for `send` | `runner/raw.rs` (parsing the `send` line, encoding, reply lines) |
 | How outcomes are compared or classified | `runner/compare.rs`, with unit tests there |
-| Reset, setup, repeat or timing behavior | `runner/check.rs`, `runner/pg.rs`, `Timeouts` in `runner/mod.rs`; the step timeout is also set by `--step-timeout` in `cli.rs` and `timeout_ms` in `scenario.rs` |
+| Reset, setup, repeat or timing behavior | `runner/check.rs`, `runner/pg.rs` (`resolve_reset`, `wait_ready`), `Timeouts` in `runner/mod.rs`; the step timeout is also set by `--step-timeout` in `cli.rs` and `timeout_ms` in `scenario.rs` |
 | A targets file field | `targets.rs`, README's targets example |
+| Connections, TLS or socket options | `runner/pg.rs` (`connect`, `tcp_connect`), `runner/raw.rs` (`RawConn::connect`), `runner/tls.rs`, URL checks in `targets.rs` |
+| A privilege for `requires` | `scenario.rs` (the names), `privileges` in `runner/pg.rs`, `before_run` in `runner/suite.rs` |
 | A field in the JSON report | `report/mod.rs`; it's a stable format, see the versioning policy in CHANGELOG.md |
 | The results table or page | `report/markdown.rs`, `report/html.rs` and `report/report.html` |
 | A `scan` rule | `scan/rules.rs`, `RULES` and the rule -> scenario map in `scan/mod.rs`, README's rule list, expected findings in the corpus (`tests/fixtures/scan/*.toml`, run by `tests/scan_corpus.rs`) |
