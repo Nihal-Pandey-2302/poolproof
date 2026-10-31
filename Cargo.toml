@@ -12,7 +12,7 @@ categories = ["command-line-utilities", "database", "development-tools::testing"
 # The test bed and CI files are for this repo, not for `cargo install`. results/ stays,
 # drivers results too: `scan --pooler` reads them. Of drivers/, the binary only needs
 # drivers.toml and cases.toml.
-exclude = [".github/", "action.yml", ".gitguardian.yaml", ".taplo.toml", "docker/", "drivers/*/", "fuzz/", "scripts/", "selftest/", "tools/", "DRIVERS.md", "RESULTS.md", "results/known-flaky.txt", "targets.toml", "targets-variants.toml"]
+exclude = [".github/", "action.yml", ".gitguardian.yaml", ".taplo.toml", "docker/", "drivers/*/", "fuzz/", "scripts/", "selftest/", "tools/", "DRIVERS.md", "RESULTS.md", "results/known-flaky.txt", "results/variants-*.json", "targets.toml", "targets-variants.toml"]
 
 # cargo binstall poolproof: download the release archive instead of compiling.
 [package.metadata.binstall]
