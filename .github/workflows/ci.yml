@@ -5,13 +5,16 @@ on:
   push:
     branches: [main]
   pull_request:
+    # ready_for_review: undrafting a PR starts the suite it skipped as a draft.
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 
-# A newer commit on the same branch (main too) cancels the older run: only the latest
-# result matters for merging and for the Pages deploy.
+# On a PR, a newer commit cancels the older run: only the latest result matters for
+# merging. Runs on main are never cancelled, so every main commit gets the suite, the
+# results comparison and its Pages build; they queue instead.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Jobs get read access only; a job that needs more says so itself.
 permissions:
@@ -32,6 +35,27 @@ jobs:
       # RESULTS.md must be what the committed results render to.
       - run: cargo run -q -- report results/postgres-*.json | diff RESULTS.md -
 
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
+        with:
+          toolchain: stable
+          components: rustfmt
+      - run: cargo fmt --check
+
+  # rust-version in Cargo.toml must stay true.
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
+        with:
+          toolchain: "1.88"
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: cargo check --locked --all-targets
+
   # The self-test proxies (tools/pp-proxy), a separate crate.
   tools:
     runs-on: ubuntu-latest
@@ -39,7 +63,7 @@ jobs:
       run:
         working-directory: tools/pp-proxy
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
         with:
           toolchain: stable
@@ -128,6 +152,9 @@ jobs:
   # Every scenario against every pooler, once per Postgres version.
   suite:
     needs: test
+    # Not on draft PRs: it takes 30-40 runner minutes. Pages depends on it, so it skips
+    # too, and so do the Postgres-backed #[ignore] tests that run in this job.
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -143,6 +170,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
       - name: Start test bed
+        id: bed
         run: docker compose -f docker/compose.yml up -d --wait --wait-timeout 300
 
       - name: Run scenarios
@@ -164,7 +192,16 @@ jobs:
           # The timing list comes from this run, so a scenario that just got repeat > 1
           # is skipped on both sides before results/ is regenerated.
           timing=$(jq -c '[.scenarios[] | select(.repeat > 1) | .name]' new.json)
-          flaky=$(grep -v '^#' results/known-flaky.txt | awk 'NF == 2 { print $1 " " $2 }' | jq -Rsc 'split("\n") | map(select(. != ""))')
+          # A malformed line would silently skip nothing, so it fails the step instead.
+          # sub() drops a trailing \r, so a file saved with CRLF line ends still matches.
+          awk '{ sub(/\r$/, "") }
+               NF && $1 !~ /^#/ && NF != 2 { bad = 1
+                 printf "::error file=%s,line=%d::expected \"<target> <scenario>\", got: %s\n", FILENAME, FNR, $0 }
+               END { exit bad }' results/known-flaky.txt
+          flaky=$(awk '{ sub(/\r$/, "") } NF == 2 && $1 !~ /^#/ { print $1 " " $2 }' results/known-flaky.txt | jq -Rsc 'split("\n") | map(select(. != ""))')
+          if [ "$flaky" != "[]" ]; then
+            { echo "### Not compared (results/known-flaky.txt)"; jq -r '.[] | "- \(.)"' <<<"$flaky"; } >> "$GITHUB_STEP_SUMMARY"
+          fi
           verdicts='.results[] | select(.scenario as $s | $timing | index($s) | not)
             | select("\(.target) \(.scenario)" as $k | $flaky | index($k) | not)
             | "\(.target) \(.scenario) \(.result) \(.mismatch.kind // "")"'
@@ -173,6 +210,18 @@ jobs:
             echo "::error::Verdicts changed on Postgres ${{ matrix.postgres }}. Run scripts/update-results.sh and commit."
             exit 1
           fi
+
+      # Tests marked #[ignore] need a real Postgres. They run after the scenarios so they
+      # can't change a verdict, and even when the comparison failed. They get their own
+      # database: the poolers may still hold locks and transactions that scenarios leaked
+      # in `app`. --release reuses the dependencies built above.
+      - name: Tests against Postgres
+        if: ${{ !cancelled() && steps.bed.outcome == 'success' }}
+        env:
+          POOLPROOF_TEST_PG: postgres://postgres:postgres@127.0.0.1:55432/pp_test
+        run: |
+          docker compose -f docker/compose.yml exec -T postgres createdb -U postgres pp_test
+          cargo test --release --locked -- --ignored
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()

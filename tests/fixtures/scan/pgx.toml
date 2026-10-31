@@ -1,0 +1,60 @@
+# pgx (Go): pgx v5, pgxpool, pgxlisten, River.
+
+[[query]]
+sql = 'select id, name, created_at from widgets where id=$1'
+form = "pgss"
+expect = []
+
+[[query]]
+sql = 'copy "people" ( "first_name", "last_name", "age" ) from stdin binary;'
+form = "log"
+expect = []
+note = "CopyFrom"
+
+[[query]]
+sql = 'deallocate all'
+form = "pgss"
+expect = ["deallocate-all"]
+note = "Conn.DeallocateAll, used to recover from 'prepared statement does not exist' behind PgBouncer"
+
+[[query]]
+sql = 'listen "jobs"'
+form = "pgss"
+expect = ["listen"]
+note = "pgxlisten: listen + Identifier.Sanitize()"
+
+[[query]]
+sql = 'select pg_notify($1, $2)'
+form = "pgss"
+expect = []
+note = "publishing is fine, only LISTEN needs a session"
+
+[[query]]
+sql = 'SET search_path TO app, public'
+form = "pgss-17"
+expect = ["session-set"]
+note = "typical pgxpool AfterConnect hook"
+
+[[query]]
+sql = "select set_config('app.tenant_id', $1, false)"
+form = "log"
+expect = ["session-set-config"]
+note = "row-level security tenant id per request, session-scoped by mistake"
+
+[[query]]
+sql = 'select set_config($1, $2, $3)'
+form = "pgss"
+expect = ["session-set-config"]
+note = "same, pg_stat_statements"
+
+[[query]]
+sql = "select set_config('app.tenant_id', $1, true)"
+form = "log"
+expect = []
+note = "transaction-scoped tenant id, correct"
+
+[[query]]
+sql = 'SELECT pg_try_advisory_xact_lock($1)'
+form = "pgss"
+expect = []
+note = "River leader election, transaction-scoped lock"

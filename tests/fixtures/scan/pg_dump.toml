@@ -1,0 +1,99 @@
+# pg_dump plain-format output (17/18), as restored with psql. Also Rails structure.sql.
+
+[[query]]
+sql = 'SET statement_timeout = 0'
+form = "sql"
+expect = ["session-set"]
+
+[[query]]
+sql = 'SET lock_timeout = 0'
+form = "sql"
+expect = ["session-set"]
+
+[[query]]
+sql = 'SET idle_in_transaction_session_timeout = 0'
+form = "sql"
+expect = ["session-set"]
+
+[[query]]
+sql = 'SET transaction_timeout = 0'
+form = "sql"
+expect = ["session-set"]
+note = "pg_dump 17+"
+
+[[query]]
+sql = "SET client_encoding = 'UTF8'"
+form = "sql"
+expect = ["session-set"]
+
+[[query]]
+sql = 'SET standard_conforming_strings = on'
+form = "sql"
+expect = ["session-set"]
+
+[[query]]
+sql = "SELECT pg_catalog.set_config('search_path', '', false)"
+form = "sql"
+expect = ["session-set-config"]
+
+[[query]]
+sql = 'SELECT pg_catalog.set_config($1, $2, $3)'
+form = "pgss"
+expect = ["session-set-config"]
+note = "same, pg_stat_statements (merged with unqualified set_config; keeps the first text seen)"
+
+[[query]]
+sql = 'SET check_function_bodies = false'
+form = "sql"
+expect = ["session-set"]
+
+[[query]]
+sql = 'SET xmloption = content'
+form = "sql"
+expect = ["session-set"]
+
+[[query]]
+sql = 'SET client_min_messages = warning'
+form = "sql"
+expect = ["session-set"]
+
+[[query]]
+sql = 'SET row_security = off'
+form = "sql"
+expect = ["session-set"]
+
+[[query]]
+sql = "SET default_tablespace = ''"
+form = "sql"
+expect = ["session-set"]
+
+[[query]]
+sql = 'SET default_table_access_method = heap'
+form = "sql"
+expect = ["session-set"]
+
+[[query]]
+sql = 'SET default_table_access_method = $1'
+form = "pgss-18"
+expect = ["session-set"]
+
+[[query]]
+sql = 'CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public'
+form = "sql"
+expect = []
+
+[[query]]
+sql = 'COPY public.users (id, email, archived) FROM stdin'
+form = "sql"
+expect = []
+
+[[query]]
+sql = "SELECT pg_catalog.setval('public.users_id_seq', 1, false)"
+form = "sql"
+expect = []
+note = "false here is is_called, not set_config's is_local"
+
+[[query]]
+sql = 'ALTER TABLE ONLY public.users ADD CONSTRAINT users_pkey PRIMARY KEY (id)'
+form = "sql"
+expect = []
