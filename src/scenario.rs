@@ -729,6 +729,8 @@ mod tests {
 
     /// Validated on session PgBouncer 1.26.1 with a pool of 1: exactly these hang there
     /// (two clients hold a server connection at once), and every other scenario passes.
+    /// The three multi-statement ones were added later: a second client queries while
+    /// the first holds a transaction open, which a session pool of 1 can't serve.
     /// Scenarios that don't run in session mode are left out.
     #[test]
     fn scenarios_needing_two_session_connections() {
@@ -749,7 +751,10 @@ mod tests {
                 "empty-search-path-from-set-config",
                 "listen-notify-delivered",
                 "load-isolated-between-clients",
+                "multi-statement-begin-left-open",
+                "multi-statement-begin-not-first",
                 "prepared-statement-survives-other-clients",
+                "protocol-multi-statement-transaction",
                 "protocol-statement-names-isolated",
                 "protocol-statement-reparsed-after-close",
                 "protocol-unnamed-statement-survives-other-clients",
