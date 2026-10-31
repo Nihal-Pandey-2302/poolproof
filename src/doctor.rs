@@ -373,7 +373,7 @@ where
 
 /// `SQLSTATE: message` for an error the server sent, except authentication errors
 /// (class 28).
-fn server_refusal(e: &anyhow::Error) -> Option<String> {
+pub(crate) fn server_refusal(e: &anyhow::Error) -> Option<String> {
     let db = e
         .chain()
         .find_map(|c| c.downcast_ref::<tokio_postgres::Error>())?

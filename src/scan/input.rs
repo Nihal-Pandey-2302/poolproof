@@ -5,7 +5,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 
-use super::Query;
+use super::{Input, Query, StatementName};
 
 /// What `scan` reads. Without `--input`, the file extension decides: `.csv` is
 /// pg_stat_statements or csvlog (told apart by the first row), `.log` stderr log,
@@ -25,9 +25,10 @@ pub enum InputFormat {
 }
 
 /// Load the queries in `path` (`-` for stdin), each once with its total calls and
-/// the line where it first appears. Logs and CSV are read as a stream, so memory
-/// grows with the number of distinct queries, not the size of the input.
-pub fn load_queries(path: &Path, format: Option<InputFormat>) -> Result<Vec<Query>> {
+/// the line where it first appears, and from a log the prepared statement names. Logs
+/// and CSV are read as a stream, so memory grows with the number of distinct queries
+/// and names, not the size of the input.
+pub fn load_queries(path: &Path, format: Option<InputFormat>) -> Result<Input> {
     let stdin = path == Path::new("-");
     let format = match format {
         Some(format) => Some(format),
@@ -54,7 +55,7 @@ pub fn load_queries(path: &Path, format: Option<InputFormat>) -> Result<Vec<Quer
 }
 
 /// Like [`load_queries`], from any reader. `format` None means a CSV file of either kind.
-pub fn read_queries(mut reader: impl BufRead, format: Option<InputFormat>) -> Result<Vec<Query>> {
+pub fn read_queries(mut reader: impl BufRead, format: Option<InputFormat>) -> Result<Input> {
     let mut queries = Queries::default();
     let log_lines = match format {
         None => load_csv(reader, None, &mut queries)?,
@@ -71,7 +72,7 @@ pub fn read_queries(mut reader: impl BufRead, format: Option<InputFormat>) -> Re
             0
         }
     };
-    if queries.0.is_empty() && log_lines > 0 {
+    if queries.texts.is_empty() && queries.names.is_empty() && log_lines > 0 {
         bail!(
             "found no logged statements in {log_lines} log lines. Statements are logged with \
              log_statement = 'all' or log_min_duration_statement. poolproof reads the English \
@@ -79,34 +80,87 @@ pub fn read_queries(mut reader: impl BufRead, format: Option<InputFormat>) -> Re
              or another English locale."
         );
     }
-    Ok(queries.into_vec())
+    Ok(queries.into_input())
 }
 
-/// Queries merged by text while reading: total calls and first line.
+/// Queries merged by text while reading: total calls and first line. And statement
+/// names, merged by name.
 #[derive(Default)]
-struct Queries(HashMap<String, (u64, usize)>);
+struct Queries {
+    texts: HashMap<String, (u64, usize)>,
+    names: HashMap<String, Named>,
+}
+
+/// One statement name while reading.
+struct Named {
+    /// `execute` lines from log_statement, and from log_min_duration_statement. A log
+    /// with both settings has each execution twice, once in each.
+    executions: u64,
+    timed_executions: u64,
+    line: usize,
+    query: String,
+}
 
 impl Queries {
     fn add(&mut self, text: &str, calls: u64, line: usize) {
-        match self.0.get_mut(text) {
+        match self.texts.get_mut(text) {
             Some(entry) => {
                 entry.0 += calls;
                 entry.1 = entry.1.min(line);
             }
             None => {
-                self.0.insert(text.to_string(), (calls, line));
+                self.texts.insert(text.to_string(), (calls, line));
             }
         }
     }
 
-    fn into_vec(self) -> Vec<Query> {
-        let mut out: Vec<Query> = self
-            .0
+    /// A log message: its SQL counts as a query when it ran (`statement:`, `execute`),
+    /// and its statement name, if it has one, is kept.
+    fn add_logged(&mut self, logged: &Logged, text: &str, line: usize) {
+        if logged.ran {
+            self.add(text, 1, line);
+        }
+        let Some(name) = logged.name else { return };
+        let named = self.names.entry(name.to_string()).or_insert_with(|| Named {
+            executions: 0,
+            timed_executions: 0,
+            line,
+            query: text.to_string(),
+        });
+        if logged.execute {
+            match logged.timed {
+                true => named.timed_executions += 1,
+                false => named.executions += 1,
+            }
+        }
+        if line < named.line {
+            named.line = line;
+            named.query = text.to_string();
+        }
+    }
+
+    fn into_input(self) -> Input {
+        let mut queries: Vec<Query> = self
+            .texts
             .into_iter()
             .map(|(text, (calls, line))| Query { text, calls, line })
             .collect();
-        out.sort_by(|a, b| a.line.cmp(&b.line).then_with(|| a.text.cmp(&b.text)));
-        out
+        queries.sort_by(|a, b| a.line.cmp(&b.line).then_with(|| a.text.cmp(&b.text)));
+        let mut statement_names: Vec<StatementName> = self
+            .names
+            .into_iter()
+            .map(|(name, n)| StatementName {
+                name,
+                executions: n.executions.max(n.timed_executions),
+                line: n.line,
+                query: n.query,
+            })
+            .collect();
+        statement_names.sort_by(|a, b| a.line.cmp(&b.line).then_with(|| a.name.cmp(&b.name)));
+        Input {
+            queries,
+            statement_names,
+        }
     }
 }
 
@@ -176,8 +230,8 @@ fn load_csv(reader: impl BufRead, want: Option<CsvKind>, out: &mut Queries) -> R
         // translated too, which the caller reports as "no statements found".
         if record.get(CSVLOG_SEVERITY) == Some(b"LOG".as_slice()) {
             let message = String::from_utf8_lossy(record.get(CSVLOG_MESSAGE).unwrap_or_default());
-            if let Some(sql) = logged_sql(&message) {
-                out.add(sql, 1, line(&record));
+            if let Some(logged) = logged(&message) {
+                out.add_logged(&logged, logged.sql, line(&record));
             }
         }
         if !csv.read_byte_record(&mut record)? {
@@ -232,38 +286,104 @@ fn load_sql(text: &str) -> Result<Vec<Query>> {
         .collect())
 }
 
-/// The SQL in a log message from `log_statement` or `log_min_duration_statement`:
-/// `statement: ...` or `execute <name>: ...`, optionally after `duration: N ms  `.
-fn logged_sql(message: &str) -> Option<&str> {
-    let message = match message.strip_prefix("duration: ") {
-        Some(rest) => rest.split_once(" ms  ")?.1,
-        None => message,
+/// A log message from `log_statement` or `log_min_duration_statement` (then after
+/// `duration: N ms  `): `statement: SQL`, or `parse NAME: SQL`, `bind NAME: SQL`,
+/// `execute NAME: SQL` and `execute fetch from NAME: SQL` for the extended protocol,
+/// where NAME can be `STATEMENT/PORTAL` and the unnamed statement is `<unnamed>`.
+struct Logged<'a> {
+    sql: &'a str,
+    /// The prepared statement's name, unless it's the unnamed one.
+    name: Option<&'a str>,
+    /// The statement ran (`statement:` or `execute`), so its SQL counts as a query.
+    ran: bool,
+    /// An `execute` line that starts a run, not a `fetch from` of more rows.
+    execute: bool,
+    /// From log_min_duration_statement.
+    timed: bool,
+}
+
+fn logged(message: &str) -> Option<Logged<'_>> {
+    let (message, timed) = match message.strip_prefix("duration: ") {
+        Some(rest) => (rest.split_once(" ms  ")?.1, true),
+        None => (message, false),
     };
     if let Some(sql) = message.strip_prefix("statement: ") {
-        return Some(sql);
+        return Some(Logged {
+            sql,
+            name: None,
+            ran: true,
+            execute: false,
+            timed,
+        });
     }
-    message.strip_prefix("execute ")?.split_once(": ").map(|(_, sql)| sql)
+    let (verb, rest) = message.split_once(' ')?;
+    let (ran, rest) = match verb {
+        "parse" | "bind" => (false, rest),
+        "execute" => (true, rest),
+        _ => return None,
+    };
+    let (fetch, rest) = match rest.strip_prefix("fetch from ") {
+        Some(rest) => (true, rest),
+        None => (false, rest),
+    };
+    let (name, sql) = rest.split_once(": ")?;
+    let statement = name.split_once('/').map_or(name, |(statement, _)| statement);
+    Some(Logged {
+        sql,
+        name: (statement != "<unnamed>" && !statement.is_empty()).then_some(statement),
+        ran,
+        execute: ran && !fetch,
+        timed,
+    })
 }
 
 /// Postgres stderr log. The line prefix is configurable, so look for `LOG:  `.
 /// Continuation lines of a multi-line statement start with a tab.
 /// Returns the number of lines read.
 fn load_stderr_log(reader: impl BufRead, out: &mut Queries) -> Result<usize> {
-    let mut open: Option<(String, usize)> = None;
+    // The message being read: its SQL so far, its first line, and what it says.
+    struct Open {
+        text: String,
+        line: usize,
+        name: Option<String>,
+        ran: bool,
+        execute: bool,
+        timed: bool,
+    }
+    fn close(open: Open, out: &mut Queries) {
+        let logged = Logged {
+            sql: "",
+            name: open.name.as_deref(),
+            ran: open.ran,
+            execute: open.execute,
+            timed: open.timed,
+        };
+        out.add_logged(&logged, &open.text, open.line);
+    }
+    let mut open: Option<Open> = None;
     let lines = for_each_line(reader, |n, line| {
-        if let (Some((text, _)), Some(rest)) = (open.as_mut(), line.strip_prefix('\t')) {
-            text.push('\n');
-            text.push_str(rest);
+        if let (Some(o), Some(rest)) = (open.as_mut(), line.strip_prefix('\t')) {
+            o.text.push('\n');
+            o.text.push_str(rest);
             return;
         }
-        if let Some((text, first)) = open.take() {
-            out.add(&text, 1, first);
+        if let Some(o) = open.take() {
+            close(o, out);
         }
-        let sql = line.split_once("LOG:  ").and_then(|(_, message)| logged_sql(message));
-        open = sql.map(|sql| (sql.to_string(), n));
+        open = line
+            .split_once("LOG:  ")
+            .and_then(|(_, message)| logged(message))
+            .map(|l| Open {
+                text: l.sql.to_string(),
+                line: n,
+                name: l.name.map(str::to_string),
+                ran: l.ran,
+                execute: l.execute,
+                timed: l.timed,
+            });
     })?;
-    if let Some((text, first)) = open {
-        out.add(&text, 1, first);
+    if let Some(o) = open {
+        close(o, out);
     }
     Ok(lines)
 }
@@ -279,8 +399,8 @@ fn load_json_log(reader: impl BufRead, out: &mut Queries) -> Result<usize> {
         if entry.get("error_severity").and_then(|s| s.as_str()) != Some("LOG") {
             return;
         }
-        if let Some(sql) = entry.get("message").and_then(|m| m.as_str()).and_then(logged_sql) {
-            out.add(sql, 1, n);
+        if let Some(logged) = entry.get("message").and_then(|m| m.as_str()).and_then(logged) {
+            out.add_logged(&logged, logged.sql, n);
         }
     })
 }
@@ -291,6 +411,7 @@ mod tests {
 
     fn read(text: &str, format: Option<InputFormat>) -> Result<Vec<(String, u64, usize)>> {
         Ok(read_queries(text.as_bytes(), format)?
+            .queries
             .into_iter()
             .map(|q| (q.text, q.calls, q.line))
             .collect())
@@ -347,7 +468,7 @@ mod tests {
         let mut log = b"x LOG:  statement: SELECT '".to_vec();
         log.extend_from_slice(&[0xff, 0xfe]);
         log.extend_from_slice(b"'\nx LOG:  statement: LISTEN a\n");
-        let got: Vec<_> = read_queries(log.as_slice(), Some(InputFormat::Log)).unwrap();
+        let got: Vec<_> = read_queries(log.as_slice(), Some(InputFormat::Log)).unwrap().queries;
         assert_eq!(got.len(), 2);
         assert_eq!(got[1].text, "LISTEN a");
     }
@@ -362,6 +483,70 @@ mod tests {
             read(log, Some(InputFormat::Jsonlog)).unwrap(),
             vec![q("LISTEN jobs", 1, 1), q("SELECT 1", 1, 3)]
         );
+    }
+
+    /// (name, executions, line, query) for each statement name, in line order.
+    fn names(text: &str, format: InputFormat) -> Vec<(String, u64, usize, String)> {
+        read_queries(text.as_bytes(), Some(format))
+            .unwrap()
+            .statement_names
+            .into_iter()
+            .map(|n| (n.name, n.executions, n.line, n.query))
+            .collect()
+    }
+
+    #[test]
+    fn statement_names_in_every_log_format() {
+        let messages = [
+            "duration: 0.013 ms  parse _pg3_0: SELECT $1",
+            "duration: 0.022 ms  bind _pg3_0: SELECT $1",
+            "execute _pg3_0: SELECT $1",
+            "duration: 0.009 ms  execute _pg3_0: SELECT $1",
+            "execute _pg3_0: SELECT $1",
+            "duration: 0.010 ms  execute _pg3_0: SELECT $1",
+            "execute <unnamed>: SELECT 2",
+            "execute fetch from S_2/C_3: SELECT 3",
+            "duration: 0.5 ms  bind S_9/C_1: SELECT 4",
+        ];
+        // With both settings each execution is logged twice; it counts once.
+        let want = vec![
+            ("_pg3_0".to_string(), 2, 1, "SELECT $1".to_string()),
+            ("S_2".to_string(), 0, 8, "SELECT 3".to_string()),
+            ("S_9".to_string(), 0, 9, "SELECT 4".to_string()),
+        ];
+        let stderr: String = messages
+            .iter()
+            .map(|m| format!("2026-10-31 09:00:00.000 UTC [7] app@db LOG:  {m}\n"))
+            .collect();
+        assert_eq!(names(&stderr, InputFormat::Log), want);
+        let json: String = messages
+            .iter()
+            .map(|m| format!("{{\"error_severity\":\"LOG\",\"message\":{}}}\n", serde_json::json!(m)))
+            .collect();
+        assert_eq!(names(&json, InputFormat::Jsonlog), want);
+        let csv: String = messages.iter().map(|m| csvlog_row("LOG", m)).collect();
+        assert_eq!(names(&csv, InputFormat::Csvlog), want);
+        // Only executions count as queries: parse and bind lines don't.
+        let queries = read(&stderr, Some(InputFormat::Log)).unwrap();
+        assert_eq!(queries[0], q("SELECT $1", 4, 3));
+    }
+
+    #[test]
+    fn a_statement_name_keeps_its_whole_multi_line_query() {
+        let log = "\
+2026-10-31 09:00:00.000 UTC [7] app@db LOG:  execute S_1: SELECT *
+\tFROM t
+2026-10-31 09:00:00.100 UTC [7] app@db LOG:  duration: 0.4 ms  parse S_1: SELECT *
+\tFROM t
+";
+        assert_eq!(
+            names(log, InputFormat::Log),
+            vec![("S_1".to_string(), 1, 1, "SELECT *\nFROM t".to_string())]
+        );
+        // A log of parse lines alone is not "no statements found".
+        let parse_only = "2026-10-31 09:00:00.000 UTC [7] app@db LOG:  duration: 0.4 ms  parse S_1: SELECT 1\n";
+        let input = read_queries(parse_only.as_bytes(), Some(InputFormat::Log)).unwrap();
+        assert!(input.queries.is_empty() && !input.is_empty());
     }
 
     #[test]

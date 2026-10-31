@@ -61,16 +61,43 @@ First release.
   makes the target ERROR. Scenarios can require `one_server_connection` or
   `several_server_connections`, and session pools of one skip scenarios that need two
   connections at once. `doctor` shows the second probe as "server connections".
+  `ignore_server_requirements = true` on a target (`run --ignore-server-requirements`
+  with `--pooler`) runs those scenarios anyway, for Postgres standing in for its own
+  pooler.
+- `reset = "exact"` (with `pool_size`, 1 to 16): ends only the pooler's own server
+  connections, found through the pooler before each run, and leaves neighbours with the
+  same user and address alone. Before the first scenario it checks that the pool really
+  is that size; when it isn't, or a reset can't account for every server connection,
+  the target is an ERROR. `doctor` runs the same check and ends nothing. With `--pooler`:
+  `--reset exact --pool-size N`. The report records each target's `pool_size`.
 - Scenario steps can be a `precondition`: a boolean query that decides whether a run
-  through the pooler counts.
+  through the pooler counts. Reports say in how many runs it held ("pass (precondition
+  1/5)"), and the HTML trace marks steps that never ran and why. The HTML report shows
+  what the pool probes saw.
+- `poolproof drivers`: runs small programs for real drivers (psycopg 3, pgx,
+  node-postgres, pgjdbc) through each target, with each driver's defaults and with the
+  settings its docs give for poolers, and compares every step with the same program
+  against Postgres. Each driver runs in a pinned container (needs Docker). It takes
+  run's target, reset and output flags, plus `--driver NAME`. Results on Postgres 17.11
+  are in DRIVERS.md.
 - Documented limitations (`limitations/<product>.toml`): a FAIL that exactly matches a
   limitation in the pooler's own docs is marked expected, with the doc link and quote.
   It stays a FAIL. Entries that no longer match are reported as stale.
-  `run --ignore-expected` leaves those FAILs out of the exit code.
+  `run --ignore-expected` leaves those FAILs out of the exit code. The HTML report shows
+  expected FAILs apart from bugs (an outlined chip, separate counts for passes, expected
+  failures and bugs, an optional filter that is off on every load, the doc quoted in the
+  trace), and RESULTS.md marks them "(expected)" in their own section. Both list stale
+  entries.
+- Version notes in the HTML report name both tested versions, e.g. "fails from 0.1.56
+  (passed in 0.1.50)", since the tested versions skip releases.
 - Results for PgBouncer 1.24.1, 1.25.2, 1.26.1 (also with TLS between client and
   pooler), PgDog 0.1.50, 0.1.56, 0.1.62 (also with pub/sub), Supavisor 2.9.13,
   2.10.0-rc.1 (also in strict mode), PgCat 1.2.0 and Odyssey 1.5.2 on Postgres 17.11 and
   18.4, built into the binary.
+- Session-mode targets for PgBouncer 1.26.1, PgDog 0.1.62 and Supavisor 2.10.0-rc.1 in
+  `targets-variants.toml`, started with the test bed's `variants` profile
+  (`COMPOSE_PROFILES=variants`). Their results are not published yet.
+  `scripts/testbed.sh targets OFFSET FILE` shifts the ports in any targets file.
 - `run --compare-to BASE.json`: compares the run with a saved JSON report and fails only
   on regressions (PASS to FAIL or ERROR, a FAIL getting worse, FAIL to ERROR or back),
   as far as `--fail-on` counts them. Fixed, milder and one-sided results are listed but
@@ -170,6 +197,9 @@ First release.
   not inspected.
 - `scan` counts the bodies the PL/pgSQL parser could not read, which are only checked for
   words: in the text summary, as `uninspected` in JSON, and as a SARIF notification.
+- `scan` names the driver behind a log's prepared statements and, with `--pooler`, checks
+  psycopg, pgjdbc and pgx against their driver results; a `scan --pooler` step on such
+  logs can now fail.
 
 ### Changed
 

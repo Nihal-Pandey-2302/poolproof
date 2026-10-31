@@ -258,9 +258,37 @@ pooler.
   which the pooler then reopens.
 - `"all"` ends every other session on the database. Against a Postgres that isn't on
   this machine it needs `run --yes`.
+- `"exact"` ends only the pooler's own server connections, so neighbours with the same
+  user and address (a NAT, a sidecar) are left alone. It needs `pool_size`, the pool
+  size the pooler has for this database and user (1 to 16), and a mode that can hold a
+  transaction (not statement). Before each run it holds `pool_size` transactions through
+  the pooler, each reading its own backend's pid and start time, ends exactly those
+  backends, then holds them again to learn the fresh ones, so a server still busy at the
+  next reset (an abandoned query) is ended too. In session mode the held clients
+  disconnect to give their servers back, and the pooler runs its own reset query before
+  the next client gets one. Before the first scenario it checks that the pool really is
+  that size: `pool_size` transactions can be held, and one client more waits (or is
+  refused) until they end. If not, or if a reset can't account for every server
+  connection, the target is an ERROR, never a partial reset; the message lists the
+  sessions of the pooler's user and address it didn't see, which it never ends.
+  `doctor` runs the same check and shows the pids a reset would end, ending nothing.
 - A list of statements runs as written.
 - Without `reset`, nothing is reset: leaks carry over between scenarios, and `run`
-  warns. With `--pooler` and `--direct`, `--reset auto` or `--reset all` picks one.
+  warns about it.
+
+With `--pooler` and `--direct` instead of a targets file, `--reset auto`, `--reset all` or
+`--reset exact --pool-size N` picks the reset.
+
+For `"exact"`, `pool_size` must be every server connection the pooler may open for the
+database and user, extra pools included:
+
+| Pooler | `pool_size` is | Also |
+|---|---|---|
+| PgBouncer | `default_pool_size` (or the database's `pool_size`) | `reserve_pool_size = 0`, the default: a reserve pool adds connections |
+| PgDog | `default_pool_size` (or the user's `pool_size`) | |
+| PgCat | the pool's `pool_size` | |
+| Odyssey | the route's `pool_size` | |
+| Supavisor | the tenant user's `pool_size` | 2.10.0-rc.1 can open a second server connection when the only one isn't back in the pool yet; the start check then fails, so exact is an ERROR on that target |
 
 A user that isn't a superuser needs `pg_signal_backend` and `pg_read_all_stats` to end
 other roles' sessions, and can never end a superuser's. Without `pg_read_all_stats`,
@@ -408,6 +436,25 @@ function, since it runs whenever the function is called. Parameters a function s
 own `SET` clause are restored on return, so setting them in its body is fine. Dynamic
 `EXECUTE` strings are not inspected, and a body the PL/pgSQL parser can't read is only
 checked for words, with a count at the end.
+
+### Which driver prepares statements
+
+From a log, scan also reads the names of prepared statements (`parse`, `bind` and
+`execute` lines; pg_stat_statements doesn't keep them). Statement names like psycopg 3's
+(`_pg3_0`), pgjdbc's (`S_1`), pgx v5's (`stmtcache_...`), asyncpg's
+(`__asyncpg_stmt_1__`) and sqlx's (`sqlx_s_1`) give one `driver-prepared-statements`
+warning per driver, with the driver's setting for transaction pooling. Any app could
+use the same names, so it says the names look like that driver's. Other names, an app's
+own or other drivers' (ActiveRecord's `a1`, ...), give no finding, which doesn't mean
+they are safe. Behind PgBouncer, PgDog or Odyssey the server sees the pooler's own names
+(`PGBOUNCER_1`, `__pgdog_1`, `odyssey_pstmt_1`), so scan notes that instead.
+
+With `--pooler`, psycopg, pgjdbc and pgx findings are checked against that driver's
+results on the pooler (see [Real drivers](#real-drivers)), from the same Postgres version
+when there are some, else the newest. The line under it says how the driver does with its
+setting for poolers. asyncpg and sqlx aren't tested yet, so theirs say "no driver results"
+and stay warnings. Like any finding, BREAKS or REJECTED makes the exit code 1, so a
+`scan --pooler` step on a log with these names can fail where it passed before.
 
 ## Real drivers
 

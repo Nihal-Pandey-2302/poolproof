@@ -36,6 +36,9 @@ pub struct Target {
     /// for Postgres standing in for its own pooler, where every client has its own
     /// backend.
     pub ignore_server_requirements: bool,
+    /// How many server connections the pooler keeps for this target's database and
+    /// user, as configured there. `reset = "exact"` needs it.
+    pub pool_size: Option<u32>,
 }
 
 /// A target's `reset`. The runner turns `Auto` and `All` into statements.
@@ -47,6 +50,9 @@ pub enum Reset {
     Auto,
     /// End every other session on the database.
     All,
+    /// End only the pooler's own server connections: the backends found by holding
+    /// `pool_size` transactions through the pooler.
+    Exact,
     /// The user's own statements.
     Statements(Vec<Statement>),
 }
@@ -58,17 +64,18 @@ impl Reset {
             Reset::None => "none",
             Reset::Auto => "auto",
             Reset::All => "all",
+            Reset::Exact => "exact",
             Reset::Statements(_) => "custom",
         }
     }
 }
 
-/// `reset` as written: "auto", "all", or a list of statements.
+/// `reset` as written: "auto", "all", "exact", or a list of statements.
 #[derive(Deserialize)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(untagged)]
 enum ResetFile {
-    #[cfg_attr(test, schemars(extend("enum" = ["auto", "all"])))]
+    #[cfg_attr(test, schemars(extend("enum" = ["auto", "all", "exact"])))]
     Kind(String),
     Statements(Vec<String>),
 }
@@ -161,6 +168,11 @@ struct TargetFile {
     /// probes say the pooler has otherwise. For Postgres used as its own pooler.
     #[serde(default)]
     ignore_server_requirements: bool,
+    /// The pooler's pool size for this database and user (1 to 16), as configured
+    /// there. Needed by reset = "exact".
+    #[serde(default)]
+    #[cfg_attr(test, schemars(range(min = 1, max = 16)))]
+    pool_size: Option<u32>,
 }
 
 impl Targets {
@@ -193,6 +205,7 @@ impl Targets {
                 config: None,
                 reset,
                 ignore_server_requirements: false,
+                pool_size: None,
             }],
         })
     }
@@ -212,7 +225,7 @@ impl Target {
             let url = expand_vars(url, env, quote, &may_be_empty).with_context(|| field.to_string())?;
             Endpoint::resolve(&url, env).with_context(|| field.to_string())
         };
-        Ok(Target {
+        Target {
             pooler: endpoint("pooler", &t.pooler)?,
             direct: endpoint("direct", &t.direct)?,
             reset: match t.reset {
@@ -220,7 +233,8 @@ impl Target {
                 Some(ResetFile::Kind(kind)) => match kind.as_str() {
                     "auto" => Reset::Auto,
                     "all" => Reset::All,
-                    _ => bail!("reset must be \"auto\", \"all\" or a list of statements"),
+                    "exact" => Reset::Exact,
+                    _ => bail!("reset must be \"auto\", \"all\", \"exact\" or a list of statements"),
                 },
                 // An empty list resets nothing, and should warn like a missing one.
                 Some(ResetFile::Statements(statements)) if statements.is_empty() => Reset::None,
@@ -242,8 +256,35 @@ impl Target {
             version: t.version,
             config: t.config,
             ignore_server_requirements: t.ignore_server_requirements,
-        })
+            pool_size: t.pool_size,
+        }
+        .checked()
     }
+
+    /// The checks that need several fields at once.
+    fn checked(self) -> Result<Self> {
+        check_exact(&self.reset, self.pool_size, self.mode)?;
+        Ok(self)
+    }
+}
+
+/// `pool_size` is 1 to 16, and `reset = "exact"` needs it and a mode that can hold a
+/// transaction.
+pub fn check_exact(reset: &Reset, pool_size: Option<u32>, mode: PoolMode) -> Result<()> {
+    if let Some(n) = pool_size
+        && !(1..=16).contains(&n)
+    {
+        bail!("pool_size must be 1 to 16 (got {n})");
+    }
+    if let Reset::Exact = reset {
+        if pool_size.is_none() {
+            bail!("reset = \"exact\" needs pool_size, the pooler's pool size for this database and user");
+        }
+        if mode == PoolMode::Statement {
+            bail!("reset = \"exact\" holds transactions through the pooler, which statement mode can't");
+        }
+    }
+    Ok(())
 }
 
 /// Whether a value between `before` and `after` is a URL's password: after
@@ -747,7 +788,24 @@ mod tests {
             ("SELECT 1", "SELECT ${X}".into(), 2)
         );
         let err = format!("{:#}", reset("reset = 'everything'").unwrap_err());
-        assert!(err.contains("\"auto\", \"all\" or a list"), "{err}");
+        assert!(err.contains("\"auto\", \"all\", \"exact\" or a list"), "{err}");
+        assert!(matches!(reset("reset = 'exact'\npool_size = 2").unwrap(), Reset::Exact));
+        let err = |line: &str| format!("{:#}", reset(line).unwrap_err());
+        assert!(err("reset = 'exact'").contains("needs pool_size"));
+        for n in [0, 17] {
+            assert!(
+                err(&format!("pool_size = {n}")).contains("pool_size must be 1 to 16"),
+                "{n}"
+            );
+        }
+        let statement = |line: &str| {
+            let file: TargetFile = toml::from_str(&format!(
+                "name = 't'\nmode = 'statement'\npooler = 'postgres://u@h/db'\ndirect = 'postgres://u@h/db'\n{line}"
+            ))
+            .unwrap();
+            format!("{:#}", Target::from_file(file, &env_of(&[])).err().unwrap())
+        };
+        assert!(statement("reset = 'exact'\npool_size = 1").contains("statement mode can't"));
     }
 
     #[test]

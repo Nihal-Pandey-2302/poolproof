@@ -19,7 +19,21 @@ pub fn pooler_summary(check: &scan::PoolerCheck) -> String {
         [] => String::new(),
         docs => format!(" (documented: {})", docs.join(", ")),
     };
-    format!("on {}: {}{documented}", check.target, parts.join(", "))
+    let from = match (check.other_postgres, &check.postgres) {
+        (true, Some(pg)) => format!(", driver results from Postgres {pg}"),
+        _ => String::new(),
+    };
+    format!("on {}{from}: {}{documented}", check.target, parts.join(", "))
+}
+
+/// A driver finding's documented fix and how it does on the pooler.
+pub fn fix_summary(fix: &scan::FixCheck) -> String {
+    let how = match fix.status {
+        scan::PoolerStatus::Ok => "passes",
+        scan::PoolerStatus::Rejected => "still fails with an error",
+        scan::PoolerStatus::Breaks => "still fails silently",
+    };
+    format!("with {}: {how}", fix.setting)
 }
 
 pub fn print_scan(report: &scan::Report) {
@@ -41,6 +55,12 @@ pub fn print_scan(report: &scan::Report) {
         println!("{label:<8} {:<27} calls={:<8} {query}", f.rule, f.calls);
         if let Some(check) = &f.on_pooler {
             println!("         {}", pooler_summary(check));
+            if let Some(fix) = &check.fix {
+                println!("         {}", fix_summary(fix));
+            }
+        }
+        if let Some(note) = &f.pooler_note {
+            println!("         {note}");
         }
         // How to fix it, unless the pooler was shown to handle it.
         if f.on_pooler.as_ref().is_none_or(|c| c.status != scan::PoolerStatus::Ok) {
@@ -83,8 +103,12 @@ pub fn print_scan(report: &scan::Report) {
     print_uninspected(report);
 }
 
-/// Bodies only word-scanned are not parse failures, but the reader should know.
+/// Bodies only word-scanned are not parse failures, but the reader should know. Nor
+/// are the notes.
 fn print_uninspected(report: &scan::Report) {
+    for note in &report.notes {
+        println!("Note: {note}");
+    }
     if report.uninspected > 0 {
         println!(
             "Function and DO bodies not fully parsed, so only their words were checked: {}",

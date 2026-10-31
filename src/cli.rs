@@ -110,6 +110,11 @@ enum Command {
         /// With --pooler: the reset to preview, as in `run --reset`.
         #[arg(long, value_enum, requires = "pooler")]
         reset: Option<ResetArg>,
+        /// With --pooler: the pooler's pool size for this database and user, as
+        /// pool_size in a targets file. Needed by `--reset exact`.
+        #[arg(long, requires = "pooler", value_parser = clap::value_parser!(u32).range(1..=16))]
+        pool_size: Option<u32>,
+
         /// Preview reset = "all" as `run --yes` would allow it.
         #[arg(long)]
         yes: bool,
@@ -159,6 +164,10 @@ struct SuiteArgs {
     /// Without it, nothing is reset.
     #[arg(long, value_enum, requires = "pooler")]
     reset: Option<ResetArg>,
+    /// With --pooler: the pooler's pool size for this database and user, as
+    /// pool_size in a targets file. Needed by `--reset exact`.
+    #[arg(long, requires = "pooler", value_parser = clap::value_parser!(u32).range(1..=16))]
+    pool_size: Option<u32>,
     /// With --pooler: run scenarios that need one server connection (or several) even
     /// when the probes say otherwise, as ignore_server_requirements in a targets file.
     /// For Postgres standing in for its own pooler.
@@ -244,6 +253,8 @@ enum DoctorFormat {
 pub enum ResetArg {
     Auto,
     All,
+    /// End only the pooler's own server connections; needs --pool-size.
+    Exact,
 }
 
 pub async fn run(cli: Cli) -> Result<ExitCode> {
@@ -296,7 +307,13 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
                 }
                 let (results, target) = report::find_target(&reports, pooler, postgres.as_deref())?;
                 for finding in &mut report.findings {
-                    finding.on_pooler = report::check_finding(results, target, &finding.scenarios);
+                    match finding.driver {
+                        // From the driver results, not the core ones.
+                        Some(_) => {
+                            scan::check_driver(finding, &target.name, target.postgres.as_deref(), postgres.is_some())
+                        }
+                        None => finding.on_pooler = report::check_finding(results, target, &finding.scenarios),
+                    }
                 }
                 // Proven problems first. Findings without results keep their place after them.
                 let rank = |f: &scan::Finding| match f.on_pooler.as_ref().map(|c| c.status) {
@@ -346,13 +363,14 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
             direct,
             mode,
             reset,
+            pool_size,
             yes,
             scenarios,
             only,
             format,
             strict,
         } => {
-            let targets = load_targets(&targets, pooler, direct, mode, reset)?;
+            let targets = load_targets(&targets, pooler, direct, mode, reset, pool_size)?;
             let scenarios = load_scenarios(scenarios.as_deref())?;
             let selected = runner::suite::select(&targets.targets, &only)?;
             let width = selected.iter().map(|t| t.name.len()).max().unwrap_or(0);
@@ -406,6 +424,7 @@ async fn run_suite(
         direct,
         mode,
         reset,
+        pool_size,
         ignore_server_requirements,
         yes,
         filter,
@@ -419,7 +438,7 @@ async fn run_suite(
         ignore_expected,
         limitations,
     } = suite;
-    let mut targets = load_targets(&targets, pooler, direct, mode, reset)?;
+    let mut targets = load_targets(&targets, pooler, direct, mode, reset, pool_size)?;
     if ignore_server_requirements {
         targets.targets[0].ignore_server_requirements = true;
     }
@@ -604,6 +623,7 @@ fn load_targets(
     direct: Option<String>,
     mode: PoolMode,
     reset: Option<ResetArg>,
+    pool_size: Option<u32>,
 ) -> Result<Targets> {
     match (pooler, direct) {
         (Some(pooler), Some(direct)) => {
@@ -611,8 +631,15 @@ fn load_targets(
                 None => Reset::None,
                 Some(ResetArg::Auto) => Reset::Auto,
                 Some(ResetArg::All) => Reset::All,
+                Some(ResetArg::Exact) => Reset::Exact,
             };
-            Targets::single(&pooler, &direct, mode, reset)
+            if matches!(reset, Reset::Exact) && pool_size.is_none() {
+                anyhow::bail!("--reset exact needs --pool-size, the pooler's pool size for this database and user");
+            }
+            crate::targets::check_exact(&reset, pool_size, mode).map_err(|e| anyhow::anyhow!("--reset: {e}"))?;
+            let mut targets = Targets::single(&pooler, &direct, mode, reset)?;
+            targets.targets[0].pool_size = pool_size;
+            Ok(targets)
         }
         _ => Targets::load(file),
     }
