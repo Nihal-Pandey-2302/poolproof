@@ -9,15 +9,21 @@ teardown = ["DROP TABLE IF EXISTS pp_hog_pid"]
 
 [[step]]
 client = "a"
+simple = "BEGIN"
+
+[[step]]
+client = "a"
 simple = "PREPARE pp_hog_stmt AS SELECT 'from a'::text"
 
-# a's backend, so c can check it took it. This INSERT runs after a's PREPARE as its own
-# query: on a pool that doesn't hand a client back the connection it just released, the
-# two can run on different backends, and the precondition then checks the wrong one. It
-# stays a separate step, like in set-survives-server-change.
+# a's backend, so c can check it took it. In the same transaction as the PREPARE,
+# so both ran on the server connection the precondition then checks.
 [[step]]
 client = "a"
 simple = "INSERT INTO pp_hog_pid VALUES ('a', pg_backend_pid()) ON CONFLICT (who) DO UPDATE SET pid = excluded.pid"
+
+[[step]]
+client = "a"
+simple = "COMMIT"
 
 # c holds a's old backend in an open transaction, so a's next query has to run on
 # another one. If c got a different backend, the run proves nothing and is a SKIP.

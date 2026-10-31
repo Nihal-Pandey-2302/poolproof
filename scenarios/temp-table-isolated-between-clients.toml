@@ -1,8 +1,17 @@
 name = "temp-table-isolated-between-clients"
 description = "A temp table created by one client must not be visible to another client."
 refs = ["https://github.com/pgdogdev/pgdog/issues/1733"]
-# Counts only when b really reached a's server connection.
-same_backend = [[2, 4]]
+# Counts only when b really reached a's server connection. Each state step and the
+# evidence before it share a transaction, so they run on one server connection.
+same_backend = [[2, 6]]
+
+[[step]]
+client = "a"
+simple = "BEGIN"
+
+[[step]]
+client = "a"
+evidence = true
 
 [[step]]
 client = "a"
@@ -10,6 +19,14 @@ simple = "CREATE TEMP TABLE pp_tmp (x int)"
 
 [[step]]
 client = "a"
+simple = "COMMIT"
+
+[[step]]
+client = "b"
+simple = "BEGIN"
+
+[[step]]
+client = "b"
 evidence = true
 
 [[step]]
@@ -18,4 +35,4 @@ simple = "SELECT count(*) FROM pp_tmp"
 
 [[step]]
 client = "b"
-evidence = true
+simple = "COMMIT"

@@ -1,7 +1,16 @@
 name = "deallocate-all-isolated"
 description = "DEALLOCATE ALL from one client must not remove another client's prepared statements."
-# Counts only when b really reached a's server connection.
-same_backend = [[3, 5]]
+# Counts only when b's DEALLOCATE ALL ran on the server connection a prepared on and
+# executes on. Each step and its evidence share a transaction, so they run on one.
+same_backend = [[2, 6], [6, 10]]
+
+[[step]]
+client = "a"
+simple = "BEGIN"
+
+[[step]]
+client = "a"
+evidence = true
 
 [[step]]
 client = "a"
@@ -9,11 +18,31 @@ prepare = "SELECT 'from a'::text"
 name = "q"
 
 [[step]]
+client = "a"
+simple = "COMMIT"
+
+[[step]]
+client = "b"
+simple = "BEGIN"
+
+[[step]]
+client = "b"
+evidence = true
+
+[[step]]
 client = "b"
 simple = "DEALLOCATE ALL"
 
 [[step]]
 client = "b"
+simple = "COMMIT"
+
+[[step]]
+client = "a"
+simple = "BEGIN"
+
+[[step]]
+client = "a"
 evidence = true
 
 [[step]]
@@ -22,4 +51,4 @@ execute = "q"
 
 [[step]]
 client = "a"
-evidence = true
+simple = "COMMIT"

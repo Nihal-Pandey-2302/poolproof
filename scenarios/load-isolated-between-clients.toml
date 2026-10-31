@@ -4,8 +4,17 @@ description = "A library one client loads with LOAD must not show up for another
 # see a value, so the scenario would pass without testing anything.
 requires = ["superuser"]
 setup = ["DO $$ BEGIN IF current_setting('auto_explain.log_min_duration', true) IS NOT NULL THEN RAISE 'auto_explain is already loaded or configured'; END IF; END $$"]
-# Counts only when b really reached a's server connection.
-same_backend = [[2, 5]]
+# Counts only when b really reached a's server connection. Each state step and the
+# evidence before it share a transaction, so they run on one server connection.
+same_backend = [[2, 7]]
+
+[[step]]
+client = "a"
+simple = "BEGIN"
+
+[[step]]
+client = "a"
+evidence = true
 
 # auto_explain ships with Postgres and defines auto_explain.* settings once loaded.
 [[step]]
@@ -14,7 +23,7 @@ simple = "LOAD 'auto_explain'"
 
 [[step]]
 client = "a"
-evidence = true
+simple = "COMMIT"
 
 [[step]]
 client = "a"
@@ -22,8 +31,16 @@ simple = "SELECT current_setting('auto_explain.log_min_duration', true) AS loade
 
 [[step]]
 client = "b"
-simple = "SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b"
+simple = "BEGIN"
 
 [[step]]
 client = "b"
 evidence = true
+
+[[step]]
+client = "b"
+simple = "SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b"
+
+[[step]]
+client = "b"
+simple = "COMMIT"

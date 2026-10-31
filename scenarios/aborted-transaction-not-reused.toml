@@ -23,10 +23,19 @@ simple = "SET LOCAL statement_timeout = 100; SELECT pg_sleep(1); COMMIT"
 client = "a"
 disconnect = true
 
+# b's evidence and query share a transaction, so they run on one server connection.
+[[step]]
+client = "b"
+simple = "BEGIN"
+
+[[step]]
+client = "b"
+evidence = true
+
 [[step]]
 client = "b"
 simple = "SELECT 'b ok'::text"
 
 [[step]]
 client = "b"
-evidence = true
+simple = "COMMIT"
