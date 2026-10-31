@@ -8,14 +8,24 @@ use crate::report::{ResultRow, StepOutcomes, TargetInfo};
 use crate::scenario::Scenario;
 use crate::targets::Target;
 
-/// Runs every scenario on every target, in order. `text` prints each result as it
-/// comes in; `verbose` adds every step's outcomes to that.
+/// How `run` goes about it.
+#[derive(Default)]
+pub struct RunOptions<'a> {
+    /// Only scenarios whose name contains this.
+    pub filter: Option<&'a str>,
+    /// Print each result as it comes in.
+    pub text: bool,
+    /// With `text`: every step's outcomes too.
+    pub verbose: bool,
+    /// Run each baseline twice and report a scenario whose results differ as ERROR.
+    pub check_scenarios: bool,
+}
+
+/// Runs every scenario on every target, in order.
 pub async fn run(
     targets: &[Target],
     scenarios: &[Scenario],
-    filter: Option<&str>,
-    text: bool,
-    verbose: bool,
+    opts: &RunOptions<'_>,
 ) -> Result<(Vec<TargetInfo>, Vec<ResultRow>)> {
     // Not configurable yet; F2 adds the flags.
     let timeouts = Timeouts::default();
@@ -36,7 +46,7 @@ pub async fn run(
                 target.name
             );
         }
-        let applies = |s: &Scenario| filter.is_none_or(|f| s.name.contains(f)) && s.modes.contains(&target.mode);
+        let applies = |s: &Scenario| opts.filter.is_none_or(|f| s.name.contains(f)) && s.modes.contains(&target.mode);
         // Without both URLs answering, every scenario would compare two failures.
         let unreachable = if scenarios.iter().any(applies) {
             preflight(&target.pooler, &target.direct, &timeouts).await.err()
@@ -47,7 +57,7 @@ pub async fn run(
             eprintln!("error: target '{}': {reason}", target.name);
         }
         for s in scenarios {
-            if filter.is_some_and(|f| !s.name.contains(f)) {
+            if opts.filter.is_some_and(|f| !s.name.contains(f)) {
                 continue;
             }
             let (verdict, steps, runs, failures) = if !s.modes.contains(&target.mode) {
@@ -56,11 +66,19 @@ pub async fn run(
             } else if let Some(reason) = &unreachable {
                 (Verdict::Error { reason: reason.clone() }, vec![], 0, 0)
             } else {
-                let checked = check(s, &target.pooler, &target.direct, &target.reset, &timeouts).await;
+                let checked = check(
+                    s,
+                    &target.pooler,
+                    &target.direct,
+                    &target.reset,
+                    &timeouts,
+                    opts.check_scenarios,
+                )
+                .await;
                 (checked.verdict, checked.steps, checked.runs, checked.failures)
             };
-            if text {
-                print_result(&target.name, s, &verdict, &steps, runs, failures, verbose);
+            if opts.text {
+                print_result(&target.name, s, &verdict, &steps, runs, failures, opts.verbose);
             }
             let steps = steps
                 .into_iter()
