@@ -200,6 +200,8 @@ fn scenario(driver: &Driver, variant: &Variant, case: &Case) -> Scenario {
         ),
         refs,
         modes: vec![PoolMode::Session, PoolMode::Transaction, PoolMode::Statement],
+        // Always 1. A broken program that fails with no differing step (see
+        // `runner::check`) would make repeated runs look like they failed differently.
         repeat: 1,
         requires: vec![],
         timeout_ms: None,
@@ -250,7 +252,8 @@ fn connection_env(endpoint: &Endpoint) -> Result<Vec<(&'static str, String)>> {
     let config = endpoint.config();
     let host = match config.get_hosts().first() {
         Some(Host::Tcp(host)) => host.clone(),
-        Some(_) => bail!("drivers connect over TCP only, not a Unix socket"),
+        #[cfg(unix)]
+        Some(Host::Unix(_)) => bail!("drivers connect over TCP only, not a Unix socket"),
         None => bail!("the URL has no host"),
     };
     let tls = endpoint.tls();
@@ -599,6 +602,7 @@ mod tests {
         names.sort();
         names.dedup();
         assert_eq!(names.len(), all.len(), "scenario names must be unique");
+        assert!(all.iter().all(|s| s.repeat == 1), "driver cases run once");
         // Scenario metadata carries the driver version, the target name doesn't.
         let s = all
             .iter()
