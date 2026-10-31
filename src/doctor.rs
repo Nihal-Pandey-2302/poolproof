@@ -260,7 +260,8 @@ where
     }
     let (again, pid) = probe_once(&connect, within, late, in_transaction).await?;
     Ok(match again {
-        Observed::Waited => (Observed::Waited, pid),
+        // Sharing a backend inside a transaction is the pooler's bug whenever it shows.
+        Observed::Waited | Observed::Shared => (again, pid),
         _ => (Observed::Unclear("waited once, then got another backend".into()), pid),
     })
 }
@@ -510,6 +511,9 @@ mod tests {
         /// 600 ms later. Waiters get servers first come, first served, so the first
         /// one waiting gets a's freed server.
         LazySecond,
+        /// Like `SessionOfOne` for the first two clients; after that every client gets
+        /// backend 7 at once, even inside another's transaction.
+        WaitsThenShares,
     }
 
     /// A Postgres server that knows only startup and `SELECT pg_backend_pid()`.
@@ -546,15 +550,17 @@ mod tests {
                     });
                     continue;
                 }
+                let n = next.fetch_add(1, Ordering::SeqCst);
                 let pid = match pool {
                     // One backend, whoever holds it.
-                    Pool::Shared | Pool::SessionOfOne => 7,
-                    _ => next.fetch_add(1, Ordering::SeqCst),
+                    Pool::Shared | Pool::SessionOfOne | Pool::WaitsThenShares => 7,
+                    _ => n,
                 };
                 let backend = backend.clone();
                 tokio::spawn(async move {
                     let _held = match pool {
                         Pool::SessionOfOne => Some(backend.acquire_owned().await.unwrap()),
+                        Pool::WaitsThenShares if n < 102 => Some(backend.acquire_owned().await.unwrap()),
                         Pool::RefusesWhileHeld(code) => match backend.try_acquire_owned() {
                             Ok(held) => Some(held),
                             Err(_) => return drop(refuse(socket, code).await),
@@ -695,6 +701,8 @@ mod tests {
         // and the second round finds two servers.
         let lazy = run_probe(Pool::LazySecond, true).await.unwrap();
         assert_eq!(lazy, Observed::Unclear("waited once, then got another backend".into()));
+        // A backend shared inside a transaction in the second round stays visible.
+        assert_eq!(run_probe(Pool::WaitsThenShares, true).await.unwrap(), Observed::Shared);
     }
 
     #[tokio::test]
