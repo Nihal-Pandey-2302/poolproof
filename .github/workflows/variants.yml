@@ -60,7 +60,10 @@ jobs:
           cargo build --release
           # Exit 1 means some scenario failed, which is expected; 2 means poolproof itself broke.
           set +e
-          ./target/release/poolproof run --targets targets-variants.toml --check-scenarios --format json > new.json
+          # PgDog with its query parser on (pgdog-0.1.62-full) answers some reads with its own
+          # error only after about 10s, two 5s checkouts; the default 10s step timeout would
+          # race it. Same timeout as scripts/update-results.sh --variants.
+          ./target/release/poolproof run --targets targets-variants.toml --step-timeout 15s --check-scenarios --format json > new.json
           code=$?
           set -e
           if [ "$code" -gt 1 ]; then exit "$code"; fi

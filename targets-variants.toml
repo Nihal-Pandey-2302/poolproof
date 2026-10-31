@@ -72,3 +72,54 @@ pooler = "postgres://postgres.pppool4:postgres@127.0.0.1:56462/app?sslmode=disab
 direct = "postgres://postgres:postgres@127.0.0.1:55432/app?sslmode=disable"
 mode = "transaction"
 reset = "all"
+
+# Settings real deployments change, in transaction mode with a pool of one. Each differs
+# from its default target in targets.toml by that one setting:
+# - noprep: max_prepared_statements = 0, protocol prepared statements not tracked (as
+#   before PgBouncer 1.21, and in configs that set it to 0)
+# - reset-always: server_reset_query_always = 1, DISCARD ALL after every transaction
+# - full: prepared_statements = "full", PgDog also rewrites SQL PREPARE and EXECUTE.
+#   It turns PgDog's query parser on, so this column also stands for parser-on setups
+#   (sharding, read/write split): with the parser on and default prepared statements,
+#   all 49 scenarios gave the same verdicts on PgDog 0.1.62.
+# - prepcache: prepared_statements_cache_size = 500, PgCat caches protocol statements
+
+[[target]]
+name = "pgbouncer-1.26.1-noprep"
+product = "pgbouncer"
+version = "1.26.1"
+config = "noprep"
+pooler = "postgres://postgres:postgres@127.0.0.1:56447/app?sslmode=disable"
+direct = "postgres://postgres:postgres@127.0.0.1:55432/app?sslmode=disable"
+mode = "transaction"
+reset = "all"
+
+[[target]]
+name = "pgbouncer-1.26.1-reset-always"
+product = "pgbouncer"
+version = "1.26.1"
+config = "reset-always"
+pooler = "postgres://postgres:postgres@127.0.0.1:56448/app?sslmode=disable"
+direct = "postgres://postgres:postgres@127.0.0.1:55432/app?sslmode=disable"
+mode = "transaction"
+reset = "all"
+
+[[target]]
+name = "pgdog-0.1.62-full"
+product = "pgdog"
+version = "0.1.62"
+config = "full"
+pooler = "postgres://postgres:postgres@127.0.0.1:56457/app?sslmode=disable"
+direct = "postgres://postgres:postgres@127.0.0.1:55432/app?sslmode=disable"
+mode = "transaction"
+reset = "all"
+
+[[target]]
+name = "pgcat-1.2.0-prepcache"
+product = "pgcat"
+version = "1.2.0"
+config = "prepcache"
+pooler = "postgres://postgres:postgres@127.0.0.1:56482/app?sslmode=disable"
+direct = "postgres://postgres:postgres@127.0.0.1:55432/app?sslmode=disable"
+mode = "transaction"
+reset = "all"

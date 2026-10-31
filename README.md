@@ -686,9 +686,9 @@ Not covered yet:
 
 - RDS Proxy and hosted poolers are not in the test bed; they can be tested with the
   recipes in [docs/managed-poolers.md](docs/managed-poolers.md).
-- The variant targets (`targets-variants.toml`: session mode and pool_size 4 so far) run
-  nightly on Postgres 18.4 only, and their results are published on the site under their
-  own heading. Non-default pooler settings have no targets yet.
+- The variant targets (`targets-variants.toml`: session mode, pool_size 4 and four
+  non-default pooler settings) run nightly on Postgres 18.4 only; their results are
+  published on the site under their own heading.
 - `scripts/pgdog-ref.sh` has not been checked with release builds, its default.
 
 ## License

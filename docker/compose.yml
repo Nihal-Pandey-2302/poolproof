@@ -164,6 +164,26 @@ services:
       postgres:
         condition: service_healthy
     ports: ["127.0.0.1:${PP_PORT_56446:-56446}:6432"]
+  pgbouncer-1.26.1-noprep:
+    profiles: [variants]
+    image: edoburu/pgbouncer:v1.26.1-p0
+    volumes:
+      - ./pgbouncer/pgbouncer-noprep.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports: ["127.0.0.1:${PP_PORT_56447:-56447}:6432"]
+  pgbouncer-1.26.1-reset-always:
+    profiles: [variants]
+    image: edoburu/pgbouncer:v1.26.1-p0
+    volumes:
+      - ./pgbouncer/pgbouncer-reset-always.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports: ["127.0.0.1:${PP_PORT_56448:-56448}:6432"]
 
   pgdog-0.1.50:
     <<: *pgdog
@@ -200,6 +220,14 @@ services:
       - ./pgdog/pgdog-pool4.toml:/pgdog/pgdog.toml:ro
       - ./pgdog/users.toml:/pgdog/users.toml:ro
     ports: ["127.0.0.1:${PP_PORT_56456:-56456}:6432"]
+  pgdog-0.1.62-full:
+    <<: *pgdog
+    profiles: [variants]
+    image: ghcr.io/pgdogdev/pgdog:v0.1.62
+    volumes:
+      - ./pgdog/pgdog-full.toml:/pgdog/pgdog.toml:ro
+      - ./pgdog/users.toml:/pgdog/users.toml:ro
+    ports: ["127.0.0.1:${PP_PORT_56457:-56457}:6432"]
 
   pgcat-1.2.0:
     image: ghcr.io/postgresml/pgcat:v1.2.0
@@ -210,6 +238,16 @@ services:
       postgres:
         condition: service_healthy
     ports: ["127.0.0.1:${PP_PORT_56481:-56481}:6432"]
+  pgcat-1.2.0-prepcache:
+    profiles: [variants]
+    image: ghcr.io/postgresml/pgcat:v1.2.0
+    command: ["pgcat", "/etc/pgcat/pgcat.toml"]
+    volumes:
+      - ./pgcat/pgcat-prepcache.toml:/etc/pgcat/pgcat.toml:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports: ["127.0.0.1:${PP_PORT_56482:-56482}:6432"]
 
   odyssey-1.5.2:
     image: ghcr.io/yandex/odyssey:1.5.2

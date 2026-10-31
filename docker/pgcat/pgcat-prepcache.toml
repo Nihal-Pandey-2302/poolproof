@@ -1,0 +1,21 @@
+# PgCat's defaults, except: transaction mode, a pool of one server connection and a
+# prepared statement cache of 500 (the value in PgCat's sample config), so PgCat
+# rewrites and caches protocol-level prepared statements.
+[general]
+host = "0.0.0.0"
+port = 6432
+admin_username = "admin"
+admin_password = "admin"
+
+[pools.app]
+pool_mode = "transaction"
+prepared_statements_cache_size = 500
+
+[pools.app.users.0]
+username = "postgres"
+password = "postgres"
+pool_size = 1
+
+[pools.app.shards.0]
+servers = [["postgres", 5432, "primary"]]
+database = "app"

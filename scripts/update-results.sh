@@ -8,10 +8,14 @@
 set -eu
 cd "$(dirname "$0")/.."
 offset=${PP_OFFSET:-0}
-file=targets.toml prefix=postgres
+file=targets.toml prefix=postgres step_timeout=
 if [ "${1:-}" = --variants ]; then
   shift
   file=targets-variants.toml prefix=variants-postgres
+  # PgDog with its query parser on (pgdog-0.1.62-full) answers some reads with its own
+  # error only after about 10s, two 5s checkouts; the default 10s step timeout would race
+  # it, so these steps get 15s.
+  step_timeout="--step-timeout 15s"
   export COMPOSE_PROFILES=variants
   [ $# -gt 0 ] || set -- 18.4
 fi
@@ -31,7 +35,8 @@ for version in "$@"; do
   # each scenario twice on Postgres first: one whose results differ between those runs
   # tests timing, not the pooler, and must not end up in results/.
   new="results/$prefix-$version.json.new"
-  ./target/release/poolproof run --targets "$targets" --check-scenarios --format json > "$new" || [ $? -eq 1 ]
+  # shellcheck disable=SC2086 # $step_timeout is empty or two words
+  ./target/release/poolproof run --targets "$targets" $step_timeout --check-scenarios --format json > "$new" || [ $? -eq 1 ]
   bad=$(jq -r '.results[] | select(.result == "error" and (.reason | startswith("nondeterministic scenario")))
                | "\(.scenario): \(.reason)"' "$new" | sort -u)
   if [ -n "$bad" ]; then
