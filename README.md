@@ -31,7 +31,7 @@ releases page. The scenarios and the latest results are built into the binary.
 **[Results site](https://nihal-pandey-2302.github.io/poolproof/)**: every scenario against
 PgBouncer 1.24 to 1.26, PgDog 0.1.50 to 0.1.62 and Supavisor 2.9 and 2.10, on Postgres 17
 and 18, with the full step-by-step trace for each cell. It also marks the version where a
-behavior broke or got fixed. The site goes live with the first public release.
+behavior broke or got fixed.
 [RESULTS.md](RESULTS.md) has the same data as a table. Both are built from `results/`,
 which `scripts/update-results.sh` regenerates and CI checks.
 
@@ -126,14 +126,22 @@ never shows passwords.
 TLS works as in psql: `sslmode` is `disable`, `prefer` (the default: TLS if the server
 offers it, else plaintext without a word), `require`, `verify-ca` or `verify-full`, from
 the URL or `PGSSLMODE`. `prefer` never checks certificates, even with a root certificate
-present, so it is encrypted but not authenticated: use `verify-full` for anything not on
-localhost. `sslrootcert` (or `PGSSLROOTCERT`) names the CA file, or `system` for the
-operating system's store (which needs `verify-full`, and makes it the default); without
-it, `~/.postgresql/root.crt` is used when it exists, and `require` then checks the chain
-like `verify-ca`. `send` steps and cancel requests use the same settings. Not supported
-yet: client certificates and `sslnegotiation=direct`. A URL names one host: several
-hosts or ports, `hostaddr`, `target_session_attrs` and `load_balance_hosts` are refused,
-since poolproof would otherwise pick a host on its own.
+present (psql checks the chain then, and falls back to plaintext if that fails), so it is
+encrypted but not authenticated: use `verify-full` for anything not on localhost.
+`sslrootcert` (or `PGSSLROOTCERT`) names the CA file, or `system` for the operating
+system's store (which needs `verify-full`, and makes it the default). Without it,
+`~/.postgresql/root.crt` (`%APPDATA%\postgresql\root.crt` on Windows) is used when it
+exists, and `require` then checks the chain like `verify-ca`; `verify-ca` and
+`verify-full` with no root certificate at all are an error. `send` steps, cancel requests
+and the reset and setup connections use the same settings. A Unix socket never uses TLS,
+as in psql. Not supported yet: client certificates and `sslnegotiation=direct`.
+
+A URL names one host and port: several hosts or ports, `hostaddr`,
+`target_session_attrs` and `load_balance_hosts` are refused, since poolproof would
+otherwise pick a host on its own. Socket options work as in psql: `connect_timeout`,
+`keepalives` (on unless `keepalives=0`) with `keepalives_idle`, `keepalives_interval` and
+`keepalives_retries`, and `tcp_user_timeout` in milliseconds. One the system can't set
+is an error rather than ignored.
 
 For several poolers, or to reset state between scenarios, use a targets file
 (`--targets`, default `targets.toml`):
@@ -170,6 +178,9 @@ reset = "auto"
 - A list of statements runs as written.
 - Without `reset`, nothing is reset: leaks carry over between scenarios, and `run`
   warns. With `--pooler` and `--direct`, `--reset auto` or `--reset all` picks one.
+
+Ending other roles' sessions needs superuser or `pg_signal_backend` on the `direct` user;
+`run` warns when a reset terminates sessions without either.
 
 Before the first scenario, `run` prints what the reset will touch, e.g.
 `reset: 'prod-like-pgbouncer': ends every session of user app from 10.0.0.7 (not only the
@@ -290,7 +301,8 @@ Step actions:
 - `prepare` + `name`, then `execute`: extended protocol. Cast columns to `text`. An
   `execute` needs an earlier `prepare` of that name by the same client since its last
   `disconnect` or abandoned query, or the scenario fails to load.
-- `disconnect`: close the connection cleanly.
+- `disconnect`: close the connection cleanly. On Postgres it waits until the backend has
+  exited, so the next step no longer sees its locks or temp tables.
 - `wait`: collect the result of this client's `background` query.
 - `cancel`: send a CancelRequest with this client's key, through the same pooler.
 - `notifications`: the NOTIFY messages this client received since the last such step.
@@ -334,6 +346,7 @@ doesn't treat a change in those verdicts as a regression, because the worst case
 between machines.
 `requires` lists privileges the `direct` user needs (`createrole`, `superuser`,
 `pg_signal_backend`); on a target without them the scenario is skipped, with the reason.
+If the privileges can't be read, it is ERROR instead.
 
 `poolproof run -v --filter <name>` prints every step's result on Postgres and through the
 pooler. Use it on a new scenario: a PASS only means something if Postgres did what you
