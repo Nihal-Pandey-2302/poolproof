@@ -28,77 +28,27 @@ pub struct Cli {
 enum Command {
     /// Run scenarios through each pooler and compare against plain Postgres.
     Run {
-        /// Targets file.
-        #[arg(short, long, default_value = "targets.toml")]
-        targets: PathBuf,
-        /// Test one pooler without a targets file: its connection URL.
-        #[arg(long, requires = "direct")]
-        pooler: Option<String>,
-        /// With --pooler: the URL of the Postgres server behind it.
-        #[arg(long, requires = "pooler")]
-        direct: Option<String>,
-        /// With --pooler: the pooler's mode.
-        #[arg(long, value_enum, default_value_t = PoolMode::Transaction)]
-        mode: PoolMode,
-        /// With --pooler: what to run on --direct before every run. `auto` ends only
-        /// the pooler's own sessions; `all` ends every other session on the database.
-        /// Without it, nothing is reset.
-        #[arg(long, value_enum, requires = "pooler")]
-        reset: Option<ResetArg>,
-        /// With --pooler: run scenarios that need one server connection (or several) even
-        /// when the probes say otherwise, as ignore_server_requirements in a targets file.
-        /// For Postgres standing in for its own pooler.
-        #[arg(long, requires = "pooler")]
-        ignore_server_requirements: bool,
-        /// Allow reset = "all" against a Postgres that isn't on this machine. It gates
-        /// nothing else.
-        #[arg(long)]
-        yes: bool,
+        #[command(flatten)]
+        suite: SuiteArgs,
         /// Scenario directory. Defaults to the scenarios built into poolproof.
         #[arg(short, long)]
         scenarios: Option<PathBuf>,
-        /// Only run scenarios whose name contains this.
-        #[arg(short, long)]
-        filter: Option<String>,
-        /// Only run this target from the targets file. Repeat for several.
-        #[arg(long = "target", value_name = "NAME")]
-        only: Vec<String>,
         /// Run scenarios in reverse order. Verdicts should not change; if they do,
         /// state is leaking between scenarios.
         #[arg(long)]
         reverse: bool,
-        /// Print every step's outcome on Postgres and through the pooler, not just
-        /// the first difference. Use it to check a new scenario does what you meant.
-        #[arg(short, long)]
-        verbose: bool,
-        #[arg(long, value_enum, default_value_t = RunFormat::Text)]
-        format: RunFormat,
-        /// Run each scenario's Postgres side twice first. A scenario whose results
-        /// differ between the two runs is an ERROR: it tests timing, not the pooler.
-        #[arg(long)]
-        check_scenarios: bool,
-        /// How long each step may take before it counts as a hang, e.g. `10s` or
-        /// `500ms` (a bare number is seconds). A scenario's `timeout_ms` overrides it.
-        #[arg(long, value_name = "DURATION", default_value = "10s", value_parser = parse_duration)]
-        step_timeout: Duration,
-        /// Which FAILs make the exit code 1, by kind. An ERROR verdict (nothing
-        /// compared) counts unless this is `none`.
-        #[arg(long, value_enum, default_value_t = FailOn::Any)]
-        fail_on: FailOn,
-        /// A saved `run --format json` report to compare with. Then only regressions
-        /// count for the exit code: results worse than in that report. Known failures,
-        /// fixes and scenarios or targets only one side has are listed, not counted.
-        #[arg(long, value_name = "REPORT")]
-        compare_to: Option<PathBuf>,
-        /// Don't let FAILs the pooler's own docs describe make the exit code 1. They are
-        /// still reported, marked documented. For a pooler's own CI; an app team still
-        /// breaks on them.
-        #[arg(long)]
-        ignore_expected: bool,
-        /// Directory of documented limitations (`<product>.toml`). Defaults to the ones
-        /// built into poolproof.
-        #[arg(long, value_name = "DIR")]
-        limitations: Option<PathBuf>,
+    },
+    /// Run real drivers through each pooler and compare against plain Postgres.
+    ///
+    /// psycopg, pgx, node-postgres and pgjdbc, with their default settings and the ones
+    /// their docs give for poolers. Needs Docker and the driver images: see
+    /// drivers/README.md.
+    Drivers {
+        #[command(flatten)]
+        suite: SuiteArgs,
+        /// Only run this driver. Repeat for several.
+        #[arg(long = "driver", value_name = "NAME")]
+        drivers: Vec<String>,
     },
     /// Scan queries (pg_stat_statements CSV, Postgres logs or a .sql file) for
     /// patterns that break under transaction pooling.
@@ -189,6 +139,75 @@ enum Command {
     Man { command: Option<String> },
 }
 
+/// Flags `run` and `drivers` share.
+#[derive(clap::Args)]
+struct SuiteArgs {
+    /// Targets file.
+    #[arg(short, long, default_value = "targets.toml")]
+    targets: PathBuf,
+    /// Test one pooler without a targets file: its connection URL.
+    #[arg(long, requires = "direct")]
+    pooler: Option<String>,
+    /// With --pooler: the URL of the Postgres server behind it.
+    #[arg(long, requires = "pooler")]
+    direct: Option<String>,
+    /// With --pooler: the pooler's mode.
+    #[arg(long, value_enum, default_value_t = PoolMode::Transaction)]
+    mode: PoolMode,
+    /// With --pooler: what to run on --direct before every run. `auto` ends only
+    /// the pooler's own sessions; `all` ends every other session on the database.
+    /// Without it, nothing is reset.
+    #[arg(long, value_enum, requires = "pooler")]
+    reset: Option<ResetArg>,
+    /// With --pooler: run scenarios that need one server connection (or several) even
+    /// when the probes say otherwise, as ignore_server_requirements in a targets file.
+    /// For Postgres standing in for its own pooler.
+    #[arg(long, requires = "pooler")]
+    ignore_server_requirements: bool,
+    /// Allow reset = "all" against a Postgres that isn't on this machine. It gates
+    /// nothing else.
+    #[arg(long)]
+    yes: bool,
+    /// Only run scenarios whose name contains this.
+    #[arg(short, long)]
+    filter: Option<String>,
+    /// Only run this target from the targets file. Repeat for several.
+    #[arg(long = "target", value_name = "NAME")]
+    only: Vec<String>,
+    /// Print every step's outcome on Postgres and through the pooler, not just
+    /// the first difference. Use it to check a new scenario does what you meant.
+    #[arg(short, long)]
+    verbose: bool,
+    #[arg(long, value_enum, default_value_t = RunFormat::Text)]
+    format: RunFormat,
+    /// Run each scenario's Postgres side twice first. A scenario whose results
+    /// differ between the two runs is an ERROR: it tests timing, not the pooler.
+    #[arg(long)]
+    check_scenarios: bool,
+    /// How long each step may take before it counts as a hang, e.g. `10s` or
+    /// `500ms` (a bare number is seconds). A scenario's `timeout_ms` overrides it.
+    #[arg(long, value_name = "DURATION", default_value = "10s", value_parser = parse_duration)]
+    step_timeout: Duration,
+    /// Which FAILs make the exit code 1, by kind. An ERROR verdict (nothing
+    /// compared) counts unless this is `none`.
+    #[arg(long, value_enum, default_value_t = FailOn::Any)]
+    fail_on: FailOn,
+    /// A saved `run --format json` report to compare with. Then only regressions
+    /// count for the exit code: results worse than in that report. Known failures,
+    /// fixes and scenarios or targets only one side has are listed, not counted.
+    #[arg(long, value_name = "REPORT")]
+    compare_to: Option<PathBuf>,
+    /// Don't let FAILs the pooler's own docs describe make the exit code 1. They are
+    /// still reported, marked documented. For a pooler's own CI; an app team still
+    /// breaks on them.
+    #[arg(long)]
+    ignore_expected: bool,
+    /// Directory of documented limitations (`<product>.toml`). Defaults to the ones
+    /// built into poolproof.
+    #[arg(long, value_name = "DIR")]
+    limitations: Option<PathBuf>,
+}
+
 #[derive(Clone, Copy, ValueEnum)]
 enum ScanFormat {
     Text,
@@ -230,182 +249,28 @@ pub enum ResetArg {
 pub async fn run(cli: Cli) -> Result<ExitCode> {
     match cli.command {
         Command::Run {
-            targets,
-            pooler,
-            direct,
-            mode,
-            reset,
-            ignore_server_requirements,
-            yes,
+            suite,
             scenarios,
-            filter,
-            only,
             reverse,
-            verbose,
-            format,
-            check_scenarios,
-            fail_on,
-            step_timeout,
-            compare_to,
-            ignore_expected,
-            limitations,
         } => {
-            let mut targets = load_targets(&targets, pooler, direct, mode, reset)?;
-            if ignore_server_requirements {
-                targets.targets[0].ignore_server_requirements = true;
-            }
-            // Before the run, so a bad baseline fails fast.
-            let mut baseline = compare_to.as_deref().map(report::Report::load).transpose()?;
-            if let Some(baseline) = &baseline {
-                let selected = targets
-                    .targets
-                    .iter()
-                    .filter(|t| only.is_empty() || only.contains(&t.name))
-                    .map(|t| (t.name.as_str(), t.mode));
-                report::compare::check_modes(baseline, selected)?;
-            }
             let mut scenarios = load_scenarios(scenarios.as_deref())?;
             if reverse {
                 scenarios.reverse();
             }
-            let limitations = crate::limitations::load(limitations.as_deref(), &scenarios)?;
-            // The same set judges both sides, so only a changed outcome changes a mark.
-            if let Some(baseline) = &mut baseline {
-                limitations.apply(baseline, &scenarios);
-            }
-
-            let text = matches!(format, RunFormat::Text);
-            let opts = runner::suite::RunOptions {
-                filter: filter.as_deref(),
-                targets: &only,
-                text,
-                style: Style {
-                    verbose,
-                    color: color_enabled(),
-                },
-                check_scenarios,
-                yes,
-                timeouts: runner::Timeouts {
-                    step: step_timeout,
-                    ..Default::default()
-                },
-                limitations: Some(&limitations),
-            };
-            let (target_infos, results) = runner::suite::run(&targets.targets, &scenarios, &opts).await?;
-            let scenarios = scenarios
-                .iter()
-                .filter(|s| results.iter().any(|r| r.scenario == s.name))
-                .map(|s| report::ScenarioInfo {
-                    name: s.name.clone(),
-                    description: s.description.clone(),
-                    refs: s.refs.clone(),
-                    steps: s.steps.iter().map(|step| step.describe()).collect(),
-                    repeat: s.repeat,
-                    compare: s.compare_modes(),
-                })
-                .collect();
-            let mut report = report::Report {
-                schema: Some(report::REPORT_SCHEMA.to_string()),
-                schema_version: report::SCHEMA_VERSION,
-                poolproof: env!("CARGO_PKG_VERSION").to_string(),
-                generated_at: Some(report::now_rfc3339()),
-                targets: target_infos,
-                scenarios,
-                results,
-                comparison: None,
-                limitations: None,
-                stale_expectations: vec![],
-            };
-            // Every scenario here records its compare modes.
-            limitations.apply(&mut report, &[]);
-            let results = &report.results;
-
-            let count = |f: fn(&Verdict) -> bool| results.iter().filter(|r| f(&r.verdict)).count();
-            let failed = count(|v| matches!(v, Verdict::Fail { .. }));
-            let errors = count(|v| matches!(v, Verdict::Error { .. }));
-            let documented = results.iter().filter(|r| r.expected.is_some()).count();
-            let gate = runner::suite::Gate {
-                fail_on,
-                ignore_expected,
-            };
-            let exit_failure = results.iter().any(|r| gate.fails(r));
-            let ignored = results
-                .iter()
-                .filter(|r| matches!(r.verdict, Verdict::Fail { .. } | Verdict::Error { .. }))
-                .filter(|r| !fail_on.fails(&r.verdict))
-                .count();
-            if ignored > 0 {
-                eprintln!("note: {ignored} failed or errored results ignored by --fail-on {fail_on}");
-            }
-            let ignored = results
-                .iter()
-                .filter(|r| fail_on.fails(&r.verdict) && !gate.fails(r))
-                .count();
-            if ignored > 0 {
-                eprintln!("note: {ignored} documented failures ignored by --ignore-expected");
-            }
-            // With --compare-to, only regressions that --fail-on counts fail the run.
-            let comparison = match &baseline {
-                Some(baseline) => Some(report::compare::compare(baseline, &report, gate)?),
-                None => None,
-            };
-            let exit_failure = comparison.as_ref().map_or(exit_failure, |c| c.fails());
-            let baseline_file = compare_to
-                .as_deref()
-                .map(|p| p.display().to_string())
-                .unwrap_or_default();
-            if matches!(format, RunFormat::Text) {
-                let passed = count(|v| matches!(v, Verdict::Pass));
-                let skipped = count(|v| matches!(v, Verdict::Skip { .. }));
-                let documented = match documented {
-                    0 => String::new(),
-                    n => format!(" ({n} documented)"),
-                };
-                println!("\n{passed} passed, {failed} failed{documented}, {errors} errors, {skipped} skipped");
-                for r in results
-                    .iter()
-                    .filter(|r| r.runs == 0 && r.precondition_unmet.is_some_and(|u| u > 0))
-                {
-                    println!(
-                        "precondition never met: {} / {} ({} runs); the scenario tested nothing there",
-                        r.target,
-                        r.scenario,
-                        r.precondition_unmet.unwrap_or(0)
-                    );
-                }
-                for stale in &report.stale_expectations {
-                    println!(
-                        "stale expectation: {} / {}: {} ({})",
-                        stale.target, stale.scenario, stale.reason, stale.doc
-                    );
-                }
-                if let Some(c) = &comparison {
-                    print!("{}", c.text(&baseline_file, &report));
-                }
+            run_suite(suite, &scenarios, &scenarios).await
+        }
+        Command::Drivers { suite, drivers } => {
+            let scenarios = crate::drivers::scenarios(&drivers)?;
+            let selected = if drivers.is_empty() {
+                crate::drivers::names()
             } else {
-                if !report.stale_expectations.is_empty() {
-                    eprintln!(
-                        "note: {} stale expectations: documented limitations that didn't match (stale_expectations)",
-                        report.stale_expectations.len()
-                    );
-                }
-                let compared = comparison.as_ref().map(|c| c.markdown(&baseline_file, &report));
-                report.comparison = comparison;
-                match format {
-                    RunFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
-                    RunFormat::Markdown => {
-                        print!("{}", report::markdown(&[report]));
-                        print!("{}", compared.unwrap_or_default());
-                    }
-                    RunFormat::Html => print!("{}", report::html(&[report])?),
-                    RunFormat::Text => unreachable!(),
-                }
-            }
-            Ok(if exit_failure {
-                ExitCode::FAILURE
-            } else {
-                ExitCode::SUCCESS
-            })
+                drivers
+            };
+            crate::drivers::check_images(&selected)?;
+            // Limitations name built-in scenarios, never driver cases, so they apply to
+            // none here. A --limitations directory is checked against the built-in
+            // scenarios too, so a pooler's own set loads as it does for `run`.
+            run_suite(suite, &scenarios, &scenario::bundled()?).await
         }
         Command::Scan {
             input,
@@ -525,6 +390,187 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
     }
+}
+
+/// `run` and `drivers`: run the scenarios on the targets, print or write the report,
+/// and pick the exit code. Entries of a `--limitations` directory are checked against
+/// `checked_against`.
+async fn run_suite(
+    suite: SuiteArgs,
+    scenarios: &[scenario::Scenario],
+    checked_against: &[scenario::Scenario],
+) -> Result<ExitCode> {
+    let SuiteArgs {
+        targets,
+        pooler,
+        direct,
+        mode,
+        reset,
+        ignore_server_requirements,
+        yes,
+        filter,
+        only,
+        verbose,
+        format,
+        check_scenarios,
+        step_timeout,
+        fail_on,
+        compare_to,
+        ignore_expected,
+        limitations,
+    } = suite;
+    let mut targets = load_targets(&targets, pooler, direct, mode, reset)?;
+    if ignore_server_requirements {
+        targets.targets[0].ignore_server_requirements = true;
+    }
+    // Before the run, so a bad baseline fails fast.
+    let mut baseline = compare_to.as_deref().map(report::Report::load).transpose()?;
+    if let Some(baseline) = &baseline {
+        let selected = targets
+            .targets
+            .iter()
+            .filter(|t| only.is_empty() || only.contains(&t.name))
+            .map(|t| (t.name.as_str(), t.mode));
+        report::compare::check_modes(baseline, selected)?;
+    }
+    let limitations = crate::limitations::load(limitations.as_deref(), checked_against)?;
+    // The same set judges both sides, so only a changed outcome changes a mark.
+    if let Some(baseline) = &mut baseline {
+        limitations.apply(baseline, scenarios);
+    }
+
+    let text = matches!(format, RunFormat::Text);
+    let opts = runner::suite::RunOptions {
+        filter: filter.as_deref(),
+        targets: &only,
+        text,
+        style: Style {
+            verbose,
+            color: color_enabled(),
+        },
+        check_scenarios,
+        yes,
+        timeouts: runner::Timeouts {
+            step: step_timeout,
+            ..Default::default()
+        },
+        limitations: Some(&limitations),
+    };
+    let (target_infos, results) = runner::suite::run(&targets.targets, scenarios, &opts).await?;
+    let scenarios = scenarios
+        .iter()
+        .filter(|s| results.iter().any(|r| r.scenario == s.name))
+        .map(|s| report::ScenarioInfo {
+            name: s.name.clone(),
+            description: s.description.clone(),
+            refs: s.refs.clone(),
+            steps: s.steps.iter().map(|step| step.describe()).collect(),
+            repeat: s.repeat,
+            compare: s.compare_modes(),
+        })
+        .collect();
+    let mut report = report::Report {
+        schema: Some(report::REPORT_SCHEMA.to_string()),
+        schema_version: report::SCHEMA_VERSION,
+        poolproof: env!("CARGO_PKG_VERSION").to_string(),
+        generated_at: Some(report::now_rfc3339()),
+        targets: target_infos,
+        scenarios,
+        results,
+        comparison: None,
+        limitations: None,
+        stale_expectations: vec![],
+    };
+    // Every scenario here records its compare modes.
+    limitations.apply(&mut report, &[]);
+    let results = &report.results;
+
+    let count = |f: fn(&Verdict) -> bool| results.iter().filter(|r| f(&r.verdict)).count();
+    let failed = count(|v| matches!(v, Verdict::Fail { .. }));
+    let errors = count(|v| matches!(v, Verdict::Error { .. }));
+    let documented = results.iter().filter(|r| r.expected.is_some()).count();
+    let gate = runner::suite::Gate {
+        fail_on,
+        ignore_expected,
+    };
+    let exit_failure = results.iter().any(|r| gate.fails(r));
+    let ignored = results
+        .iter()
+        .filter(|r| matches!(r.verdict, Verdict::Fail { .. } | Verdict::Error { .. }))
+        .filter(|r| !fail_on.fails(&r.verdict))
+        .count();
+    if ignored > 0 {
+        eprintln!("note: {ignored} failed or errored results ignored by --fail-on {fail_on}");
+    }
+    let ignored = results
+        .iter()
+        .filter(|r| fail_on.fails(&r.verdict) && !gate.fails(r))
+        .count();
+    if ignored > 0 {
+        eprintln!("note: {ignored} documented failures ignored by --ignore-expected");
+    }
+    // With --compare-to, only regressions that --fail-on counts fail the run.
+    let comparison = match &baseline {
+        Some(baseline) => Some(report::compare::compare(baseline, &report, gate)?),
+        None => None,
+    };
+    let exit_failure = comparison.as_ref().map_or(exit_failure, |c| c.fails());
+    let baseline_file = compare_to
+        .as_deref()
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
+    if matches!(format, RunFormat::Text) {
+        let passed = count(|v| matches!(v, Verdict::Pass));
+        let skipped = count(|v| matches!(v, Verdict::Skip { .. }));
+        let documented = match documented {
+            0 => String::new(),
+            n => format!(" ({n} documented)"),
+        };
+        println!("\n{passed} passed, {failed} failed{documented}, {errors} errors, {skipped} skipped");
+        for r in results
+            .iter()
+            .filter(|r| r.runs == 0 && r.precondition_unmet.is_some_and(|u| u > 0))
+        {
+            println!(
+                "precondition never met: {} / {} ({} runs); the scenario tested nothing there",
+                r.target,
+                r.scenario,
+                r.precondition_unmet.unwrap_or(0)
+            );
+        }
+        for stale in &report.stale_expectations {
+            println!(
+                "stale expectation: {} / {}: {} ({})",
+                stale.target, stale.scenario, stale.reason, stale.doc
+            );
+        }
+        if let Some(c) = &comparison {
+            print!("{}", c.text(&baseline_file, &report));
+        }
+    } else {
+        if !report.stale_expectations.is_empty() {
+            eprintln!(
+                "note: {} stale expectations: documented limitations that didn't match (stale_expectations)",
+                report.stale_expectations.len()
+            );
+        }
+        let compared = comparison.as_ref().map(|c| c.markdown(&baseline_file, &report));
+        report.comparison = comparison;
+        match format {
+            RunFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
+            RunFormat::Markdown => {
+                print!("{}", report::markdown(&[report]));
+                print!("{}", compared.unwrap_or_default());
+            }
+            RunFormat::Html => print!("{}", report::html(&[report])?),
+            RunFormat::Text => unreachable!(),
+        }
+    }
+    Ok(if exit_failure {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    })
 }
 
 fn completions(shell: clap_complete::Shell, out: &mut dyn std::io::Write) {

@@ -1,0 +1,67 @@
+# The drivers `poolproof drivers` runs. Each has a program and Dockerfile in
+# drivers/<name>/, built as the image poolproof-driver-<name>:dev (see docker-bake.hcl).
+#
+# `version` is the release the image's lockfile pins. The program reports the version it
+# loaded, and a mismatch is an ERROR, so the two can't drift apart. A driver bump changes
+# the lockfile, this file and the committed results together.
+#
+# Each variant is one way of configuring the driver: its defaults, plus the setting its
+# own docs give for transaction pooling, so a result says both whether the defaults
+# break and whether the documented fix works. The program reads the variant name from
+# PP_VARIANT.
+
+[[driver]]
+name = "psycopg"
+version = "3.3.6"
+language = "Python"
+
+[[driver.variant]]
+name = "default"
+settings = "default settings (prepare_threshold = 5), with autocommit on as most apps use it"
+
+[[driver.variant]]
+name = "no-prepare"
+settings = "prepare_threshold = None, as psycopg's docs advise for transaction pooling"
+refs = ["https://www.psycopg.org/psycopg3/docs/advanced/prepare.html#using-prepared-statements-with-pgbouncer"]
+
+[[driver]]
+name = "pgx"
+version = "5.11.0"
+language = "Go"
+
+[[driver.variant]]
+name = "default"
+settings = "default settings (QueryExecModeCacheStatement: every query is prepared and cached)"
+
+[[driver.variant]]
+name = "exec"
+settings = "QueryExecModeExec: unnamed statements only, which pgx documents as working with PgBouncer"
+refs = ["https://pkg.go.dev/github.com/jackc/pgx/v5@v5.11.0#QueryExecMode"]
+
+[[driver]]
+name = "node-postgres"
+version = "8.23.1"
+language = "Node.js"
+
+[[driver.variant]]
+name = "default"
+settings = "default settings (parameterized queries use the unnamed statement)"
+
+[[driver.variant]]
+name = "named"
+settings = "named queries ({ name, text, values }), one name per query text, as apps use them"
+refs = ["https://node-postgres.com/features/queries#prepared-statements"]
+
+[[driver]]
+name = "pgjdbc"
+version = "42.7.14"
+language = "Java"
+
+[[driver.variant]]
+name = "default"
+settings = "default settings (prepareThreshold = 5: server-side prepare from the fifth run)"
+
+[[driver.variant]]
+name = "no-prepare"
+settings = "prepareThreshold = 0, which turns server-side prepared statements off"
+refs = ["https://jdbc.postgresql.org/documentation/server-prepare/"]

@@ -1,0 +1,9 @@
+{
+  "name": "poolproof-driver-node-postgres",
+  "private": true,
+  "description": "poolproof's node-postgres program (see drivers/README.md)",
+  "license": "MIT OR Apache-2.0",
+  "dependencies": {
+    "pg": "8.23.1"
+  }
+}

@@ -7,6 +7,8 @@ pub mod cli;
 #[doc(hidden)]
 pub mod doctor;
 #[doc(hidden)]
+pub mod drivers;
+#[doc(hidden)]
 pub mod limitations;
 #[doc(hidden)]
 pub mod output;

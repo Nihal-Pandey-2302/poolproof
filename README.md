@@ -13,6 +13,9 @@ poolproof does two things:
 - **`poolproof run`** replays small scenarios against plain Postgres and then through your
   pooler, and reports every step where the results differ. Postgres is the oracle, so a
   scenario never hardcodes expected output.
+- **`poolproof drivers`** does the same with real drivers as the clients: psycopg, pgx,
+  node-postgres and pgjdbc, with their default settings and with the setting their docs
+  give for poolers.
 - **`poolproof scan`** reads your real queries (a `pg_stat_statements` export, Postgres
   logs or a `.sql` file) and flags patterns that are unsafe under transaction pooling,
   using the actual Postgres parser.
@@ -233,7 +236,10 @@ two connections at once is skipped: it would only show the pool waiting. So is i
 the probe can't tell. A second client counts as waiting only if, once the first client
 closes, it gets the first one's backend, and does again in a second round right after
 (a pool still opening its second server can hand the first one's over once); anything
-else is unknown.
+else is unknown. A second client the pooler refuses with an error while the first holds
+its connection counts the same way: only if, reconnecting once the first is gone, it gets
+the first one's backend, in both rounds. Some poolers accept any connect and refuse at
+the query, so getting in again proves nothing by itself.
 `ignore_server_requirements = true` on a target (`--ignore-server-requirements` with
 `run --pooler`) runs scenarios whose `one_server_connection` or
 `several_server_connections` isn't met anyway, for Postgres standing in for its own
@@ -402,6 +408,32 @@ function, since it runs whenever the function is called. Parameters a function s
 own `SET` clause are restored on return, so setting them in its body is fine. Dynamic
 `EXECUTE` strings are not inspected, and a body the PL/pgSQL parser can't read is only
 checked for words, with a count at the end.
+
+## Real drivers
+
+Scenarios talk to the pooler the way poolproof's own clients do. Apps talk through a
+driver, and drivers prepare statements, cache them and name them in their own ways.
+`poolproof drivers` runs five cases (repeated queries past the auto-prepare threshold,
+two connections whose statement names collide, the same query on two connections, a
+transaction, a session `SET`) with each driver, against plain Postgres and then through
+the pooler:
+
+```sh
+docker buildx bake -f drivers/docker-bake.hcl --load   # build the driver images once
+poolproof drivers --target pgbouncer-1.26.1
+poolproof drivers --driver psycopg --pooler postgres://app@127.0.0.1:6432/app \
+  --direct postgres://app@127.0.0.1:5432/app --reset auto
+```
+
+Each driver runs twice: with its defaults, and with the setting its docs give for
+transaction pooling (psycopg `prepare_threshold = None`, pgx `QueryExecModeExec`, pgjdbc
+`prepareThreshold = 0`), so a result says whether the defaults break and whether the fix
+works. node-postgres runs with and without named queries. `drivers` takes the same flags
+as `run` and gives the same verdicts and report formats. [DRIVERS.md](DRIVERS.md) has the
+results for the newest version of each pooler on Postgres 17, from
+`scripts/update-driver-results.sh`. Each driver runs in Docker on the host network, so
+for now it needs Linux. [drivers/README.md](drivers/README.md) has the details and the
+rules a driver program follows so it can't hide a failure.
 
 ## GitHub Action
 
