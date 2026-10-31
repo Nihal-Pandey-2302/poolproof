@@ -108,21 +108,25 @@ updates:
         patterns: ["*"]
 
   # The drivers' base images. The language runtime is part of what is tested too, so only
-  # a new digest of the same tag comes in: no new tag at all. Dependabot reads the number
-  # in a tag suffix as part of the version, so ignoring major and minor alone still let
-  # maven:3.9-eclipse-temurin-21 become -26, a newer JDK than the JRE the program runs on.
-  # A runtime change is made by hand, build and runtime images together, with
-  # regenerated results.
+  # a new digest of the same tag comes in: no new tag at all. A runtime change is made by
+  # hand, build and runtime images together, with regenerated results.
   - package-ecosystem: docker
     directories: ["/drivers/*"]
     schedule:
       interval: monthly
     ignore:
+      # Tags whose runtime version is in the version part (python 3.13, node 22, golang
+      # 1.25, eclipse-temurin 21-jre).
       - dependency-name: "*"
         update-types:
           - "version-update:semver-major"
           - "version-update:semver-minor"
           - "version-update:semver-patch"
+      # pgjdbc's build image has its JDK in the tag suffix (3.9-eclipse-temurin-21), which
+      # Dependabot doesn't classify, so no update type matches a JDK change: it proposed
+      # -26 against the 21 JRE. Ignored by name, digests too; it's only the build stage,
+      # bumped by hand with the JRE.
+      - dependency-name: "maven"
     groups:
       driver-images:
         patterns: ["*"]
