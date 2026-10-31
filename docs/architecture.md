@@ -12,6 +12,9 @@ poolproof has two independent halves that share a report format:
 `report` renders saved `run` results, and is how `RESULTS.md` and the results site are
 made.
 
+New to the code? [code-tour.md](code-tour.md) is a reading order through the core of
+`run`, one file at a time.
+
 ## Layout
 
 ```text
