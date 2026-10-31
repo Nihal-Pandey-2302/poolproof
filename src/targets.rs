@@ -588,7 +588,9 @@ pub fn redact(config: &Config) -> String {
     format!("postgres://{user}@{}/{db}", hosts.join(","))
 }
 
-/// Files already warned about, so a bad password file is reported once per run.
+/// Files already warned about, so a bad password file is reported once per run. Only
+/// Unix has the permission check.
+#[cfg(unix)]
 static WARNED: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
 
 /// The password file libpq would read: PGPASSFILE, else ~/.pgpass
