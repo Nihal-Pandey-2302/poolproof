@@ -40,14 +40,18 @@ A failure is one of three kinds:
 - **silent**: the pooler returned a result, but not the one Postgres returned. The
   application gets wrong data and no error. These are the dangerous ones.
 - **error**: the pooler refused with an error where Postgres didn't. Loud, so you notice.
-- **hang**: no reply within the step timeout (10 seconds, or `--step-timeout 30s`), or
-  replies that stop short of what Postgres sent. Keep the step timeout above the
-  pooler's own checkout and query timeouts, so you see its error instead of a hang; 10
-  seconds is above PgDog's 5 second checkout timeout.
+- **hang**: no reply within the step timeout (10 seconds; `--step-timeout 30s` changes
+  it, a scenario's `timeout_ms` overrides it), or replies that stop short of what
+  Postgres sent. Keep the step timeout above the pooler's own checkout and query
+  timeouts, so you see its error instead of a hang; 10 seconds is above PgDog's 5 second
+  checkout timeout.
 
-An ERROR verdict means nothing was compared: a target URL didn't answer before the run, a
-step on the Postgres side got no reply (timeout, connection failure), or setup, teardown
-or reset failed. It only stops that scenario, and `run` exits 1 as for a FAIL.
+An ERROR verdict means nothing could be compared, so it says nothing about the pooler: a
+target URL didn't answer before the run, a step on the Postgres side failed in the harness
+(timeout, connection failure), the pooler didn't answer again after a reset, setup,
+teardown or reset failed, or `--check-scenarios` saw Postgres give two different results.
+A FAIL the steps already found is kept even if teardown fails after it. ERROR only stops
+that scenario; the run goes on.
 
 `--fail-on` picks which FAILs make the exit code 1, by kind: `silent` (only silent ones),
 `error` (silent and error), `any` (the default, hangs too) or `none`. An ERROR verdict
@@ -216,7 +220,8 @@ checked for words, with a count at the end.
 
 A scenario is a TOML file in `scenarios/`. Clients are named; each connects on its first
 step. `direct = true` connects to Postgres directly, which is how scenarios check server
-state behind the pooler.
+state behind the pooler. A client is either direct or pooled for all of its steps.
+Scenario names must be unique.
 
 ```toml
 name = "temp-table-isolated-between-clients"
@@ -235,7 +240,9 @@ simple = "SELECT count(*) FROM pp_tmp"
 Step actions:
 
 - `simple`: simple query protocol, can hold several statements.
-- `prepare` + `name`, then `execute`: extended protocol. Cast columns to `text`.
+- `prepare` + `name`, then `execute`: extended protocol. Cast columns to `text`. An
+  `execute` needs an earlier `prepare` of that name by the same client since its last
+  `disconnect` or abandoned query, or the scenario fails to load.
 - `disconnect`: close the connection cleanly.
 - `wait`: collect the result of this client's `background` query.
 - `cancel`: send a CancelRequest with this client's key, through the same pooler.
@@ -258,8 +265,11 @@ Step actions:
   `send` has its own raw connection; `disconnect` is its only other step.
   ParameterStatus replies are skipped, since poolers add and drop them freely; with
   `compare_parameter_status = true` a `send` step records them and compares them as a
-  set, wherever in the step's reply they come. The set is per step: one that arrives
+  set, wherever in the step's reply they come. A dropped or changed value is a silent
+  failure; `compare = "status"` ignores them. The set is per step: one that arrives
   after the step's ReadyForQuery shows as missing there and extra in the next step.
+  COPY TO STDOUT replies are `CopyOutResponse`, one `CopyData` line per message (hex if
+  it isn't UTF-8) and `CopyDone`.
 
 Options on a `simple` step: `background = true` starts the query and moves on, so other
 clients can act while it runs. `abandon_after_ms` drops the connection without a goodbye
@@ -290,7 +300,7 @@ the workflow.
 ## Status
 
 Not covered yet: RDS Proxy and PgCat in the test bed, session-mode targets, TLS, and
-COPY TO STDOUT.
+COPY TO STDOUT (`send` steps record its replies, but no scenario uses it yet).
 
 ## License
 
