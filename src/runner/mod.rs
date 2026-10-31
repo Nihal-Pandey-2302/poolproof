@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 mod check;
 mod compare;
+pub mod doctor;
 mod pg;
 pub(crate) mod raw;
 mod steps;

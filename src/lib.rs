@@ -5,6 +5,8 @@
 #[doc(hidden)]
 pub mod cli;
 #[doc(hidden)]
+pub mod doctor;
+#[doc(hidden)]
 pub mod output;
 #[doc(hidden)]
 pub mod report;

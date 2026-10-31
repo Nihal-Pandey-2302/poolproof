@@ -190,6 +190,35 @@ Before the first scenario, `run` prints what the reset will touch, e.g.
 pooler's) on database db at postgres-host:5432 (auto)`. The JSON report records which
 kind each target used.
 
+`poolproof doctor` (same `--targets`, `--target`, `--pooler`/`--direct` and `--reset`
+flags as `run`) checks a target before you run anything:
+
+```text
+$ poolproof doctor --target prod-like-pgbouncer
+ok    prod-like-pgbouncer direct       connected to postgres://user@postgres-host:5432/db
+ok    prod-like-pgbouncer direct tls   TLS (TLSv1.3, sslmode=verify-full)
+ok    prod-like-pgbouncer pooler       connected to postgres://user@pooler-host:6432/db
+warn  prod-like-pgbouncer pooler tls   plaintext: sslmode=prefer and the server declined TLS; set sslmode=require to insist
+ok    prod-like-pgbouncer same server  database db, port 5432, started 2026-10-31 07:59:09.418230, 17.11 (addr 10.0.0.5 via pooler, 10.0.0.5 direct)
+ok    prod-like-pgbouncer privileges   every scenario's requirements are met
+ok    prod-like-pgbouncer reset        ends every session of user app from 10.0.0.7 (not only the pooler's) on database db at postgres-host:5432 (auto); matching sessions now: 1
+ok    prod-like-pgbouncer mode         transaction or statement pooling (b got a's server connection)
+```
+
+It checks that both URLs answer and reach the same Postgres (database, start time,
+version and port; the addresses are only shown, since the pooler often reaches Postgres
+on another network), TLS on each side, which scenarios would SKIP for missing
+privileges, what reset would end and whether the direct user can end it, and the pooling
+mode: a second client gets the first one's server connection (transaction pooling), or
+waits for it (session mode with a full pool). A user that isn't a superuser needs
+`pg_signal_backend` and `pg_read_all_stats` to end other roles' sessions, and can never
+end a superuser's. doctor only reads: it runs no reset, setup or scenario, ends no
+session and sets nothing through the pooler. Exit code 1 if a check fails (with
+`--strict`, also on a warning). `--format json` is for scripts and issues: it leaves out
+URLs, hosts, users and addresses, which the text output shows. Text output also shows
+server and TLS error messages in full; JSON shows only their class (e.g. `authentication
+(28P01)`, `TLS certificate`, `timeout`).
+
 `--target NAME` runs only that target from the file (repeat it for several).
 
 To share the outcome with your team, `--format html` writes one self-contained page with
