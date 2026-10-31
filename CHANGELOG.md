@@ -48,6 +48,9 @@ First release.
 - Release binaries for Linux (x86_64, arm64), macOS (x86_64, arm64) and Windows (x86_64),
   with SHA256SUMS and build provenance attestations. `cargo binstall poolproof` installs
   them.
+- A harness self-test: a small proxy (`tools/pp-proxy`) puts known faults between
+  poolproof and Postgres, and CI checks that every scenario gets the verdicts listed in
+  `selftest/expected.toml`.
 - Release binaries are built with thin LTO and stripped: 9.2 MB to 6.5 MB on Linux x86_64.
 - `scan --input pgss|csvlog|log|jsonlog|sql`, and `-` for stdin. csvlog is new. Logs and
   CSV are read as a stream, so large logs use little memory, and invalid UTF-8 no longer
