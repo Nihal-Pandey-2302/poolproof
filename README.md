@@ -212,7 +212,9 @@ waits for it (session mode with a full pool). A user that isn't a superuser need
 end a superuser's. doctor only reads: it runs no reset, setup or scenario, ends no
 session and sets nothing through the pooler. Exit code 1 if a check fails (with
 `--strict`, also on a warning). `--format json` is for scripts and issues: it leaves out
-URLs, hosts, users and addresses, which the text output shows.
+URLs, hosts, users and addresses, which the text output shows. Text output also shows
+server and TLS error messages in full; JSON shows only their class (e.g. `authentication
+(28P01)`, `TLS certificate`, `timeout`).
 
 `--target NAME` runs only that target from the file (repeat it for several).
 
