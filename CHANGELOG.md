@@ -105,6 +105,8 @@ First release.
 - Socket options from the URL as in libpq: `connect_timeout`, `keepalives` (on unless
   `keepalives=0`) with `keepalives_idle`, `keepalives_interval` and `keepalives_retries`,
   and `tcp_user_timeout`. One that the system can't set is an error, not ignored.
+- JSON report: `schema_version` (1; reports without it are 1, a newer one is refused with
+  a clear error) and `generated_at` (UTC).
 - `send` steps record COPY TO STDOUT replies: `CopyOutResponse`, one `CopyData` line per
   message (hex if it isn't UTF-8), `CopyDone`.
 - `compare_parameter_status = true` on a `send` step records ParameterStatus messages
