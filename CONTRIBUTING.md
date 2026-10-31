@@ -66,6 +66,8 @@ The file format is in [README.md](README.md#writing-a-scenario). The workflow:
 - `cargo fmt`, `cargo clippy --all-targets -- -D warnings` and `cargo test` must pass.
   The code must also build with Rust 1.88, the minimum supported version.
 - A bug fix starts with a test that fails without it.
+- Code that parses what a server or a scenario file sends (`runner/raw.rs`) has fuzz
+  targets in `fuzz/`; see [fuzz/README.md](fuzz/README.md).
 - No `unwrap` or `expect` outside tests, except where it can't fail (say why in a comment).
 - Never print a password: not in logs, errors, reports or panics.
 - A change people will notice updates README.md and gets a line under `Unreleased` in

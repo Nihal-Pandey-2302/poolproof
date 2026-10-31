@@ -62,7 +62,8 @@ with any `${NAME}` value in it, so keep secrets in URLs, not in `reset`.
   For anything not on localhost, use `verify-full`. `sslrootcert=system` requires
   `verify-full`.
 - Not supported: client certificates (the connection fails and says so) and
-  `sslnegotiation=direct`. `send` clients don't use SCRAM channel binding.
+  `sslnegotiation=direct` (refused when the targets load). `send` clients don't use SCRAM
+  channel binding.
 - With SCRAM the password itself never goes over the wire. If the server asks for a
   clear-text password, poolproof sends it, also to anyone impersonating the server when
   the certificate isn't checked (`prefer`, or `require` without a root certificate).

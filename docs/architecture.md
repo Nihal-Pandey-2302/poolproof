@@ -20,6 +20,7 @@ src/main.rs              entry point: SIGPIPE, exit code 2 on error
 src/lib.rs               the modules below, as a library for tests/ (no stable API)
 src/cli.rs               clap commands and flags; wires the modules together
 src/scenario.rs          scenario TOML format: Scenario, Step, Action, Compare, PoolMode
+src/doctor.rs            `doctor`: the checks, their order and output (text and JSON)
 src/targets.rs           targets TOML format, and the single target from --pooler/--direct;
                          Endpoint (a parsed URL: ${VAR}, password sources, sslmode, one
                          host only; prints without the password), Reset
@@ -36,6 +37,7 @@ src/runner/
                          (socket options, TLS, drain on close), cancel, wait_ready after a
                          reset, privileges, resolve_reset, server version
   raw.rs                 raw protocol clients for `send` steps
+  doctor.rs              the live side of `doctor`: connects to one target, read-only
   tls.rs                 sslmode and sslrootcert as in libpq (except prefer, which never
                          checks): one rustls config per Endpoint
   compare.rs             outcome matching, Verdict, Mismatch, FailKind (silent/error/hang)
@@ -62,6 +64,8 @@ scripts/testbed.sh       a second test bed with shifted ports, to run several si
 tools/pp-proxy/          self-test proxies (own crate, not shipped): a passthrough that must
                          pass every scenario, and fault injectors that must fail known ones
 selftest/expected.toml   the verdict each self-test target must get
+fuzz/                    cargo-fuzz targets for raw replies and `send` lines (own crate,
+                         not shipped, not in CI)
 ```
 
 ## How `run` works
@@ -184,4 +188,5 @@ report given with `--results`.
 | A command or flag | `cli.rs`, README |
 | A pooler or version in the matrix | `docker/compose.yml`, `targets.toml` (with `product`, `version`, `config`), the version list in README.md, the Docker ignore list in `.github/dependabot.yml`, then regenerate `results/` |
 | A harness self-test fault | `tools/pp-proxy/src/fault.rs` (the fault and its name), `main.rs` (`PROXY_LISTEN` parsing) and `shared.rs` (the shared-server fault) there, the table in `tools/pp-proxy/README.md`, `selftest/expected.toml` |
+| A `doctor` check | `doctor.rs` (the check and its output), `runner/doctor.rs` (the queries); it must stay read-only |
 | CI or releases | `.github/workflows/`, `docs/releasing.md` |

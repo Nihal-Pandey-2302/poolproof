@@ -103,9 +103,9 @@ First release.
   `verify-ca`, `verify-full`) and `sslrootcert` (a CA file or `system`) in the URL, or
   `PGSSLMODE` and `PGSSLROOTCERT`. `require` with a root certificate (`sslrootcert`, or
   `~/.postgresql/root.crt`, or `%APPDATA%\postgresql\root.crt` on Windows, if it
-  exists) checks the chain. `verify-ca` and `verify-full`
-  without one are an error when the targets load. `sslrootcert=system` needs
-  `verify-full`. Client certificates and `sslnegotiation=direct` are not supported yet.
+  exists) checks the chain. `verify-ca` and `verify-full` without one are an error when
+  the targets load. `sslrootcert=system` needs `verify-full`. Client certificates are not
+  supported yet.
 - `reset = "auto"` ends only the sessions from the address and user the pooler connects
   to Postgres as, and refuses when that can't be told apart from poolproof's own
   sessions. `reset = "all"` ends every other session on the database and needs
@@ -153,6 +153,9 @@ First release.
 - A URL names one host and port. Several hosts or ports, `hostaddr`,
   `target_session_attrs` and `load_balance_hosts` are refused, since poolproof would
   otherwise pick a host on its own.
+- `sslnegotiation=direct` in a URL is refused when the targets load: normal clients would
+  start TLS directly while `send` clients send SSLRequest, so the two would connect
+  differently. `sslnegotiation=postgres` is accepted.
 - The `SET ROLE` scenarios declare `requires = ["createrole"]` and run
   `GRANT pp_role TO CURRENT_USER` in setup, so a non-superuser can run them and they test
   the pooler instead of passing on a permission error.
