@@ -4,8 +4,9 @@
 
 These are repository and crates.io settings, so only the owner can do them.
 
-1. Make the repository public. Artifact attestations (below) need a public repository on
-   the free plan, and so does the results site.
+1. Done: the repository is public, and GitHub Pages is enabled with GitHub Actions as
+   the source. The `pages` job in `ci.yml` deploys the results site on every push to
+   main. Artifact attestations (below) also need the public repository on the free plan.
 2. Enable private vulnerability reporting: Settings > Code security > Private
    vulnerability reporting > Enable. SECURITY.md points reporters there.
 3. Create the `crates-io` environment: Settings > Environments > New environment.
@@ -31,6 +32,10 @@ These are repository and crates.io settings, so only the owner can do them.
 7. Revoke the API token used in step 4. No crates.io token is stored in the repository.
 8. In README.md, change the install section to `cargo install poolproof` and
    `cargo binstall poolproof`.
+
+Two README install lines only work after the first release: "download a binary" (the
+releases page) and `cargo binstall` (it downloads the release archives). Check both once
+it is out.
 
 ## Every release
 
