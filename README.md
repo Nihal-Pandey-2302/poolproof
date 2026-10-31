@@ -369,11 +369,12 @@ server and TLS error messages in full; JSON shows only their class (e.g. `authen
 
 To share the outcome with your team, `--format html` writes one self-contained page with
 the grid and every step's trace. `--format json` saves the raw results;
-`poolproof report a.json b.json --format html` (or `markdown`) combines saved runs. The
-JSON carries `schema_version` and `generated_at`; poolproof refuses a report in a newer
-format than it reads. In these formats, a progress line per result goes to stderr. Text
-output is colored on a terminal unless `NO_COLOR` is set; `FORCE_COLOR` or
-`CLICOLOR_FORCE` colors it anywhere.
+`poolproof report a.json b.json --format html` (or `markdown`) combines saved runs, and
+`--label 'nightly variants=c.json'` shows one file's targets under a heading of their own,
+after the others. The JSON carries `schema_version` and `generated_at`; poolproof refuses
+a report in a newer format than it reads. In these formats, a progress line per result
+goes to stderr. Text output is colored on a terminal unless `NO_COLOR` is set;
+`FORCE_COLOR` or `CLICOLOR_FORCE` colors it anywhere.
 
 JSON Schemas for the report, scenario files and targets files are published at
 `https://nihal-pandey-2302.github.io/poolproof/schemas/v1/` as `report.schema.json`,

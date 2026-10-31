@@ -56,6 +56,8 @@ th, td { border-bottom: 1px solid var(--line); }
 thead th { position: sticky; background: var(--panel); z-index: 2; font-weight: 600; font-size: 12px; }
 thead tr:first-child th { top: 0; }
 thead tr:nth-child(2) th { top: 29px; }
+thead tr:nth-child(3) th { top: 58px; }
+thead th.group { text-align: center; padding: 6px 8px; border-left: 1px solid var(--line); white-space: nowrap; }
 thead th.product { text-align: center; padding: 6px 8px; border-left: 1px solid var(--line); }
 thead th.col { padding: 4px 4px 8px; vertical-align: bottom; color: var(--muted); font-weight: 500; }
 thead th.col div { writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap; margin: 0 auto; }
@@ -172,12 +174,16 @@ footer { color: var(--muted); font-size: 12px; max-width: 1400px; margin: 0 auto
   };
 
   // One column per target per report. Results are looked up by report and target.
+  // A report's `label` (from `report --label`) puts its targets under a heading of
+  // their own, after the unlabeled ones.
   const cols = [];
   reports.forEach((r, ri) => r.targets.forEach(t => cols.push({
-    ri, t, key: ri + "/" + t.name,
+    ri, t, key: ri + "/" + t.name, group: typeof r.label === "string" ? r.label : "",
     product: t.product || t.name, pg: t.postgres || "?",
     label: [t.version || t.name, t.config && t.config !== "default" ? t.config : null].filter(Boolean).join(" "),
   })));
+  const groupOrder = ["", ...new Set(cols.map(c => c.group).filter(Boolean))];
+  cols.sort((a, b) => groupOrder.indexOf(a.group) - groupOrder.indexOf(b.group));
   const results = new Map();
   reports.forEach((r, ri) => r.results.forEach(x => results.set(ri + "/" + x.target + "/" + x.scenario, x)));
   const scenarios = [...new Map(reports.flatMap(r => r.scenarios).map(s => [s.name, s])).values()]
@@ -318,14 +324,27 @@ footer { color: var(--muted); font-size: 12px; max-width: 1400px; margin: 0 auto
     const grid = document.getElementById("grid");
     if (!visible.length || !rows.length) { grid.replaceChildren(el("div", { class: "empty" }, "Nothing matches these filters.")); return; }
 
-    // Two header rows: product, then version / config / Postgres.
-    const head1 = el("tr", {}, el("th", { class: "corner", rowspan: "2" }, "Scenario"));
+    // Header rows: the label when any column has one, the product, then version /
+    // config / Postgres. Each heading spans its run of adjacent columns.
+    const grouped = visible.some(c => c.group);
+    const runLength = (i, same) => { let n = 1; while (i + n < visible.length && same(visible[i + n])) n++; return n; };
+    const head0 = el("tr");
+    const head1 = el("tr");
     const head2 = el("tr");
-    let prev = null;
+    const corner = el("th", { class: "corner", rowspan: grouped ? "3" : "2" }, "Scenario");
+    (grouped ? head0 : head1).append(corner);
+    let prev = null, prevGroup = null;
     visible.forEach((c, i) => {
-      const first = c.product !== prev;
-      if (first) head1.append(el("th", { class: "product", colspan: String(visible.filter(x => x.product === c.product).length) }, productName(c.product)));
+      if (grouped && c.group !== prevGroup) {
+        head0.append(el("th", { class: "group", colspan: String(runLength(i, x => x.group === c.group)) }, c.group));
+      }
+      const first = c.product !== prev || c.group !== prevGroup;
+      if (first) {
+        const n = runLength(i, x => x.product === c.product && x.group === c.group);
+        head1.append(el("th", { class: "product", colspan: String(n) }, productName(c.product)));
+      }
       prev = c.product;
+      prevGroup = c.group;
       c.first = first;
       const pgLabel = pgSel === "all" && pgs.length > 1 ? " · pg " + c.pg : "";
       const probe = probeText(c.t, 120);
@@ -364,7 +383,7 @@ footer { color: var(--muted); font-size: 12px; max-width: 1400px; margin: 0 auto
       foot.append(el("td", { title: `${n} silent failures, ${e} expected` }, n ? el("b", {}, String(n)) : "0",
         e ? el("small", {}, "+" + e + " exp.") : null));
     }
-    grid.replaceChildren(el("table", {}, el("thead", {}, head1, head2), body, el("tfoot", {}, foot)));
+    grid.replaceChildren(el("table", {}, el("thead", {}, grouped ? head0 : null, head1, head2), body, el("tfoot", {}, foot)));
     document.getElementById("legend-once").hidden = !once;
   }
 

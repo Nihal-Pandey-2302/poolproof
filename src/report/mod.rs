@@ -60,6 +60,11 @@ pub struct Report {
     /// FAILs.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stale_expectations: Vec<crate::limitations::Stale>,
+    /// A heading for this report's targets, from `report --label`, so a page can show
+    /// them apart from the others. Only for rendering: never read from or written to a
+    /// report file.
+    #[serde(skip)]
+    pub label: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -480,6 +485,31 @@ mod tests {
     fn markdown_has_a_row_per_scenario() {
         let md = markdown(&[sample()]);
         assert!(md.contains("| `s` | pass |"));
+    }
+
+    #[test]
+    fn markdown_lists_labeled_columns_after_the_others() {
+        let report = |target: &str| -> Report {
+            serde_json::from_str(&format!(
+                r#"{{"poolproof":"0","targets":[{{"name":"{target}","mode":"transaction","postgres":"18"}}],
+                "scenarios":[{{"name":"s","description":"d","refs":[],"steps":["x"]}}],
+                "results":[{{"target":"{target}","scenario":"s","result":"pass","steps":[]}}]}}"#
+            ))
+            .unwrap()
+        };
+        let plain = markdown(&[report("v"), report("core")]);
+        let mut variants = report("v");
+        variants.label = Some("<b>*nightly*</b> | [x](y)".into());
+        let md = markdown(&[variants, report("core")]);
+        // The labeled report's column moves after the others.
+        assert!(md.contains("| Scenario | core (pg 18) | v (pg 18) |"), "{md}");
+        assert!(
+            md.contains("\n\\<b\\>\\*nightly\\*\\</b\\> \\| \\[x\\](y): v (pg 18).\n"),
+            "{md}"
+        );
+        // Without a label nothing changes.
+        assert!(plain.contains("| Scenario | v (pg 18) | core (pg 18) |"), "{plain}");
+        assert!(!plain.contains("): "), "{plain}");
     }
 
     #[test]

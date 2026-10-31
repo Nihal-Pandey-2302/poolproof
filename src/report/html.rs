@@ -9,9 +9,21 @@ const TEMPLATE: &str = include_str!("report.html");
 /// A self-contained HTML page: the reports are embedded, so it works offline and
 /// can be shared as one file or published as a site.
 pub fn html(reports: &[Report]) -> Result<String> {
+    // A report file never has a label; the page gets one from `report --label`, put
+    // first in that report's object. Unlabeled reports serialize as before.
+    let data = reports
+        .iter()
+        .map(|r| {
+            let json = serde_json::to_string(r)?;
+            Ok(match &r.label {
+                Some(label) => format!("{{\"label\":{},{}", serde_json::to_string(label)?, &json[1..]),
+                None => json,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
     // `<` only appears inside JSON strings, where \u003c means the same thing, so
     // nothing in the data can close the <script> element.
-    let data = serde_json::to_string(reports)?.replace('<', "\\u003c");
+    let data = format!("[{}]", data.join(",")).replace('<', "\\u003c");
     Ok(TEMPLATE
         .replacen("<!--POOLPROOF_CSP-->", &csp_meta()?, 1)
         .replacen("/*POOLPROOF_DATA*/", &data, 1))
@@ -94,6 +106,26 @@ mod tests {
         // Links are built only for http(s) refs.
         assert!(TEMPLATE.contains(r#"/^https?:\/\//i.test(r)"#));
         assert!(TEMPLATE.contains(r#"rel: "noopener noreferrer""#));
+    }
+
+    #[test]
+    fn a_label_reaches_the_page_safely_and_only_when_given() {
+        let plain = report_with_refs(&[]);
+        let unlabeled = html(&[plain]).unwrap();
+        assert!(!unlabeled.contains(r#"{"label":"#), "a report file never has a label");
+        assert!(unlabeled.contains(r#"[{"schema_version":1,"#));
+        let mut labeled = report_with_refs(&[]);
+        labeled.label = Some("</script><script>alert(1)</script> \"variants\"".into());
+        let page = html(&[report_with_refs(&[]), labeled]).unwrap();
+        assert!(page.contains(
+            r#",{"label":"\u003c/script>\u003cscript>alert(1)\u003c/script> \"variants\"","schema_version":1,"#
+        ));
+        assert_eq!(page.matches("</script>").count(), 2);
+        // The page groups by it, as text, after the unlabeled columns.
+        assert!(TEMPLATE.contains(r#"group: typeof r.label === "string" ? r.label : """#));
+        assert!(TEMPLATE.contains(
+            r#"el("th", { class: "group", colspan: String(runLength(i, x => x.group === c.group)) }, c.group)"#
+        ));
     }
 
     #[test]
