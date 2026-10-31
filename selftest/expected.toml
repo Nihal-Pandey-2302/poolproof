@@ -55,8 +55,10 @@ aborted-transaction-not-reused = { result = "error", why = "the next client inhe
 advisory-lock-released-on-disconnect = { result = "silent", why = "the lock stays on the shared session" }
 cancel-from-idle-client-is-harmless = { result = "error", why = "both clients share one cancel key, so the idle client cancels the other's query" }
 cursor-isolated-between-clients = { result = "silent", why = "the WITH HOLD cursor is visible to the other client" }
+deallocate-all-isolated = { result = "error", why = "the other client's DEALLOCATE ALL drops the statement (26000)" }
 empty-search-path-from-set-config = { result = "silent", why = "set_config leaks to the next client" }
 listen-notify-delivered = { result = "silent", why = "the notification arrives while no client holds the server" }
+load-isolated-between-clients = { result = "silent", why = "the loaded library is visible to the other client" }
 protocol-statement-names-isolated = { result = "error", why = "the second Parse of s1 gets 42P05" }
 protocol-unnamed-statement-survives-other-clients = { result = "error", why = "the other client's query replaces the unnamed statement (26000)" }
 search-path-isolated-between-clients = { result = "silent", why = "SET search_path leaks" }

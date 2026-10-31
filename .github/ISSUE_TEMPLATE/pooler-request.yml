@@ -6,7 +6,7 @@ body:
     id: pooler
     attributes:
       label: Pooler and version
-      placeholder: pgcat 1.2.0
+      placeholder: pgpool-II 4.6
     validations:
       required: true
   - type: input

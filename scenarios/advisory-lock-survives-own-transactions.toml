@@ -1,0 +1,35 @@
+name = "advisory-lock-survives-own-transactions"
+description = "A session advisory lock must stay held by the client that took it, across its later transactions."
+
+[[step]]
+client = "a"
+simple = "SELECT pg_advisory_lock(424243)::text"
+
+[[step]]
+client = "a"
+simple = "SELECT 1"
+
+[[step]]
+client = "a"
+simple = "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 424243 AND pid = pg_backend_pid()"
+
+[[step]]
+client = "a"
+simple = "BEGIN"
+
+[[step]]
+client = "a"
+simple = "SELECT 1"
+
+[[step]]
+client = "a"
+simple = "COMMIT"
+
+[[step]]
+client = "a"
+simple = "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 424243 AND pid = pg_backend_pid()"
+
+# Clean up, so nothing is left on the pooler's server connection for a later run.
+[[step]]
+client = "a"
+simple = "SELECT pg_advisory_unlock(424243)::text"

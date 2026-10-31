@@ -1,0 +1,15 @@
+name = "deallocate-all-isolated"
+description = "DEALLOCATE ALL from one client must not remove another client's prepared statements."
+
+[[step]]
+client = "a"
+prepare = "SELECT 'from a'::text"
+name = "q"
+
+[[step]]
+client = "b"
+simple = "DEALLOCATE ALL"
+
+[[step]]
+client = "a"
+execute = "q"

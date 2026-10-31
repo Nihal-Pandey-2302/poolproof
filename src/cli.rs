@@ -80,6 +80,11 @@ enum Command {
         /// compared) counts unless this is `none`.
         #[arg(long, value_enum, default_value_t = FailOn::Any)]
         fail_on: FailOn,
+        /// A saved `run --format json` report to compare with. Then only regressions
+        /// count for the exit code: results worse than in that report. Known failures,
+        /// fixes and scenarios or targets only one side has are listed, not counted.
+        #[arg(long, value_name = "REPORT")]
+        compare_to: Option<PathBuf>,
     },
     /// Scan queries (pg_stat_statements CSV, Postgres logs or a .sql file) for
     /// patterns that break under transaction pooling.
@@ -173,6 +178,7 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
             check_scenarios,
             fail_on,
             step_timeout,
+            compare_to,
         } => {
             let targets = match (pooler, direct) {
                 (Some(pooler), Some(direct)) => {
@@ -185,6 +191,16 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
                 }
                 _ => Targets::load(&targets)?,
             };
+            // Before the run, so a bad baseline fails fast.
+            let baseline = compare_to.as_deref().map(report::Report::load).transpose()?;
+            if let Some(baseline) = &baseline {
+                let selected = targets
+                    .targets
+                    .iter()
+                    .filter(|t| only.is_empty() || only.contains(&t.name))
+                    .map(|t| (t.name.as_str(), t.mode));
+                report::compare::check_modes(baseline, selected)?;
+            }
             let mut scenarios = load_scenarios(scenarios.as_deref())?;
             if reverse {
                 scenarios.reverse();
@@ -207,6 +223,27 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
                 },
             };
             let (target_infos, results) = runner::suite::run(&targets.targets, &scenarios, &opts).await?;
+            let scenarios = scenarios
+                .iter()
+                .filter(|s| results.iter().any(|r| r.scenario == s.name))
+                .map(|s| report::ScenarioInfo {
+                    name: s.name.clone(),
+                    description: s.description.clone(),
+                    refs: s.refs.clone(),
+                    steps: s.steps.iter().map(|step| step.describe()).collect(),
+                    repeat: s.repeat,
+                })
+                .collect();
+            let mut report = report::Report {
+                schema_version: report::SCHEMA_VERSION,
+                poolproof: env!("CARGO_PKG_VERSION").to_string(),
+                generated_at: Some(report::now_rfc3339()),
+                targets: target_infos,
+                scenarios,
+                results,
+                comparison: None,
+            };
+            let results = &report.results;
 
             let count = |f: fn(&Verdict) -> bool| results.iter().filter(|r| f(&r.verdict)).count();
             let failed = count(|v| matches!(v, Verdict::Fail { .. }));
@@ -220,31 +257,32 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
             if ignored > 0 {
                 eprintln!("note: {ignored} failed or errored results ignored by --fail-on {fail_on}");
             }
+            // With --compare-to, only regressions that --fail-on counts fail the run.
+            let comparison = match &baseline {
+                Some(baseline) => Some(report::compare::compare(baseline, &report, fail_on)?),
+                None => None,
+            };
+            let exit_failure = comparison.as_ref().map_or(exit_failure, |c| c.fails());
+            let baseline_file = compare_to
+                .as_deref()
+                .map(|p| p.display().to_string())
+                .unwrap_or_default();
             if matches!(format, RunFormat::Text) {
                 let passed = count(|v| matches!(v, Verdict::Pass));
                 let skipped = count(|v| matches!(v, Verdict::Skip { .. }));
                 println!("\n{passed} passed, {failed} failed, {errors} errors, {skipped} skipped");
+                if let Some(c) = &comparison {
+                    print!("{}", c.text(&baseline_file, &report));
+                }
             } else {
-                let scenarios = scenarios
-                    .iter()
-                    .filter(|s| results.iter().any(|r| r.scenario == s.name))
-                    .map(|s| report::ScenarioInfo {
-                        name: s.name.clone(),
-                        description: s.description.clone(),
-                        refs: s.refs.clone(),
-                        steps: s.steps.iter().map(|step| step.describe()).collect(),
-                        repeat: s.repeat,
-                    })
-                    .collect();
-                let report = report::Report {
-                    poolproof: env!("CARGO_PKG_VERSION").to_string(),
-                    targets: target_infos,
-                    scenarios,
-                    results,
-                };
+                let compared = comparison.as_ref().map(|c| c.markdown(&baseline_file, &report));
+                report.comparison = comparison;
                 match format {
                     RunFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
-                    RunFormat::Markdown => print!("{}", report::markdown(&[report])),
+                    RunFormat::Markdown => {
+                        print!("{}", report::markdown(&[report]));
+                        print!("{}", compared.unwrap_or_default());
+                    }
                     RunFormat::Html => print!("{}", report::html(&[report])?),
                     RunFormat::Text => unreachable!(),
                 }

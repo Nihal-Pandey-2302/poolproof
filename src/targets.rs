@@ -69,7 +69,7 @@ enum ResetFile {
 
 /// A SQL statement to run on Postgres. Errors show it as written, with `${NAME}`
 /// unexpanded, so a value substituted from the environment never reaches output.
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Statement {
     sql: String,
     written: String,
@@ -674,6 +674,7 @@ mod tests {
     fn bundled_targets_reset_everything() {
         // Several poolers share the test bed's Postgres, so one pooler's leak can only
         // be cleared by ending every session, not just that pooler's.
+        // Loads without a test bed: the TLS target's CA file is only read when connecting.
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("targets.toml");
         let targets = Targets::load(&path).unwrap();
         assert!(targets.targets.iter().all(|t| matches!(t.reset, Reset::All)));
