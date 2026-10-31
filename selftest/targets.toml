@@ -1,6 +1,9 @@
 # Self-test targets: tools/pp-proxy in the docker test bed, started with
 #   docker compose -f docker/compose.yml --profile selftest up -d --wait postgres pp-proxy
 # Expected verdicts: selftest/expected.toml. Same reset as targets.toml.
+# Every proxy but shared-server gives each client its own server connection, so the
+# server-connection probes see several; ignore_server_requirements runs those
+# scenarios anyway, which keeps every scenario covered here.
 
 [[target]]
 name = "selftest-passthrough"
@@ -10,6 +13,7 @@ config = "none"
 pooler = "postgres://postgres:postgres@127.0.0.1:56471/app?sslmode=disable"
 direct = "postgres://postgres:postgres@127.0.0.1:55432/app?sslmode=disable"
 mode = "transaction"
+ignore_server_requirements = true
 reset = ["SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'"]
 
 [[target]]
@@ -20,6 +24,7 @@ config = "drop-pipelined"
 pooler = "postgres://postgres:postgres@127.0.0.1:56472/app?sslmode=disable"
 direct = "postgres://postgres:postgres@127.0.0.1:55432/app?sslmode=disable"
 mode = "transaction"
+ignore_server_requirements = true
 reset = ["SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'"]
 
 [[target]]
@@ -30,6 +35,7 @@ config = "swallow-error"
 pooler = "postgres://postgres:postgres@127.0.0.1:56473/app?sslmode=disable"
 direct = "postgres://postgres:postgres@127.0.0.1:55432/app?sslmode=disable"
 mode = "transaction"
+ignore_server_requirements = true
 reset = ["SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'"]
 
 [[target]]
@@ -40,6 +46,7 @@ config = "no-copydone"
 pooler = "postgres://postgres:postgres@127.0.0.1:56474/app?sslmode=disable"
 direct = "postgres://postgres:postgres@127.0.0.1:55432/app?sslmode=disable"
 mode = "transaction"
+ignore_server_requirements = true
 reset = ["SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'"]
 
 [[target]]
@@ -50,6 +57,7 @@ config = "wrong-tag"
 pooler = "postgres://postgres:postgres@127.0.0.1:56475/app?sslmode=disable"
 direct = "postgres://postgres:postgres@127.0.0.1:55432/app?sslmode=disable"
 mode = "transaction"
+ignore_server_requirements = true
 reset = ["SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'"]
 
 [[target]]
@@ -70,4 +78,5 @@ config = "refuse"
 pooler = "postgres://postgres:postgres@127.0.0.1:56477/app?sslmode=disable"
 direct = "postgres://postgres:postgres@127.0.0.1:55432/app?sslmode=disable"
 mode = "transaction"
+ignore_server_requirements = true
 reset = ["SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'"]
