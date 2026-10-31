@@ -335,10 +335,17 @@ impl Endpoint {
         let mut config = Config::from_str(&url).context("invalid connection URL")?;
         check_supported(&config)?;
         // tokio-postgres would start TLS directly, but send clients always send SSLRequest.
-        match (sslnegotiation, env("PGSSLNEGOTIATION")) {
-            (Some(value), _) if value != "postgres" => bail!("not supported yet: sslnegotiation={value}"),
-            (None, Some(value)) if value != "postgres" => bail!("not supported yet: PGSSLNEGOTIATION={value}"),
-            _ => {}
+        // The string's own value wins over the environment, as in libpq.
+        let negotiation = match (sslnegotiation, env("PGSSLNEGOTIATION")) {
+            (Some(value), _) => Some(("sslnegotiation", value)),
+            (None, Some(value)) => Some(("PGSSLNEGOTIATION", value)),
+            (None, None) => None,
+        };
+        match negotiation {
+            Some((_, value)) if value == "postgres" => {}
+            Some((name, value)) if value == "direct" => bail!("not supported yet: {name}=direct"),
+            Some((name, _)) => bail!("unknown {name} value: use postgres or direct"),
+            None => {}
         }
         // libpq's default is prefer: TLS when the server offers it, without checks.
         let roots = sslrootcert.or_else(|| env("PGSSLROOTCERT")).map(|r| match r.as_str() {
@@ -913,6 +920,10 @@ mod tests {
         assert!(Endpoint::resolve("postgres://u@h/db?sslnegotiation=postgres", &direct).is_ok());
         let postgres = env_of(&[("PGSSLNEGOTIATION", "postgres")]);
         assert!(Endpoint::resolve("postgres://u@h/db", &postgres).is_ok());
+        assert!(err("postgres://u@h/db?sslnegotiation=foo").contains("unknown sslnegotiation value"));
+        let foo = env_of(&[("PGSSLNEGOTIATION", "foo")]);
+        let foo_err = format!("{:#}", Endpoint::resolve("postgres://u@h/db", &foo).unwrap_err());
+        assert!(foo_err.contains("unknown PGSSLNEGOTIATION value"), "{foo_err}");
     }
 
     #[test]
