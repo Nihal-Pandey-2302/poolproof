@@ -288,12 +288,71 @@ pub fn check_finding(report: &Report, target: &TargetInfo, scenarios: &[&str]) -
         status,
         scenarios: results,
         documented: if undocumented { vec![] } else { documented },
+        fix: None,
     })
+}
+
+/// The driver verdicts built into the binary, from results/drivers-postgres-*.json:
+/// (target, postgres, scenario, result, kind). Kept apart from the core reports, whose
+/// targets have the same names.
+const BUNDLED_DRIVER_VERDICTS: &[(&str, &str, &str, &str, &str)] =
+    include!(concat!(env!("OUT_DIR"), "/bundled_driver_verdicts.rs"));
+
+/// The built-in driver results for `target`: the Postgres version they're from, and each
+/// scenario's result there (`pass`, or a FAIL's kind; ERROR and SKIP are left out). With
+/// `pinned`, only from exactly `postgres`; otherwise from `postgres` when there are
+/// results for it, else from the newest version there are.
+pub fn driver_results(
+    target: &str,
+    postgres: Option<&str>,
+    pinned: bool,
+) -> Option<(String, Vec<(&'static str, String)>)> {
+    let rows: Vec<_> = BUNDLED_DRIVER_VERDICTS.iter().filter(|r| r.0 == target).collect();
+    let mut versions: Vec<&str> = rows.iter().map(|r| r.1).collect();
+    versions.sort_by(|a, b| crate::version::cmp(a, b));
+    versions.dedup();
+    let pg = match postgres {
+        Some(pg) if versions.contains(&pg) => pg,
+        Some(_) if pinned => return None,
+        _ => *versions.last()?,
+    };
+    let results = rows
+        .iter()
+        .filter(|r| r.1 == pg)
+        .filter_map(|&&(_, _, scenario, result, kind)| match result {
+            "pass" => Some((scenario, "pass".to_string())),
+            "fail" => Some((scenario, kind.to_string())),
+            _ => None,
+        })
+        .collect();
+    Some((pg.to_string(), results))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn driver_results_come_from_their_own_list() {
+        // Every committed drivers report is built in, reduced to verdicts.
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("results");
+        let committed: usize = std::fs::read_dir(&root)
+            .unwrap()
+            .filter_map(|e| e.ok()?.file_name().into_string().ok())
+            .filter(|n| n.starts_with("drivers-postgres-") && n.ends_with(".json"))
+            .map(|n| Report::load(&root.join(n)).unwrap().results.len())
+            .sum();
+        assert_eq!(BUNDLED_DRIVER_VERDICTS.len(), committed);
+        let (target, pg, ..) = BUNDLED_DRIVER_VERDICTS[0];
+        let (found, results) = driver_results(target, Some(pg), true).unwrap();
+        assert_eq!(found, pg);
+        assert!(!results.is_empty());
+        // Another Postgres version: the newest there is, unless it was asked for exactly.
+        let newest = driver_results(target, None, false).unwrap().0;
+        assert_eq!(driver_results(target, Some("9.6"), false).unwrap().0, newest);
+        assert!(driver_results(target, Some("9.6"), true).is_none());
+        assert!(driver_results("no-such-target", None, false).is_none());
+    }
 
     fn sample() -> Report {
         serde_json::from_str(
