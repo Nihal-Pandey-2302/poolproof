@@ -8,7 +8,7 @@ include = ["scenarios/*.toml"]
 path = "./schemas/v1/scenario.schema.json"
 
 [[rule]]
-include = ["targets.toml", "selftest/targets.toml"]
+include = ["targets.toml", "targets-variants.toml", "selftest/targets.toml"]
 
 [rule.schema]
 path = "./schemas/v1/targets.schema.json"

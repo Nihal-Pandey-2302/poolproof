@@ -1,6 +1,6 @@
 # Variant targets: non-default configs of the poolers in targets.toml. They need the
 # variants profile: COMPOSE_PROFILES=variants docker compose -f docker/compose.yml up -d --wait
-# Results: results/variants-postgres-18.4.json (scripts/update-results.sh --variants).
+# Their results will go in results/variants-postgres-18.4.json, never in RESULTS.md.
 # Names end in the config label, so they never clash with targets.toml.
 
 # Session mode, pool of one server connection. Scenarios that need two connected
