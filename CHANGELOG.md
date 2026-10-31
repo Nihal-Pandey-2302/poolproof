@@ -72,7 +72,8 @@ First release.
   `--reset exact --pool-size N`. The report records each target's `pool_size`.
 - Scenario steps can be `evidence` of which backend a client is on, and `same_backend`
   pairs make a run count only when the clients really shared a server connection; no
-  counted run is a SKIP.
+  counted run is a SKIP. `same_backend_or_closed` also counts a run where the first
+  client's backend had exited.
 - Scenario steps can be a `precondition`: a boolean query that decides whether a run
   through the pooler counts. Reports say in how many runs it held ("pass (precondition
   1/5)"), and the HTML trace marks steps that never ran and why. The HTML report shows

@@ -419,12 +419,19 @@ fn evidence_of(outcome: &Outcome) -> Option<Result<(&str, Option<&str>), ()>> {
     };
     match rows.as_slice() {
         [row] => match row.as_slice() {
-            [Some(pid), start] => Some(Ok((pid.as_str(), start.as_deref()))),
+            // A third column says whether the pair's first backend had closed.
+            [Some(pid), start] | [Some(pid), start, Some(_)] => Some(Ok((pid.as_str(), start.as_deref()))),
             [Some(_)] => Some(Err(())),
             _ => None,
         },
         _ => None,
     }
+}
+
+/// For the second step of a `same_backend_or_closed` pair: whether the first one's
+/// backend had exited by then.
+fn closed(outcome: &Outcome) -> bool {
+    matches!(outcome, Outcome::Ok { rows, .. } if rows.len() == 1 && rows[0].get(2).cloned().flatten().as_deref() == Some("closed"))
 }
 
 /// Compare one pooler-side run with the baseline outcomes. `broken` is what went wrong
@@ -542,7 +549,9 @@ fn compare_with(
     // A run that passed without the clients sharing a backend tested nothing.
     let apart = (mismatch.is_none() && unmet.is_none() && broken.is_none() && reuse)
         .then(|| {
-            scenario.same_backend.iter().find_map(|&[i, j]| {
+            let strict = scenario.same_backend.iter().map(|p| (p, false));
+            let or_closed = scenario.same_backend_or_closed.iter().map(|p| (p, true));
+            strict.chain(or_closed).find_map(|(&[i, j], or_closed)| {
                 let (a, b) = (evidence_of(&actual[i - 1])?, evidence_of(&actual[j - 1])?);
                 let (client_a, client_b) = (&scenario.steps[i - 1].client, &scenario.steps[j - 1].client);
                 match (a, b) {
@@ -551,7 +560,17 @@ fn compare_with(
                     )),
                     (Ok((pa, sa)), Ok((pb, sb))) => {
                         let same = pa == pb && (sa.is_none() || sb.is_none() || sa == sb);
-                        (!same).then(|| format!("passed, but {client_b} never reached {client_a}'s server connection"))
+                        match (same, or_closed) {
+                            (true, _) => None,
+                            (false, true) if closed(&actual[j - 1]) => None,
+                            (false, true) => Some(format!(
+                                "passed, but {client_b} never reached {client_a}'s server connection, and \
+                                 {client_a}'s backend was still there"
+                            )),
+                            (false, false) => Some(format!(
+                                "passed, but {client_b} never reached {client_a}'s server connection"
+                            )),
+                        }
                     }
                 }
             })
@@ -785,6 +804,41 @@ mod tests {
         assert_eq!(kind(Outcome::error("08P01", "x")), (4, FailKind::Error));
         assert_eq!(kind(Outcome::error("TIMEOUT", "x")), (4, FailKind::Hang));
         assert_eq!(kind(Outcome::empty()), (4, FailKind::Silent));
+        // Or closed: another backend counts when the first one had exited by then.
+        let closing = scenario(
+            "name = 't'\ndescription = 't'\nsame_backend_or_closed = [[2, 4]]\n\
+             [[step]]\nclient = 'a'\nsimple = 'SELECT 1'\n[[step]]\nclient = 'a'\nevidence = true\n\
+             [[step]]\nclient = 'b'\nsimple = 'SELECT 1'\n[[step]]\nclient = 'b'\nevidence = true\n",
+        );
+        let marked = |mark: &str| Outcome::Ok {
+            rows: vec![vec![Some("8".into()), Some("t1".into()), Some(mark.into())]],
+            tags: vec![1],
+        };
+        let run_closing = |b_ev: Outcome, b_saw: Outcome| {
+            compare_with(
+                &closing,
+                &expected,
+                vec![one.clone(), backend("7", Some("t1")), b_saw, b_ev],
+                None,
+                true,
+            )
+        };
+        assert!(matches!(
+            run_closing(marked("closed"), one.clone()).verdict,
+            Verdict::Pass
+        ));
+        let open = run_closing(marked("open"), one.clone());
+        assert_eq!(open.reuse_unmet, 1);
+        assert!(
+            matches!(open.verdict, Verdict::Skip { ref reason } if reason.ends_with("a's backend was still there"))
+        );
+        assert!(matches!(
+            run_closing(backend("7", Some("t1")), one.clone()).verdict,
+            Verdict::Pass
+        ));
+        // A real difference still wins.
+        let differs = run_closing(marked("closed"), Outcome::empty());
+        assert!(matches!(differs.verdict, Verdict::Fail { ref mismatch } if mismatch.step == 3));
         // Off for Postgres standing in for its own pooler.
         let off = run(one.clone(), backend("7", Some("t1")), backend("8", Some("t1")), false);
         assert!(matches!(off.verdict, Verdict::Pass));
@@ -1132,6 +1186,50 @@ mod tests {
         // side still runs the precondition.
         let passthrough = check(&with("SELECT false", 1), &direct, &direct, &Isolation::None, &t).await;
         assert!(matches!(passthrough.verdict, Verdict::Skip { .. }));
+    }
+
+    #[tokio::test]
+    #[ignore = "needs POOLPROOF_TEST_PG"]
+    async fn a_closed_first_backend_counts_for_or_closed_pairs() {
+        let direct = Endpoint::parse(&test_pg()).unwrap();
+        let sep = if test_pg().contains('?') { '&' } else { '?' };
+        let pooled = Endpoint::parse(&format!("{}{sep}application_name=pp_pooled", test_pg())).unwrap();
+        // Postgres gives b its own backend, so only a's having exited can count.
+        let with = |a_after: &str| {
+            scenario(&format!(
+                "name = 't'\ndescription = 't'\nsame_backend_or_closed = [[2, 5]]\n\
+                 [[step]]\nclient = 'a'\nsimple = 'SELECT 1'\n[[step]]\nclient = 'a'\nevidence = true\n\
+                 [[step]]\nclient = 'a'\n{a_after}\n\
+                 [[step]]\nclient = 'b'\nsimple = 'SELECT 1'\n[[step]]\nclient = 'b'\nevidence = true\n"
+            ))
+        };
+        let t = Timeouts::default();
+        let gone = check(&with("disconnect = true"), &pooled, &direct, &Isolation::None, &t).await;
+        assert!(matches!(gone.verdict, Verdict::Pass), "{:?}", gone.verdict);
+        assert_eq!((gone.runs, gone.reuse_unmet), (1, 0));
+        // a's backend finishes its query half a second after a dropped the connection.
+        let slow = check(
+            &with("simple = 'SELECT pg_sleep(0.5)'\nabandon_after_ms = 50"),
+            &pooled,
+            &direct,
+            &Isolation::None,
+            &t,
+        )
+        .await;
+        assert!(matches!(slow.verdict, Verdict::Pass), "{:?}", slow.verdict);
+        assert!(matches!(&slow.steps[4].1, Outcome::Ok { rows, .. } if rows[0][2].as_deref() == Some("closed")));
+        // a stays connected: still there once the poll gives up.
+        let short = Timeouts {
+            housekeeping: Duration::from_millis(600),
+            ..Timeouts::default()
+        };
+        let open = check(&with("simple = 'SELECT 2'"), &pooled, &direct, &Isolation::None, &short).await;
+        assert_eq!((open.runs, open.reuse_unmet), (0, 1));
+        assert!(
+            matches!(&open.verdict, Verdict::Skip { reason } if reason.ends_with("a's backend was still there")),
+            "{:?}",
+            open.verdict
+        );
     }
 
     #[tokio::test]

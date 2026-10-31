@@ -640,7 +640,11 @@ is an evidence step the pooler answers with an error, a hang or no pid. A run th
 with a pair on different backends, or where a backend was gone before its start time
 could be read, doesn't count; if no run counts, the result is a SKIP saying the second
 client never reached the first one's connection. A start time direct may not see is
-compared by pid alone. `ignore_server_requirements` turns the pair check off. Put
+compared by pid alone. `same_backend_or_closed = [[2, 5]]` is the same check for a
+first client that disconnects: the run also counts when the second client is elsewhere
+but the first one's backend (same pid and start) has exited by then, which poolproof
+waits for on direct for a few seconds, since a backend exits a moment after its client
+leaves. `ignore_server_requirements` turns the pair checks off. Put
 evidence steps right after the steps whose server connection matters; in transaction
 mode a client can still move between its step and the evidence after it, which a
 `BEGIN`..`COMMIT` around both rules out where that doesn't change what is tested. An

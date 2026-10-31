@@ -236,7 +236,8 @@ pub async fn run(
                 failures,
                 varied: (runs > 1).then_some(varied),
                 precondition_unmet: has_precondition(s).then_some(unmet),
-                reuse_unmet: (!s.same_backend.is_empty()).then_some(reuse_unmet),
+                reuse_unmet: (!s.same_backend.is_empty() || !s.same_backend_or_closed.is_empty())
+                    .then_some(reuse_unmet),
                 expected: None,
             };
             if let (Some(limitations), Some(info)) = (opts.limitations, target_infos.last()) {

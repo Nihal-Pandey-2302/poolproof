@@ -115,7 +115,7 @@
         },
         "evidence": {
           "default": false,
-          "description": "Record which backend this pooled client is on: poolproof asks the pooler for\n`pg_backend_pid()` and reads the backend's start time on direct. Not run on\nPostgres and never compared; `same_backend` checks it.",
+          "description": "Record which backend this pooled client is on: poolproof asks the pooler for\n`pg_backend_pid()` and reads the backend's start time on direct. Not run on\nPostgres and never compared; `same_backend` and `same_backend_or_closed` check it.",
           "type": "boolean"
         },
         "execute": {
@@ -225,6 +225,21 @@
     "same_backend": {
       "default": [],
       "description": "Pairs of `evidence` steps (1-based) that must name the same backend for a run\nthrough the pooler to count: proof that the second client really reached the\nfirst one's server connection. A run where a pair differs doesn't count.",
+      "items": {
+        "items": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxItems": 2,
+        "minItems": 2,
+        "type": "array"
+      },
+      "type": "array"
+    },
+    "same_backend_or_closed": {
+      "default": [],
+      "description": "Like `same_backend`, but a run also counts when the first step's backend has\nexited by the second: for a client that disconnects, when what matters is that\nthe next one doesn't inherit its state.",
       "items": {
         "items": {
           "format": "uint",
