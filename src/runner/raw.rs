@@ -24,6 +24,7 @@ use tokio_postgres::config::Host;
 use tokio_rustls::TlsConnector;
 use tokio_rustls::client::TlsStream;
 
+use super::pg::tcp_connect;
 use super::tls::{SslMode, Tls, wants_client_certificate};
 use crate::targets::Endpoint;
 
@@ -272,7 +273,7 @@ impl RawConn {
 
         // One deadline for TCP connect and startup, as for tokio-postgres clients.
         let deadline = Instant::now() + connect_timeout;
-        let tcp = timeout_at(deadline, TcpStream::connect((host.as_str(), port)))
+        let tcp = timeout_at(deadline, tcp_connect(config, &host, port))
             .await
             .context("connect timed out")??;
         let stream = timeout_at(deadline, negotiate_tls(tcp, endpoint.tls(), &host))

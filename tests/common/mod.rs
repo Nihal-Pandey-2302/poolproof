@@ -37,7 +37,10 @@ pub fn echoing_server() -> u16 {
                 b'X' => return Ok(()),
                 b'Q' => {
                     let sql = String::from_utf8_lossy(&body[..body.len() - 1]).into_owned();
-                    let reply = if sql == "SELECT 1" {
+                    // The harness's own SET lock_timeout/statement_timeout comes first.
+                    let reply = if sql.starts_with("SET ") {
+                        message(b'C', b"SET\0")
+                    } else if sql == "SELECT 1" {
                         [
                             message(
                                 b'T',

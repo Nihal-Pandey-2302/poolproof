@@ -10,7 +10,7 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpStream;
 use tokio::task::JoinHandle;
 use tokio::time::{timeout, timeout_at};
-use tokio_postgres::config::{Host, SslMode};
+use tokio_postgres::config::{Config, Host, SslMode};
 use tokio_postgres::tls::MakeTlsConnect;
 use tokio_postgres::{AsyncMessage, CancelToken, Client, Connection, NoTls, SimpleQueryMessage, Statement};
 use tokio_postgres_rustls::MakeRustlsConnect;
@@ -43,9 +43,8 @@ impl Conn {
             pending.abort();
         }
         drop(self.client);
-        // TODO(#26): t.housekeeping once Timeouts has it.
-        if timeout(t.step, self.driver).await.is_err() && self.on_postgres {
-            bail!("the backend did not exit within {:?} of the disconnect", t.step);
+        if timeout(t.housekeeping, self.driver).await.is_err() && self.on_postgres {
+            bail!("the backend did not exit within {:?} of the disconnect", t.housekeeping);
         }
         Ok(())
     }
@@ -107,19 +106,131 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for DrainOnShutdown<S> {
     }
 }
 
+/// Opens a TCP connection with the URL's socket options: `connect_timeout` for the TCP
+/// connect (as tokio-postgres; the whole connect also has the harness's own limit),
+/// `tcp_user_timeout` in milliseconds as in libpq, and keepalives (on unless
+/// `keepalives=0`, with `keepalives_idle`, `_interval` and `_retries`). An option this
+/// system can't set is an error, not ignored.
+pub(super) async fn tcp_connect(config: &Config, host: &str, port: u16) -> Result<TcpStream> {
+    let connecting = TcpStream::connect((host, port));
+    let stream = match config.get_connect_timeout() {
+        Some(limit) => timeout(*limit, connecting)
+            .await
+            .with_context(|| format!("no connection within connect_timeout ({limit:?})"))??,
+        None => connecting.await?,
+    };
+    stream.set_nodelay(true)?;
+    let socket = socket2::SockRef::from(&stream);
+    if let Some(parsed) = config.get_tcp_user_timeout() {
+        // libpq's tcp_user_timeout is in milliseconds; tokio-postgres reads the number
+        // as seconds.
+        set_user_timeout(&socket, Duration::from_millis(parsed.as_secs()))?;
+    }
+    if config.get_keepalives() {
+        let keepalive = socket2::TcpKeepalive::new().with_time(config.get_keepalives_idle());
+        let keepalive = with_interval_and_retries(
+            keepalive,
+            config.get_keepalives_interval(),
+            config.get_keepalives_retries(),
+        )?;
+        socket.set_tcp_keepalive(&keepalive)?;
+    }
+    Ok(stream)
+}
+
+// The targets socket2 0.6.5 sets each option on, copied from its cfgs.
+#[cfg(any(
+    target_os = "android",
+    target_os = "cygwin",
+    target_os = "fuchsia",
+    target_os = "linux"
+))]
+fn set_user_timeout(socket: &socket2::SockRef<'_>, limit: Duration) -> Result<()> {
+    Ok(socket.set_tcp_user_timeout(Some(limit))?)
+}
+
+#[cfg(not(any(
+    target_os = "android",
+    target_os = "cygwin",
+    target_os = "fuchsia",
+    target_os = "linux"
+)))]
+fn set_user_timeout(_: &socket2::SockRef<'_>, limit: Duration) -> Result<()> {
+    bail!("not supported on this system: tcp_user_timeout ({limit:?})")
+}
+
+#[cfg(any(
+    target_os = "android",
+    target_os = "cygwin",
+    target_os = "dragonfly",
+    target_os = "emscripten",
+    target_os = "freebsd",
+    target_os = "fuchsia",
+    target_os = "illumos",
+    target_os = "ios",
+    target_os = "linux",
+    target_os = "macos",
+    target_os = "netbsd",
+    target_os = "nuttx",
+    target_os = "tvos",
+    target_os = "visionos",
+    target_os = "watchos",
+    target_os = "windows",
+    all(target_os = "wasi", not(target_env = "p1")),
+))]
+fn with_interval_and_retries(
+    mut keepalive: socket2::TcpKeepalive,
+    interval: Option<Duration>,
+    retries: Option<u32>,
+) -> Result<socket2::TcpKeepalive> {
+    if let Some(interval) = interval {
+        keepalive = keepalive.with_interval(interval);
+    }
+    if let Some(retries) = retries {
+        keepalive = keepalive.with_retries(retries);
+    }
+    Ok(keepalive)
+}
+
+#[cfg(not(any(
+    target_os = "android",
+    target_os = "cygwin",
+    target_os = "dragonfly",
+    target_os = "emscripten",
+    target_os = "freebsd",
+    target_os = "fuchsia",
+    target_os = "illumos",
+    target_os = "ios",
+    target_os = "linux",
+    target_os = "macos",
+    target_os = "netbsd",
+    target_os = "nuttx",
+    target_os = "tvos",
+    target_os = "visionos",
+    target_os = "watchos",
+    target_os = "windows",
+    all(target_os = "wasi", not(target_env = "p1")),
+)))]
+fn with_interval_and_retries(
+    keepalive: socket2::TcpKeepalive,
+    interval: Option<Duration>,
+    retries: Option<u32>,
+) -> Result<socket2::TcpKeepalive> {
+    if let Some(interval) = interval {
+        bail!("not supported on this system: keepalives_interval ({interval:?})");
+    }
+    if let Some(retries) = retries {
+        bail!("not supported on this system: keepalives_retries ({retries})");
+    }
+    Ok(keepalive)
+}
+
 /// Opens the socket to an endpoint's first host. Returns it with the host name, for TLS.
 async fn open(endpoint: &Endpoint) -> Result<(Box<dyn Io>, String)> {
     let config = endpoint.config();
     let port = config.get_ports().first().copied().unwrap_or(5432);
     match config.get_hosts().first() {
-        Some(Host::Tcp(host)) => {
-            let stream = TcpStream::connect((host.as_str(), port)).await?;
-            stream.set_nodelay(true)?;
-            // As tokio-postgres does on the sockets it opens: keepalives after 2 hours idle.
-            let keepalive = socket2::TcpKeepalive::new().with_time(Duration::from_secs(2 * 60 * 60));
-            socket2::SockRef::from(&stream).set_tcp_keepalive(&keepalive)?;
-            Ok((Box::new(stream), host.clone()))
-        }
+        Some(Host::Tcp(host)) => Ok((Box::new(tcp_connect(config, host, port).await?), host.clone())),
         #[cfg(unix)]
         Some(Host::Unix(dir)) => {
             let stream = tokio::net::UnixStream::connect(dir.join(format!(".s.PGSQL.{port}"))).await?;
@@ -278,9 +389,9 @@ pub async fn privileges(direct: &Endpoint, t: &Timeouts) -> Result<Privileges> {
     let (client, driver, _) = connect(direct, t).await?;
     let sql = "SELECT rolsuper, rolcreaterole, pg_has_role(current_user, 'pg_signal_backend', 'MEMBER') \
                FROM pg_roles WHERE rolname = current_user";
-    let res = timeout(t.step, client.simple_query(sql)).await;
+    let res = timeout(t.housekeeping, client.simple_query(sql)).await;
     drop(client);
-    let _ = timeout(t.step, driver).await;
+    let _ = timeout(t.housekeeping, driver).await;
     let row = res
         .context("privilege check timed out")??
         .into_iter()
@@ -300,9 +411,9 @@ pub async fn privileges(direct: &Endpoint, t: &Timeouts) -> Result<Privileges> {
 /// The server's version number, e.g. `17.11`.
 pub async fn server_version(endpoint: &Endpoint, t: &Timeouts) -> Result<String> {
     let (client, driver, _) = connect(endpoint, t).await?;
-    let res = timeout(t.step, client.simple_query("SHOW server_version")).await;
+    let res = timeout(t.housekeeping, client.simple_query("SHOW server_version")).await;
     drop(client);
-    let _ = timeout(t.step, driver).await;
+    let _ = timeout(t.housekeeping, driver).await;
     let version = res
         .context("SHOW server_version timed out")??
         .into_iter()
@@ -348,9 +459,9 @@ fn is_local(config: &tokio_postgres::Config) -> bool {
 /// One row of text values from a query, or an error.
 async fn query_row(endpoint: &Endpoint, sql: &str, t: &Timeouts) -> Result<Vec<Option<String>>> {
     let (client, driver, _) = connect(endpoint, t).await?;
-    let res = timeout(t.step, client.simple_query(sql)).await;
+    let res = timeout(t.housekeeping, client.simple_query(sql)).await;
     drop(client);
-    let _ = timeout(t.step, driver).await;
+    let _ = timeout(t.housekeeping, driver).await;
     res.context("timed out")??
         .into_iter()
         .find_map(|m| match m {
@@ -445,7 +556,7 @@ pub(super) async fn wait_ready(endpoint: &Endpoint, t: &Timeouts) -> Result<bool
     loop {
         let err = match connect(endpoint, t).await {
             Ok((client, driver, _)) => {
-                let res = match timeout(t.step, client.simple_query("SELECT 1")).await {
+                let res = match timeout(t.housekeeping, client.simple_query("SELECT 1")).await {
                     Ok(Ok(_)) if skip_settle => Ok(Settle::Unstable),
                     Ok(Ok(_)) => {
                         answered = true;
@@ -456,7 +567,7 @@ pub(super) async fn wait_ready(endpoint: &Endpoint, t: &Timeouts) -> Result<bool
                 };
                 drop(client);
                 if matches!(res, Ok(Settle::Stable)) || skip_settle {
-                    let _ = timeout(t.step, driver).await;
+                    let _ = timeout(t.housekeeping, driver).await;
                 } else {
                     // A probe may still be waiting for its reply; don't wait for it.
                     driver.abort();
@@ -524,8 +635,7 @@ async fn settle(client: &Client, t: &Timeouts) -> Settle {
     let mut seen = std::collections::HashSet::new();
     while tokio::time::Instant::now() < deadline {
         // Each probe ends by the overall deadline too, so settling never takes longer.
-        // TODO(#26): t.housekeeping once Timeouts has it.
-        let until = deadline.min(tokio::time::Instant::now() + t.step);
+        let until = deadline.min(tokio::time::Instant::now() + t.housekeeping);
         let pid = match timeout_at(until, client.simple_query("SELECT pg_backend_pid()")).await {
             Ok(Ok(messages)) => messages.into_iter().find_map(|m| match m {
                 SimpleQueryMessage::Row(row) => row.get(0).map(str::to_string),
@@ -911,5 +1021,47 @@ mod tests {
         );
         assert_eq!(createrole.missing(&[Requirement::Createrole]), None);
         assert_eq!(superuser.missing(&all), None);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn sockets_get_the_url_options() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let open = |options: &str| {
+            let url = format!("postgres://u@127.0.0.1:{port}/db?{options}");
+            async move {
+                let endpoint = Endpoint::parse(&url).unwrap();
+                tcp_connect(endpoint.config(), "127.0.0.1", port).await.unwrap()
+            }
+        };
+
+        let stream = open("keepalives_idle=77&keepalives_interval=5&keepalives_retries=3&tcp_user_timeout=9000").await;
+        let socket = socket2::SockRef::from(&stream);
+        assert!(socket.keepalive().unwrap());
+        assert_eq!(socket.tcp_keepalive_time().unwrap(), Duration::from_secs(77));
+        assert_eq!(socket.tcp_keepalive_interval().unwrap(), Duration::from_secs(5));
+        assert_eq!(socket.tcp_keepalive_retries().unwrap(), 3);
+        assert_eq!(socket.tcp_user_timeout().unwrap(), Some(Duration::from_secs(9)));
+
+        // The defaults, as in tokio-postgres: on, after 2 hours idle.
+        let stream = open("").await;
+        let socket = socket2::SockRef::from(&stream);
+        assert!(socket.keepalive().unwrap());
+        assert_eq!(socket.tcp_keepalive_time().unwrap(), Duration::from_secs(2 * 60 * 60));
+
+        let stream = open("keepalives=0").await;
+        assert!(!socket2::SockRef::from(&stream).keepalive().unwrap());
+    }
+
+    #[tokio::test]
+    #[ignore = "needs POOLPROOF_TEST_PG"]
+    async fn the_step_timeout_does_not_limit_the_privilege_check() {
+        let url = std::env::var("POOLPROOF_TEST_PG").expect("set POOLPROOF_TEST_PG to a Postgres URL");
+        let t = Timeouts {
+            step: Duration::from_nanos(1),
+            ..Timeouts::default()
+        };
+        privileges(&Endpoint::parse(&url).unwrap(), &t).await.unwrap();
     }
 }
