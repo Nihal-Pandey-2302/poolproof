@@ -7,6 +7,8 @@ marked (expected) is a limitation the pooler's own documentation describes: not 
 it still breaks apps that rely on the feature, and it fails the run unless
 --ignore-expected is given. Links point to the report each scenario came from. A
 fraction like 2/5 means the scenario is timing-sensitive and failed in 2 of 5 runs.
+(precondition 1/5) means the scenario's precondition held in 1 of 5 runs, and only that
+run counts.
 
 | Scenario | pgbouncer-1.26.1 | pgdog-0.1.62 | pgcat-1.2.0 | odyssey-1.5.2 | supavisor-2.10.0-rc.1 | supavisor-2.10.0-rc.1-strict |
 |---|---|---|---|---|---|---|
