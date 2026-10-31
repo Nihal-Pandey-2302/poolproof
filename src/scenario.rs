@@ -119,6 +119,11 @@ pub struct Scenario {
     /// first one's server connection. A run where a pair differs doesn't count.
     #[serde(default)]
     pub same_backend: Vec<[usize; 2]>,
+    /// Like `same_backend`, but a run also counts when the first step's backend has
+    /// exited by the second: for a client that disconnects, when what matters is that
+    /// the next one doesn't inherit its state.
+    #[serde(default)]
+    pub same_backend_or_closed: Vec<[usize; 2]>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -173,7 +178,7 @@ pub struct Step {
     pub precondition: bool,
     /// Record which backend this pooled client is on: poolproof asks the pooler for
     /// `pg_backend_pid()` and reads the backend's start time on direct. Not run on
-    /// Postgres and never compared; `same_backend` checks it.
+    /// Postgres and never compared; `same_backend` and `same_backend_or_closed` check it.
     #[serde(default)]
     pub evidence: bool,
     #[serde(default)]
@@ -485,10 +490,16 @@ fn check_evidence(origin: &str, scenario: &Scenario) -> Result<()> {
             }
         }
     }
-    for &[i, j] in &scenario.same_backend {
-        let is_evidence = |k: usize| k >= 1 && k <= scenario.steps.len() && scenario.steps[k - 1].evidence;
-        if !(i < j && is_evidence(i) && is_evidence(j)) {
-            bail!("{origin}: same_backend [{i}, {j}] must name two evidence steps, the earlier first");
+    let pairs = [
+        ("same_backend", &scenario.same_backend),
+        ("same_backend_or_closed", &scenario.same_backend_or_closed),
+    ];
+    for (field, pairs) in pairs {
+        for &[i, j] in pairs {
+            let is_evidence = |k: usize| k >= 1 && k <= scenario.steps.len() && scenario.steps[k - 1].evidence;
+            if !(i < j && is_evidence(i) && is_evidence(j)) {
+                bail!("{origin}: {field} [{i}, {j}] must name two evidence steps, the earlier first");
+            }
         }
     }
     Ok(())
@@ -697,6 +708,20 @@ mod tests {
                 "{pairs}"
             );
         }
+        let closed = |pairs: &str| {
+            parse(
+                "e",
+                &format!("name = 'e'\ndescription = ''\nsame_backend_or_closed = [{pairs}]\n{ok}"),
+            )
+            .map(|_| ())
+            .map_err(|e| format!("{e:#}"))
+        };
+        assert_eq!(closed("[2, 4]"), Ok(()));
+        assert!(
+            closed("[1, 4]")
+                .unwrap_err()
+                .contains("same_backend_or_closed [1, 4] must name two evidence steps")
+        );
         let s = parse("e", &format!("name = 'e'\ndescription = ''\n{ok}")).unwrap();
         assert_eq!(s.steps[1].describe(), "[a] evidence: backend");
         assert_eq!(s.compare_modes()[1], Compare::Ignore);

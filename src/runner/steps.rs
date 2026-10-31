@@ -5,7 +5,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use tokio::time::timeout;
 
-use super::pg::{Conn, cancel, connect_with, db_error, row_value, simple_outcome};
+use super::pg::{Conn, cancel, connect_with, db_error, literal, row_value, simple_outcome};
 use super::raw::{ExchangeOpts, RawConn, ServerError};
 use super::{Outcome, Timeouts};
 use crate::scenario::{Action, Scenario};
@@ -192,9 +192,10 @@ async fn run_until_done<'s>(
                                     .map(str::to_string);
                                 match pid {
                                     Some(pid) if !messages.iter().any(|l| l.starts_with("Error ")) => {
-                                        evidence(&pid, direct, t)
+                                        let outcome = evidence(&pid, direct, t)
                                             .await
-                                            .unwrap_or(Outcome::Messages { messages })
+                                            .unwrap_or(Outcome::Messages { messages });
+                                        closed_since(scenario, i, &outcomes, outcome, direct, t).await
                                     }
                                     _ => Outcome::Messages { messages },
                                 }
@@ -343,7 +344,10 @@ async fn run_until_done<'s>(
                         _ => None,
                     };
                     match pid {
-                        Some(pid) => evidence(&pid, direct, t).await.unwrap_or(outcome),
+                        Some(pid) => {
+                            let outcome = evidence(&pid, direct, t).await.unwrap_or(outcome);
+                            closed_since(scenario, i, &outcomes, outcome, direct, t).await
+                        }
                         None => outcome,
                     }
                 }
@@ -395,6 +399,84 @@ async fn evidence(pid: &str, direct: &Endpoint, t: &Timeouts) -> Option<Outcome>
         rows: vec![row],
         tags: vec![1],
     })
+}
+
+/// For the second step of a `same_backend_or_closed` pair on another backend than the
+/// first: whether the first one's backend (same pid and start) has exited, polled on
+/// direct for up to `t.housekeeping`, since a client's backend exits a moment after it
+/// disconnects. Added to the evidence row as `closed` or `open`; other evidence is
+/// returned as it is.
+async fn closed_since(
+    scenario: &Scenario,
+    step: usize,
+    outcomes: &[Outcome],
+    outcome: Outcome,
+    direct: &Endpoint,
+    t: &Timeouts,
+) -> Outcome {
+    let Some(&[i, _]) = scenario.same_backend_or_closed.iter().find(|[_, j]| *j == step + 1) else {
+        return outcome;
+    };
+    let identity = |o: &Outcome| match o {
+        Outcome::Ok { rows, .. } => match rows.as_slice() {
+            [row] if row.len() == 2 => row[0].clone().map(|pid| (pid, row[1].clone())),
+            _ => None,
+        },
+        _ => None,
+    };
+    let (Some((pid_a, start_a)), Some((pid_b, start_b))) = (outcomes.get(i - 1).and_then(identity), identity(&outcome))
+    else {
+        return outcome;
+    };
+    let starts_differ = matches!((&start_a, &start_b), (Some(a), Some(b)) if a != b);
+    if pid_a == pid_b && !starts_differ {
+        return outcome;
+    }
+    let Ok(pid) = pid_a.parse::<i32>() else {
+        return outcome;
+    };
+    let start = start_a
+        .as_deref()
+        .map(|s| {
+            format!(
+                " AND to_char(backend_start AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS.US') = {}",
+                literal(s)
+            )
+        })
+        .unwrap_or_default();
+    let sql = format!("SELECT count(*) FROM pg_stat_activity WHERE pid = {pid}{start}");
+    let gone = async {
+        let (client, driver, _) = connect_with(direct, t, true).await?;
+        let deadline = tokio::time::Instant::now() + t.housekeeping;
+        let gone = loop {
+            let left = timeout(t.housekeeping, client.simple_query(&sql)).await??;
+            let left = left.into_iter().find_map(|m| match m {
+                tokio_postgres::SimpleQueryMessage::Row(row) => row.get(0).map(str::to_string),
+                _ => None,
+            });
+            if left.as_deref() == Some("0") {
+                break true;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                break false;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        };
+        drop(client);
+        let _ = timeout(t.housekeeping, driver).await;
+        Ok::<_, anyhow::Error>(gone)
+    };
+    let mark = match gone.await {
+        Ok(true) => "closed",
+        _ => "open",
+    };
+    match outcome {
+        Outcome::Ok { mut rows, tags } => {
+            rows[0].push(Some(mark.to_string()));
+            Outcome::Ok { rows, tags }
+        }
+        other => other,
+    }
 }
 
 /// The error of an evidence step on a raw connection that hasn't finished its last
