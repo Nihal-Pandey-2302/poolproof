@@ -75,11 +75,13 @@ pub struct Scenario {
     /// Run the pooler side this many times and fail if any run fails. For scenarios
     /// whose outcome depends on timing inside the pooler, such as pipelines.
     #[serde(default = "one")]
+    #[cfg_attr(test, schemars(range(min = 1)))]
     pub repeat: u32,
     /// Privileges the `direct` user needs; without them the scenario is skipped.
     #[serde(default)]
     pub requires: Vec<Requirement>,
     /// How long each step may take, overriding `run --step-timeout`.
+    #[cfg_attr(test, schemars(range(min = 1)))]
     pub timeout_ms: Option<u64>,
     /// Statements run directly on Postgres before each run.
     #[serde(default)]

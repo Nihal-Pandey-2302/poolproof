@@ -205,7 +205,9 @@ JSON Schemas for the report, scenario files and targets files are published at
 `scenario.schema.json` and `targets.schema.json`. A report names its schema in `$schema`,
 so editors validate it. For a TOML file, put `#:schema` and the schema's URL on the first
 line, and Even Better TOML (taplo) checks it as you type and shows what each field means.
-This repo's `.taplo.toml` does that for its own scenarios and targets files.
+This repo's `.taplo.toml` does that for its own scenarios and targets files. The schemas
+check the shape of a file, not the rules poolproof applies when it loads one: one action
+per step, unique names, `execute` after `prepare`, one side per client.
 
 Scenarios create and drop their own objects (prefixed `pp_`), so use a scratch database.
 That matters even more with `reset = "all"`, which kills every session on it.

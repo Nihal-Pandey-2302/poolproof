@@ -111,7 +111,8 @@ fn validate(root: &Value, schema: &Value, value: &Value, path: &str) -> Result<(
             "null" => value.is_null(),
             "boolean" => value.is_boolean(),
             "string" => value.is_string(),
-            "integer" => value.is_i64() || value.is_u64(),
+            // As in 2020-12, a number with a zero fraction (1.0) is an integer too.
+            "integer" => value.is_i64() || value.is_u64() || value.as_f64().is_some_and(|v| v.fract() == 0.0),
             "number" => value.is_number(),
             "array" => value.is_array(),
             "object" => value.is_object(),
@@ -283,6 +284,18 @@ fn bundled_scenarios_and_targets_files_match() {
     }
 }
 
+/// Whether poolproof loads this scenario file, with its load-time checks.
+fn loads(text: &str) -> bool {
+    static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("poolproof-schema-{}-{n}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("s.toml"), text).unwrap();
+    let ok = crate::scenario::load_dir(&dir).is_ok();
+    std::fs::remove_dir_all(&dir).unwrap();
+    ok
+}
+
 #[test]
 fn files_poolproof_rejects_fail_the_schema_too() {
     let scenario = |extra: &str, step_extra: &str| {
@@ -291,6 +304,7 @@ fn files_poolproof_rejects_fail_the_schema_too() {
         )
     };
     assert!(check("scenario.schema.json", &toml_value(&scenario("", ""))).is_ok());
+    assert!(loads(&scenario("", "")));
     for (extra, step_extra, why) in [
         ("requires2 = []", "", "unknown field `requires2`"),
         ("", "simpel = \"SELECT 1\"", "unknown field `simpel`"),
@@ -298,14 +312,14 @@ fn files_poolproof_rejects_fail_the_schema_too() {
         ("requires = [\"root\"]", "", "is not one of"),
         ("", "compare = \"some\"", "matches nothing in oneOf"),
         ("repeat = -1", "", "below"),
+        ("repeat = 0", "", "below"),
+        ("timeout_ms = 0", "", "below"),
+        ("repeat = 1.5", "", "expected"),
     ] {
         let text = scenario(extra, step_extra);
         let err = check("scenario.schema.json", &toml_value(&text)).unwrap_err();
         assert!(err.contains(why), "{extra}{step_extra}: {err}");
-        assert!(
-            toml::from_str::<crate::scenario::Scenario>(&text).is_err(),
-            "serde accepts {text}"
-        );
+        assert!(!loads(&text), "poolproof loads {text}");
     }
     let target = |extra: &str| {
         format!(
@@ -336,4 +350,12 @@ fn files_poolproof_rejects_fail_the_schema_too() {
             .unwrap_err()
             .contains("missing `mode`")
     );
+}
+
+#[test]
+fn integers_follow_2020_12() {
+    let schema = serde_json::json!({"type": "integer", "minimum": 1});
+    let ok = |v: Value| validate(&schema, &schema, &v, "$").is_ok();
+    assert!(ok(1.into()) && ok(serde_json::json!(2.0)));
+    assert!(!ok(serde_json::json!(1.5)) && !ok(0.into()) && !ok("1".into()));
 }

@@ -190,7 +190,7 @@
       "default": 1,
       "description": "Run the pooler side this many times and fail if any run fails. For scenarios\nwhose outcome depends on timing inside the pooler, such as pipelines.",
       "format": "uint32",
-      "minimum": 0,
+      "minimum": 1,
       "type": "integer"
     },
     "requires": {
@@ -226,7 +226,7 @@
     "timeout_ms": {
       "description": "How long each step may take, overriding `run --step-timeout`.",
       "format": "uint64",
-      "minimum": 0,
+      "minimum": 1,
       "type": [
         "integer",
         "null"
