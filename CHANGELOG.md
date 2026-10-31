@@ -83,6 +83,30 @@ First release.
 - `${NAME}` in a targets file's `pooler`, `direct` and `reset` is replaced by that
   environment variable; an unset one is an error. `$${` is a literal `${`.
 - Passwords never appear in output, errors or reports: URLs are printed without them.
+- TLS for every connection (normal clients, `send` clients, cancel requests, reset and
+  setup), as in psql: `sslmode` (`disable`, `prefer` (the default), `require`,
+  `verify-ca`, `verify-full`) and `sslrootcert` (a CA file or `system`) in the URL, or
+  `PGSSLMODE` and `PGSSLROOTCERT`. `require` with a root certificate (`sslrootcert`, or
+  `~/.postgresql/root.crt`, or `%APPDATA%\postgresql\root.crt` on Windows, if it
+  exists) checks the chain. `verify-ca` and `verify-full`
+  without one are an error when the targets load. `sslrootcert=system` needs
+  `verify-full`. Client certificates and `sslnegotiation=direct` are not supported yet.
+- `reset = "auto"` ends only the sessions from the address and user the pooler connects
+  to Postgres as, and refuses when that can't be told apart from poolproof's own
+  sessions. `reset = "all"` ends every other session on the database and needs
+  `run --yes` against a Postgres on another machine. A list of statements works as
+  before. Before the first scenario, `run` prints what each target's reset will end, and
+  warns when the direct user can't end other roles' sessions. `run --pooler ... --reset
+  auto|all` for a single target. The JSON report records each target's reset kind,
+  never the SQL or addresses.
+- `requires` in scenario files: privileges the `direct` user needs (`createrole`,
+  `superuser`, `pg_signal_backend`). A target without them SKIPs the scenario, with the
+  reason; if the privileges can't be read, the scenario is ERROR.
+- Socket options from the URL as in libpq: `connect_timeout`, `keepalives` (on unless
+  `keepalives=0`) with `keepalives_idle`, `keepalives_interval` and `keepalives_retries`,
+  and `tcp_user_timeout`. One that the system can't set is an error, not ignored.
+- JSON report: `schema_version` (1; reports without it are 1, a newer one is refused with
+  a clear error) and `generated_at` (UTC).
 - `send` steps record COPY TO STDOUT replies: `CopyOutResponse`, one `CopyData` line per
   message (hex if it isn't UTF-8), `CopyDone`.
 - `compare_parameter_status = true` on a `send` step records ParameterStatus messages
@@ -107,11 +131,31 @@ First release.
 
 ### Changed
 
+- **Breaking:** connections try TLS first (`sslmode=prefer`, as psql). Add
+  `sslmode=disable` to a URL for plaintext only.
+- **Breaking** for targets files from earlier git builds: `${` starts an environment
+  variable. Write `$${` for a literal `${`.
+- A URL names one host and port. Several hosts or ports, `hostaddr`,
+  `target_session_attrs` and `load_balance_hosts` are refused, since poolproof would
+  otherwise pick a host on its own.
+- The `SET ROLE` scenarios declare `requires = ["createrole"]` and run
+  `GRANT pp_role TO CURRENT_USER` in setup, so a non-superuser can run them and they test
+  the pooler instead of passing on a permission error.
+- The bundled targets file uses `reset = "all"`, the same statement as before.
 - **Breaking:** `scan --format json` prints an object with `findings` and the counts
   `queries`, `unparsed` and `uninspected`, instead of an array of findings.
 
 ### Fixed
 
+- `run`: a backend releases its locks and temp tables only when it exits, so a step right
+  after a disconnect could still see them. Every close of a connection to Postgres now
+  reads until Postgres closes the socket, which it does after that cleanup. A backend
+  that doesn't exit within 10 seconds makes the scenario ERROR.
+- `run`: after a reset, a pooler can swap in a new server connection a moment later.
+  poolproof now waits until the same backend answers through the pooler three times in a
+  row (at most 2 seconds) before the scenario starts.
+- `tcp_user_timeout` in a URL is read in milliseconds, as libpq does. The driver read it
+  as seconds.
 - `run`: an unreachable Postgres or pooler made scenarios pass, because both sides failed
   the same way. They are ERROR now.
 - `run`: a failing setup, reset, step or teardown aborted the whole run. Teardown now
@@ -137,6 +181,9 @@ First release.
 
 ### Security
 
+- A `send` client reads exactly one byte after its SSLRequest before the TLS handshake,
+  so a server or man in the middle can't inject plaintext replies ahead of TLS
+  (CVE-2021-23222, the libpq side of it).
 - HTML report: `refs` from a results file become links only for `http(s)://` URLs, with
   `rel="noopener noreferrer"`, and the page has a Content-Security-Policy that allows only
   its own inline script and style (by hash).
