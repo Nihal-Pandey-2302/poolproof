@@ -357,6 +357,22 @@ jobs:
         if: failure()
         run: docker compose -f docker/compose.yml logs
 
+      # Supavisor's own log, kept for a week: after a Supavisor flake it shows whether it
+      # replaced a server connection mid-scenario ("Session terminated by server while
+      # idle in the pool"). Services that weren't started just log nothing.
+      - name: Supavisor logs
+        if: failure()
+        run: |
+          docker compose -f docker/compose.yml logs --no-color --timestamps \
+            supavisor-meta supavisor-2.9.13 supavisor-2.9.13-tenants \
+            supavisor-2.10.0-rc.1 supavisor-2.10.0-rc.1-tenants > supavisor.log 2>&1 || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: supavisor-logs-postgres-${{ matrix.postgres }}
+          path: supavisor.log
+          retention-days: 7
+
   # The results site, built from this run. Pages needs a public repo on free plans.
   pages:
     needs: suite
