@@ -119,11 +119,12 @@ pub(super) fn findings(names: &[StatementName]) -> (Vec<Finding>, Vec<String>) {
         };
         let executions: u64 = seen.iter().map(|n| n.executions).sum();
         let detail = format!(
-            "Statement names like {}'s ({}), run {executions} times. A named statement lives on \
+            "Statement names like {}'s ({}), run {executions} {}. A named statement lives on \
              the server connection, so through a transaction pooler it needs the pooler's \
              prepared-statement support. The driver's setting for poolers: {}.",
             driver.label,
             examples(seen.iter().map(|n| n.name.as_str())),
+            if executions == 1 { "time" } else { "times" },
             driver.fix,
         );
         findings.push(Finding {
@@ -193,6 +194,7 @@ pub fn check_driver(finding: &mut Finding, target: &str, postgres: Option<&str>,
     };
     finding.on_pooler = Some(PoolerCheck {
         target: target.to_string(),
+        other_postgres: postgres.is_some_and(|core| core != pg),
         postgres: Some(pg),
         status,
         scenarios: pick(default),
@@ -290,6 +292,16 @@ mod tests {
     }
 
     #[test]
+    fn one_run_is_one_time() {
+        let (found, _) = findings(&[name("_pg3_0", 1, 1)]);
+        assert!(
+            found[0].detail.contains("(_pg3_0; 1 name), run 1 time. "),
+            "{}",
+            found[0].detail
+        );
+    }
+
+    #[test]
     fn case_names_are_real_driver_scenarios() {
         let all: Vec<String> = crate::drivers::scenarios(&[])
             .unwrap()
@@ -340,6 +352,19 @@ mod tests {
         // What the drivers report says today, to read the test by.
         assert_eq!(expected("supavisor-2.10.0-rc.1"), Some(PoolerStatus::Rejected));
         assert_eq!(expected("pgdog-0.1.62"), Some(PoolerStatus::Ok));
+
+        // Driver results from another Postgres version than the core ones: the text says so.
+        check_driver(pgx, "supavisor-2.10.0-rc.1", Some("18.4"), false);
+        let check = pgx.on_pooler.take().unwrap();
+        assert_eq!(check.postgres.as_deref(), Some("17.11"));
+        let text = crate::output::scan::pooler_summary(&check);
+        assert!(
+            text.starts_with("on supavisor-2.10.0-rc.1, driver results from Postgres 17.11: "),
+            "{text}"
+        );
+        check_driver(pgx, "supavisor-2.10.0-rc.1", Some("17.11"), false);
+        let same = crate::output::scan::pooler_summary(pgx.on_pooler.as_ref().unwrap());
+        assert!(same.starts_with("on supavisor-2.10.0-rc.1: "), "{same}");
 
         // A driver without cases, or a target without results: a note, still a warning.
         let (mut asyncpg, _) = findings(&[name("__asyncpg_stmt_1__", 3, 1)]);

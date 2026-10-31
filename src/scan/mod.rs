@@ -59,6 +59,10 @@ pub struct PoolerCheck {
     /// give for poolers. Shown beside the status, never changing it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fix: Option<FixCheck>,
+    /// The results are from another Postgres version than the rest of `--pooler`'s
+    /// (driver results exist for fewer versions), so the text says which.
+    #[serde(skip)]
+    pub other_postgres: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
