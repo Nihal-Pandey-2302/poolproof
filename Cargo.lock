@@ -966,6 +966,7 @@ name = "poolproof"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "bytes",
  "clap",
  "csv",
@@ -978,6 +979,7 @@ dependencies = [
  "rustls-native-certs",
  "serde",
  "serde_json",
+ "sha2",
  "tokio",
  "tokio-postgres",
  "tokio-postgres-rustls",
