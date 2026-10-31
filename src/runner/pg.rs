@@ -1147,6 +1147,26 @@ pub(crate) mod tests {
         );
     }
 
+    /// The first value of the first row.
+    async fn value(client: &Client, sql: &str) -> String {
+        let messages = client.simple_query(sql).await.unwrap();
+        messages
+            .iter()
+            .find_map(|m| match m {
+                SimpleQueryMessage::Row(row) => row.get(0).map(str::to_string),
+                _ => None,
+            })
+            .unwrap()
+    }
+
+    /// POOLPROOF_TEST_PG with a startup option that sets the current role, so a NOLOGIN
+    /// role can be a target's direct user. Postgres checks privileges against the
+    /// current role, as after SET ROLE.
+    fn as_role(url: &str, role: &str) -> Endpoint {
+        let sep = if url.contains('?') { '&' } else { '?' };
+        Endpoint::parse(&format!("{url}{sep}options=-c%20role%3D{role}")).unwrap()
+    }
+
     #[tokio::test]
     #[ignore = "needs POOLPROOF_TEST_PG"]
     async fn reset_all_leaves_a_superusers_session_to_an_heir() {
@@ -1154,59 +1174,42 @@ pub(crate) mod tests {
         let t = Timeouts::default();
         let root = Endpoint::parse(&url).unwrap();
         let (admin, _admin_driver, _) = connect(&root, &t).await.unwrap();
-        let superuser = admin.simple_query("SELECT current_user").await.unwrap();
-        let superuser = superuser
-            .iter()
-            .find_map(|m| match m {
-                SimpleQueryMessage::Row(row) => row.get(0).map(str::to_string),
-                _ => None,
-            })
-            .unwrap();
-        // Has the superuser role's privileges, without being a superuser itself.
+        let superuser = value(&admin, "SELECT current_user").await;
+        // NOLOGIN, taken with SET ROLE: it has a superuser role's privileges without
+        // being a superuser itself, and never a password.
+        let heir = format!("pp_reset_heir_{}", std::process::id());
         admin
             .batch_execute(&format!(
-                "DROP ROLE IF EXISTS pp_reset_heir; CREATE ROLE pp_reset_heir LOGIN PASSWORD 'pp'; \
-                 GRANT {} TO pp_reset_heir",
+                "DROP ROLE IF EXISTS {heir}; CREATE ROLE {heir} NOLOGIN; GRANT {} TO {heir}",
                 ident(&superuser)
             ))
             .await
             .unwrap();
         // A superuser's session that is busy when the reset runs.
         let (sleeper, _sleeper_driver, _) = connect(&root, &t).await.unwrap();
-        let pid = sleeper.simple_query("SELECT pg_backend_pid()").await.unwrap();
-        let pid = pid
-            .iter()
-            .find_map(|m| match m {
-                SimpleQueryMessage::Row(row) => row.get(0).map(str::to_string),
-                _ => None,
-            })
-            .unwrap();
+        let pid = value(&sleeper, "SELECT pg_backend_pid()").await;
         let sleeping = tokio::spawn(async move { sleeper.simple_query("SELECT pg_sleep(30)").await });
         tokio::time::sleep(Duration::from_millis(200)).await;
 
-        let rest = url.split_once('@').expect("a URL with user@host").1;
-        let heir = Endpoint::parse(&format!("postgres://pp_reset_heir:pp@{rest}")).unwrap();
-        let (me, _me_driver, _) = connect(&heir, &t).await.unwrap();
-        me.batch_execute(RESET_ALL).await.unwrap();
-        let alive = admin
-            .simple_query(&format!("SELECT 1 FROM pg_stat_activity WHERE pid = {pid}"))
-            .await
-            .unwrap();
-        assert!(
-            alive.iter().any(|m| matches!(m, SimpleQueryMessage::Row(_))),
-            "the superuser's session was ended"
-        );
+        let (me, me_driver, _) = connect(&root, &t).await.unwrap();
+        let reset = me.batch_execute(&format!("SET ROLE {heir}; {RESET_ALL}")).await;
+        let alive = value(
+            &admin,
+            &format!("SELECT count(*) FROM pg_stat_activity WHERE pid = {pid}"),
+        )
+        .await;
 
+        // Clean up before any assert.
         drop(me);
+        let _ = me_driver.await;
         admin
-            .batch_execute(&format!(
-                "SELECT pg_terminate_backend({pid}, 5000); \
-                 SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity WHERE usename = 'pp_reset_heir'; \
-                 DROP ROLE pp_reset_heir"
-            ))
+            .batch_execute(&format!("SELECT pg_terminate_backend({pid}, 5000); DROP ROLE {heir}"))
             .await
             .unwrap();
         let _ = sleeping.await;
+
+        reset.unwrap();
+        assert_eq!(alive, "1", "the superuser's session was ended");
     }
 
     #[tokio::test]
@@ -1214,81 +1217,107 @@ pub(crate) mod tests {
     async fn reset_all_as_a_plain_user() {
         let url = std::env::var("POOLPROOF_TEST_PG").expect("set POOLPROOF_TEST_PG to a Postgres URL");
         let t = Timeouts::default();
-        let as_user = |user: &str| {
-            let rest = url.split_once('@').expect("a URL with user@host").1;
-            Endpoint::parse(&format!("postgres://{user}:pp@{rest}")).unwrap()
-        };
         let root = Endpoint::parse(&url).unwrap();
         let (admin, _admin_driver, _) = connect(&root, &t).await.unwrap();
-        let setup = "DROP ROLE IF EXISTS pp_reset_plain; DROP ROLE IF EXISTS pp_reset_app; \
-                     DROP ROLE IF EXISTS pp_reset_noinherit; \
-                     CREATE ROLE pp_reset_plain LOGIN PASSWORD 'pp'; CREATE ROLE pp_reset_app LOGIN PASSWORD 'pp'; \
-                     CREATE ROLE pp_reset_noinherit LOGIN NOINHERIT PASSWORD 'pp' \
-                     IN ROLE pg_signal_backend, pg_read_all_stats";
-        admin.batch_execute(setup).await.unwrap();
-        let (plain, pooler) = (as_user("pp_reset_plain"), as_user("pp_reset_app"));
+        let id = std::process::id();
+        let (plain, noinherit, app) = (
+            format!("pp_reset_plain_{id}"),
+            format!("pp_reset_noinherit_{id}"),
+            format!("pp_reset_app_{id}"),
+        );
+        // The direct users are NOLOGIN, taken through a role option or SET ROLE. The
+        // pooler's role has to log in to own a session, so it gets a password made up
+        // for this run, and no privileges.
+        let password = format!(
+            "{:x}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+                ^ u128::from(id)
+        );
+        admin
+            .batch_execute(&format!(
+                "DROP ROLE IF EXISTS {plain}; DROP ROLE IF EXISTS {app}; DROP ROLE IF EXISTS {noinherit}; \
+                 CREATE ROLE {plain} NOLOGIN; CREATE ROLE {app} LOGIN PASSWORD '{password}'; \
+                 CREATE ROLE {noinherit} NOLOGIN NOINHERIT IN ROLE pg_signal_backend, pg_read_all_stats"
+            ))
+            .await
+            .unwrap();
+        let rest = url.split_once('@').expect("a URL with user@host").1;
+        let pooler = Endpoint::parse(&format!("postgres://{app}:{password}@{rest}")).unwrap();
         let mut target = target(1, Reset::All);
-        target.direct = plain.clone();
+        target.direct = as_role(&url, &plain);
         target.pooler = pooler.clone();
-        let (app, _app_driver, _) = connect(&pooler, &t).await.unwrap();
+        let (pooled, _pooled_driver, _) = connect(&pooler, &t).await.unwrap();
 
         // Without pg_read_all_stats another role's session shows no backend type, so the
         // reset would match nothing: refused.
-        let (me, _me_driver, _) = connect(&plain, &t).await.unwrap();
-        let hidden = me
-            .simple_query("SELECT 1 FROM pg_stat_activity WHERE usename = 'pp_reset_app' AND backend_type IS NULL")
-            .await
-            .unwrap();
-        assert!(hidden.iter().any(|m| matches!(m, SimpleQueryMessage::Row(_))));
-        let err = resolve_reset(&target, false, &t).await.unwrap_err().to_string();
-        assert!(err.ends_with("without pg_signal_backend and pg_read_all_stats; as a superuser: GRANT pg_signal_backend, pg_read_all_stats TO \"pp_reset_plain\""), "{err}");
+        let (me, me_driver, _) = connect(&root, &t).await.unwrap();
+        me.batch_execute(&format!("SET ROLE {plain}")).await.unwrap();
+        let hidden = value(
+            &me,
+            &format!("SELECT count(*) FROM pg_stat_activity WHERE usename = '{app}' AND backend_type IS NULL"),
+        )
+        .await;
+        let neither = resolve_reset(&target, false, &t).await.map(|_| ());
         admin
-            .batch_execute("GRANT pg_read_all_stats TO pp_reset_plain")
+            .batch_execute(&format!("GRANT pg_read_all_stats TO {plain}"))
             .await
             .unwrap();
-        let err = resolve_reset(&target, false, &t).await.unwrap_err().to_string();
-        assert!(err.contains("without pg_signal_backend;"), "{err}");
+        let no_signal = resolve_reset(&target, false, &t).await.map(|_| ());
         admin
-            .batch_execute("GRANT pg_signal_backend TO pp_reset_plain")
+            .batch_execute(&format!("GRANT pg_signal_backend TO {plain}"))
             .await
             .unwrap();
-        let (statements, line) = resolve_reset(&target, false, &t).await.unwrap();
-        assert!(line.contains("that this user may end"), "{line}");
-
+        let both = resolve_reset(&target, false, &t).await;
         // It ends the pooler's session and leaves the superuser's alone, without an error.
-        drop(me);
-        let (me, _me_driver, _) = connect(&plain, &t).await.unwrap();
-        me.batch_execute(statements[0].sql()).await.unwrap();
-        assert!(
-            app.simple_query("SELECT 1").await.is_err(),
-            "the pooler's session survived"
-        );
-        admin.simple_query("SELECT 1").await.unwrap();
-
+        let reset = me.batch_execute(RESET_ALL).await;
+        let pooled_after = pooled.simple_query("SELECT 1").await;
+        let admin_after = admin.simple_query("SELECT 1").await;
         // A member that doesn't inherit their privileges doesn't have them.
-        let mut noinherit = super::tests::target(1, Reset::All);
-        noinherit.direct = as_user("pp_reset_noinherit");
-        noinherit.pooler = pooler.clone();
-        let err = resolve_reset(&noinherit, false, &t).await.unwrap_err().to_string();
-        assert!(err.contains("without pg_signal_backend and pg_read_all_stats"), "{err}");
-
+        let mut without_inherit = super::tests::target(1, Reset::All);
+        without_inherit.direct = as_role(&url, &noinherit);
+        without_inherit.pooler = pooler.clone();
+        let not_inherited = resolve_reset(&without_inherit, false, &t).await.map(|_| ());
         // A pooler connecting as a superuser: refused, whatever was granted.
         target.pooler = root.clone();
-        let err = resolve_reset(&target, false, &t).await.unwrap_err().to_string();
+        let superuser_pooler = resolve_reset(&target, false, &t).await.map(|_| ());
+
+        // Clean up before any assert.
+        drop(me);
+        let _ = me_driver.await;
+        admin
+            .batch_execute(&format!(
+                "SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity WHERE usename = '{app}'; \
+                 DROP ROLE {plain}; DROP ROLE {app}; DROP ROLE {noinherit}"
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(hidden, "1", "{app}'s session wasn't hidden");
+        let err = neither.unwrap_err().to_string();
+        assert!(
+            err.ends_with(&format!(
+                "without pg_signal_backend and pg_read_all_stats; as a superuser: GRANT pg_signal_backend, \
+                 pg_read_all_stats TO \"{plain}\""
+            )),
+            "{err}"
+        );
+        let err = no_signal.unwrap_err().to_string();
+        assert!(err.contains("without pg_signal_backend;"), "{err}");
+        let (_, line) = both.unwrap();
+        assert!(line.contains("that this user may end"), "{line}");
+        reset.unwrap();
+        assert!(pooled_after.is_err(), "the pooler's session survived");
+        admin_after.unwrap();
+        let err = not_inherited.unwrap_err().to_string();
+        assert!(err.contains("without pg_signal_backend and pg_read_all_stats"), "{err}");
+        let err = superuser_pooler.unwrap_err().to_string();
         assert!(
             err.contains("is a superuser, and only a superuser can end its sessions"),
             "{err}"
         );
-
-        drop(me);
-        admin
-            .batch_execute(
-                "SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity \
-                 WHERE usename IN ('pp_reset_plain', 'pp_reset_app', 'pp_reset_noinherit'); \
-                 DROP ROLE pp_reset_plain; DROP ROLE pp_reset_app; DROP ROLE pp_reset_noinherit",
-            )
-            .await
-            .unwrap();
     }
 
     #[tokio::test]
