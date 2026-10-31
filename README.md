@@ -8,7 +8,7 @@ to another client, a temp table shows up in someone else's session, an advisory 
 outlives the client that took it, or part of a multi-statement query silently never runs.
 These bugs show up in production, one at a time.
 
-poolproof does two things:
+poolproof does three things:
 
 - **`poolproof run`** replays small scenarios against plain Postgres and then through your
   pooler, and reports every step where the results differ. Postgres is the oracle, so a
@@ -20,16 +20,23 @@ poolproof does two things:
   logs or a `.sql` file) and flags patterns that are unsafe under transaction pooling,
   using the actual Postgres parser.
 
+`poolproof doctor` checks a pooler setup before you run anything against it.
+
+Docs: [a code tour](docs/code-tour.md) and [the architecture](docs/architecture.md) for
+contributors, [testing a managed pooler](docs/managed-poolers.md) such as RDS Proxy or
+hosted Supavisor.
+
 ## Install
 
 ```sh
 cargo install --git https://github.com/Nihal-Pandey-2302/poolproof
 ```
 
-Or download a binary for Linux, macOS (x86_64 and arm64) or Windows (x86_64) from the
-releases page. The scenarios and the latest results are built into the binary.
+That is the way to install it today. Once the first version is released, binaries for
+Linux, macOS (x86_64 and arm64) and Windows (x86_64) will be on the releases page. The
+scenarios and the latest results are built into the binary.
 
-The release archives also hold shell completions (`completions/`) and man pages (`man/`).
+Those archives also hold shell completions (`completions/`) and man pages (`man/`).
 Installed another way, poolproof prints them itself:
 
 ```sh
@@ -46,7 +53,8 @@ poolproof man > ~/.local/share/man/man1/poolproof.1   # `poolproof man run`: poo
 **[Results site](https://nihal-pandey-2302.github.io/poolproof/)**: every scenario against
 PgBouncer 1.24 to 1.26 (1.26 also over TLS), PgDog 0.1.50 to 0.1.62, Supavisor 2.9 and
 2.10, PgCat 1.2 and Odyssey 1.5, on Postgres 17 and 18, with the full step-by-step trace
-for each cell. It also marks the version where a behavior broke or got fixed.
+for each cell. Where a behavior changed between tested versions, it names both, e.g.
+"fails from 0.1.56 (passed in 0.1.50)".
 [RESULTS.md](RESULTS.md) has the same data as a table. Both are built from `results/`,
 which `scripts/update-results.sh` regenerates and CI checks.
 
@@ -642,7 +650,13 @@ the workflow.
 
 ## Status
 
-Not covered yet: RDS Proxy in the test bed and session-mode targets.
+Not covered yet:
+
+- RDS Proxy and hosted poolers are not in the test bed; they can be tested with the
+  recipes in [docs/managed-poolers.md](docs/managed-poolers.md).
+- The variant targets (`targets-variants.toml`, session mode so far) have no published
+  results yet, and a larger pool and non-default pooler settings have no targets yet.
+- `scripts/pgdog-ref.sh` has not been checked with release builds, its default.
 
 ## License
 
