@@ -1,42 +1,57 @@
 name: drivers
 
-# Real drivers through the newest version of each pooler (drivers/targets.txt). It takes
-# about as long as one Postgres version of the suite, so it runs only when something it
-# depends on changes, plus once a week. Postgres 17 only.
+# Real drivers through the newest version of each pooler (drivers/targets.txt), Postgres 17
+# only. It takes about 15 minutes, so on a PR it runs only when the PR touches the drivers
+# or their results, or has the `drivers` label. It always runs on main, where a red run
+# holds the next merge (CONTRIBUTING.md), and once a week.
 on:
   push:
     branches: [main]
-    paths: &paths
-      - drivers/**
-      - src/drivers/**
-      - src/runner/**
-      - src/report/**
-      - src/scenario.rs
-      - src/cli.rs
-      - build.rs
-      - Cargo.lock
-      - docker/**
-      - targets.toml
-      - results/drivers-*.json
-      - .github/workflows/drivers.yml
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
-    paths: *paths
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
   schedule:
     - cron: "23 4 * * 1"
   workflow_dispatch:
-
-concurrency:
-  group: drivers-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 jobs:
+  # A `paths` filter would also drop the `labeled` event, so the PR's files are checked
+  # here instead.
+  changes:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      drivers: ${{ steps.files.outputs.drivers }}
+    steps:
+      - id: files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          files=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --jq '.[].filename')
+          if grep -qE '^(drivers/|src/drivers/|\.github/workflows/drivers\.yml$|results/drivers-[^/]*\.json$)' <<<"$files"; then
+            echo "drivers=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "drivers=false" >> "$GITHUB_OUTPUT"
+          fi
+
   drivers:
-    # Not on draft PRs, like the suite.
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    needs: changes
+    # Outside PRs, always. On a PR: not as a draft, and only when its files match or it
+    # has the label. Adding another label doesn't start it again.
+    if: >-
+      !cancelled() && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (
+        github.event.action == 'labeled' && github.event.label.name == 'drivers' ||
+        github.event.action != 'labeled' && (needs.changes.outputs.drivers == 'true' ||
+          contains(github.event.pull_request.labels.*.name, 'drivers')))))
+    # On the job, not the workflow: a skipped run (another label) must not cancel this one.
+    concurrency:
+      group: drivers-${{ github.ref }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     env:
       POSTGRES_IMAGE: postgres:17.11
