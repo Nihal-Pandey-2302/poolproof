@@ -239,8 +239,34 @@ where
 /// Runs the probe; with `in_transaction`, a holds an open transaction while b asks.
 /// Also returns a's backend pid. If b has no answer within `within`, a is closed and
 /// b's answer awaited for `late`: only a's own backend then says b waited for it.
+///
+/// A pool that opens server connections lazily can still look like that: b waits
+/// while the pooler opens a second one, and gets a's freed server first. So a b that
+/// waited is probed once more, right away, with that second server now idle: only a
+/// second wait says one server connection.
 pub async fn probe<F, Fut>(
     connect: F,
+    within: Duration,
+    late: Duration,
+    in_transaction: bool,
+) -> anyhow::Result<(Observed, String)>
+where
+    F: Fn() -> Fut,
+    Fut: Future<Output = anyhow::Result<Connected>>,
+{
+    let first = probe_once(&connect, within, late, in_transaction).await?;
+    if first.0 != Observed::Waited {
+        return Ok(first);
+    }
+    let (again, pid) = probe_once(&connect, within, late, in_transaction).await?;
+    Ok(match again {
+        Observed::Waited => (Observed::Waited, pid),
+        _ => (Observed::Unclear("waited once, then got another backend".into()), pid),
+    })
+}
+
+async fn probe_once<F, Fut>(
+    connect: &F,
     within: Duration,
     late: Duration,
     in_transaction: bool,
@@ -480,6 +506,10 @@ mod tests {
         RefusesAllButFirst,
         /// Later clients answer after `delay` ms, or never, with a backend of their own.
         Slow(Option<u64>),
+        /// A pool of two that opens its second server only when a client has to wait,
+        /// 600 ms later. Waiters get servers first come, first served, so the first
+        /// one waiting gets a's freed server.
+        LazySecond,
     }
 
     /// A Postgres server that knows only startup and `SELECT pg_backend_pid()`.
@@ -488,8 +518,34 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         let next = Arc::new(AtomicI32::new(100));
         let backend = Arc::new(Semaphore::new(1));
+        let idle = Arc::new(std::sync::Mutex::new(vec![7]));
+        let opened = Arc::new(std::sync::atomic::AtomicBool::new(false));
         tokio::spawn(async move {
             while let Ok((socket, _)) = listener.accept().await {
+                if let Pool::LazySecond = pool {
+                    let (backend, idle, opened) = (backend.clone(), idle.clone(), opened.clone());
+                    tokio::spawn(async move {
+                        let permit = match backend.clone().try_acquire_owned() {
+                            Ok(permit) => permit,
+                            Err(_) => {
+                                if !opened.swap(true, Ordering::SeqCst) {
+                                    let (backend, idle) = (backend.clone(), idle.clone());
+                                    tokio::spawn(async move {
+                                        tokio::time::sleep(Duration::from_millis(600)).await;
+                                        idle.lock().unwrap().push(8);
+                                        backend.add_permits(1);
+                                    });
+                                }
+                                backend.clone().acquire_owned().await.unwrap()
+                            }
+                        };
+                        let pid = idle.lock().unwrap().pop().unwrap();
+                        let _ = serve(socket, pid).await;
+                        idle.lock().unwrap().push(pid);
+                        drop(permit);
+                    });
+                    continue;
+                }
                 let pid = match pool {
                     // One backend, whoever holds it.
                     Pool::Shared | Pool::SessionOfOne => 7,
@@ -635,6 +691,10 @@ mod tests {
             matches!(never, Observed::Unclear(ref why) if why.contains("no answer")),
             "{never:?}"
         );
+        // b got a's freed server while the second one was still opening: it waited once,
+        // and the second round finds two servers.
+        let lazy = run_probe(Pool::LazySecond, true).await.unwrap();
+        assert_eq!(lazy, Observed::Unclear("waited once, then got another backend".into()));
     }
 
     #[tokio::test]
