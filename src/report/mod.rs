@@ -416,6 +416,48 @@ mod tests {
     }
 
     #[test]
+    fn markdown_says_how_often_a_precondition_held() {
+        let row = |scenario: &str, verdict: &str, runs: u32, unmet: u32| {
+            format!(
+                r#"{{"target":"p","scenario":"{scenario}",{verdict},"steps":[],"runs":{runs},"failures":0,
+                "precondition_unmet":{unmet}}}"#
+            )
+        };
+        let fail = r#""result":"fail","mismatch":{"step":1,"action":"x","kind":"silent",
+            "expected":{"status":"ok","rows":[],"tags":[]},"actual":{"status":"not_run"}}"#;
+        let scenario = |name: &str| format!(r#"{{"name":"{name}","description":"d","refs":[],"steps":["x"]}}"#);
+        let report: Report = serde_json::from_str(&format!(
+            r#"{{"poolproof":"0","targets":[{{"name":"p","mode":"transaction"}}],"scenarios":[{},{},{},{}],
+            "results":[{},{},{},{}]}}"#,
+            scenario("once"),
+            scenario("never"),
+            scenario("fails"),
+            scenario("always"),
+            row("once", r#""result":"pass""#, 1, 4),
+            row(
+                "never",
+                r#""result":"skip","reason":"precondition at step 2 not met""#,
+                0,
+                3
+            ),
+            row("fails", fail, 2, 1),
+            row("always", r#""result":"pass""#, 1, 0),
+        ))
+        .unwrap();
+        let md = markdown(&[report]);
+        assert!(md.contains("| `once` | pass (precondition 1/5) |"), "{md}");
+        assert!(md.contains("| `never` | skip (precondition 0/3) |"), "{md}");
+        assert!(md.contains("| `fails` | **FAIL** silent (precondition 2/3) |"), "{md}");
+        // Met in its only run: nothing to say.
+        assert!(md.contains("| `always` | pass |"), "{md}");
+        assert!(
+            md.contains("- precondition met in 2 of 3 runs\n- step 1: `x`\n"),
+            "{md}"
+        );
+        assert!(md.contains("- pooler: `not run`"), "{md}");
+    }
+
+    #[test]
     fn markdown_keeps_expected_failures_apart_from_bugs() {
         let fail = |scenario: &str, expected: &str| {
             format!(

@@ -97,6 +97,29 @@ mod tests {
     }
 
     #[test]
+    fn steps_that_never_ran_and_preconditions_are_explained() {
+        // A precondition runs only through the pooler, and a run stops at one that wasn't
+        // met: the trace says so instead of showing an empty cell.
+        assert!(TEMPLATE.contains(r#"if (o.status === "not_run") return "not run";"#));
+        assert!(TEMPLATE.contains(r#""not run on Postgres (precondition)""#));
+        assert!(TEMPLATE.contains(r#""not run: an earlier precondition wasn't met""#));
+        // Cells and the dialog say how often the precondition held, and flag a PASS that
+        // rests on one run.
+        assert!(TEMPLATE.contains("`precondition met in ${p.met} of ${p.ran} runs`"));
+        assert!(TEMPLATE.contains(r#"" This PASS rests on one run.""#));
+        assert!(TEMPLATE.contains(r#"id="legend-once" hidden"#));
+        let mut report = report_with_refs(&[]);
+        report.results[0].precondition_unmet = Some(4);
+        report.results[0].steps = vec![crate::report::StepOutcomes {
+            postgres: crate::runner::Outcome::NotRun,
+            pooler: crate::runner::Outcome::NotRun,
+        }];
+        let page = html(&[report]).unwrap();
+        assert!(page.contains(r#""steps":[{"postgres":{"status":"not_run"},"pooler":{"status":"not_run"}}]"#));
+        assert!(page.contains(r#""precondition_unmet":4"#));
+    }
+
+    #[test]
     fn version_notes_name_both_tested_versions() {
         // Tested versions skip releases, so a change is never pinned on one release.
         assert!(TEMPLATE.contains("fails from ${v} (passed in ${w})"));
