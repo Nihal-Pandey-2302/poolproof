@@ -57,7 +57,8 @@ with any `${NAME}` value in it, so keep secrets in URLs, not in `reset`.
 
 - TLS: the default, `sslmode=prefer`, encrypts when the server offers TLS but never
   checks its certificate, and falls back to plaintext without a word. `require` checks
-  the chain only when a root certificate is given or found in `~/.postgresql/root.crt`.
+  the chain only when a root certificate is given or found (`~/.postgresql/root.crt`, or
+  `%APPDATA%\postgresql\root.crt` on Windows).
   For anything not on localhost, use `verify-full`. `sslrootcert=system` requires
   `verify-full`.
 - Not supported: client certificates (the connection fails and says so) and

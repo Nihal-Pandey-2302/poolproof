@@ -115,14 +115,15 @@ never shows passwords.
 TLS works as in psql: `sslmode` is `disable`, `prefer` (the default: TLS if the server
 offers it, else plaintext without a word), `require`, `verify-ca` or `verify-full`, from
 the URL or `PGSSLMODE`. `prefer` never checks certificates, even with a root certificate
-present, so it is encrypted but not authenticated: use `verify-full` for anything not on
-localhost. `sslrootcert` (or `PGSSLROOTCERT`) names the CA file, or `system` for the
-operating system's store (which needs `verify-full`, and makes it the default). Without
-it, `~/.postgresql/root.crt` is used when it exists, and `require` then checks the chain
-like `verify-ca`; `verify-ca` and `verify-full` with no root certificate at all are an
-error. `send` steps, cancel requests and the reset and setup connections use the same
-settings. A Unix socket never uses TLS, as in psql. Not supported yet: client
-certificates and `sslnegotiation=direct`.
+present (psql checks the chain then, and falls back to plaintext if that fails), so it is
+encrypted but not authenticated: use `verify-full` for anything not on localhost.
+`sslrootcert` (or `PGSSLROOTCERT`) names the CA file, or `system` for the operating
+system's store (which needs `verify-full`, and makes it the default). Without it,
+`~/.postgresql/root.crt` (`%APPDATA%\postgresql\root.crt` on Windows) is used when it
+exists, and `require` then checks the chain like `verify-ca`; `verify-ca` and
+`verify-full` with no root certificate at all are an error. `send` steps, cancel requests
+and the reset and setup connections use the same settings. A Unix socket never uses TLS,
+as in psql. Not supported yet: client certificates and `sslnegotiation=direct`.
 
 A URL names one host and port: several hosts or ports, `hostaddr`,
 `target_session_attrs` and `load_balance_hosts` are refused, since poolproof would

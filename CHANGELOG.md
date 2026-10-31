@@ -87,7 +87,8 @@ First release.
   setup), as in psql: `sslmode` (`disable`, `prefer` (the default), `require`,
   `verify-ca`, `verify-full`) and `sslrootcert` (a CA file or `system`) in the URL, or
   `PGSSLMODE` and `PGSSLROOTCERT`. `require` with a root certificate (`sslrootcert`, or
-  `~/.postgresql/root.crt` if it exists) checks the chain. `verify-ca` and `verify-full`
+  `~/.postgresql/root.crt`, or `%APPDATA%\postgresql\root.crt` on Windows, if it
+  exists) checks the chain. `verify-ca` and `verify-full`
   without one are an error when the targets load. `sslrootcert=system` needs
   `verify-full`. Client certificates and `sslnegotiation=direct` are not supported yet.
 - `reset = "auto"` ends only the sessions from the address and user the pooler connects
@@ -179,8 +180,8 @@ First release.
 ### Security
 
 - A `send` client reads exactly one byte after its SSLRequest before the TLS handshake,
-  so a server or man in the middle can't inject plaintext replies ahead of TLS (the
-  CVE-2021-23214 class).
+  so a server or man in the middle can't inject plaintext replies ahead of TLS
+  (CVE-2021-23222, the libpq side of it).
 - HTML report: `refs` from a results file become links only for `http(s)://` URLs, with
   `rel="noopener noreferrer"`, and the page has a Content-Security-Policy that allows only
   its own inline script and style (by hash).

@@ -36,7 +36,8 @@ src/runner/
                          (socket options, TLS, drain on close), cancel, wait_ready after a
                          reset, privileges, resolve_reset, server version
   raw.rs                 raw protocol clients for `send` steps
-  tls.rs                 sslmode and sslrootcert as in libpq: one rustls config per Endpoint
+  tls.rs                 sslmode and sslrootcert as in libpq (except prefer, which never
+                         checks): one rustls config per Endpoint
   compare.rs             outcome matching, Verdict, Mismatch, FailKind (silent/error/hang)
 src/report/
   mod.rs                 the JSON report, bundled results, lookups for scan --pooler
