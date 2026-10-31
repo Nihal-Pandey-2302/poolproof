@@ -134,7 +134,8 @@ file.
 reset, read the direct user's privileges, then for each scenario `before_run` (SKIP for
 another mode or missing privileges, ERROR for an unreachable target) and `check`. The
 first three only happen when some scenario applies to the target, so a target filtered
-down to nothing is never contacted (`reset_is_not_resolved_when_no_scenario_applies`). The
+down to nothing is never reset (`reset_is_not_resolved_when_no_scenario_applies`); only
+its server version is read, for the report. The
 `determinism` list caches `--check-scenarios` results per scenario, direct URL and reset,
 so a scenario is checked once even with many targets. `FailOn` is the exit code ladder.
 `cli.rs` (the `Command::Run` arm of `run`) is where the result becomes a `Report` and
