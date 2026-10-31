@@ -1,5 +1,7 @@
 name = "deallocate-all-isolated"
 description = "DEALLOCATE ALL from one client must not remove another client's prepared statements."
+# Counts only when b really reached a's server connection.
+same_backend = [[3, 5]]
 
 [[step]]
 client = "a"
@@ -11,5 +13,13 @@ client = "b"
 simple = "DEALLOCATE ALL"
 
 [[step]]
+client = "b"
+evidence = true
+
+[[step]]
 client = "a"
 execute = "q"
+
+[[step]]
+client = "a"
+evidence = true

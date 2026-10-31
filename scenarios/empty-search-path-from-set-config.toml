@@ -3,6 +3,8 @@ description = "An empty search_path set with set_config() must survive another c
 # pg_dump does this first thing. Postgres 18 reports search_path to the pooler, so
 # poolers that track it have to restore the empty value correctly.
 refs = ["https://github.com/pgbouncer/pgbouncer/issues/1663"]
+# Counts only when b really reached a's server connection.
+same_backend = [[3, 5]]
 
 [[step]]
 client = "a"
@@ -13,5 +15,13 @@ client = "b"
 simple = "SET search_path = public"
 
 [[step]]
+client = "b"
+evidence = true
+
+[[step]]
 client = "a"
 simple = "SHOW search_path"
+
+[[step]]
+client = "a"
+evidence = true
