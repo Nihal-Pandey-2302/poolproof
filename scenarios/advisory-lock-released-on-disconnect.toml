@@ -10,6 +10,13 @@ simple = "SELECT pg_advisory_lock(424242)::text"
 client = "a"
 disconnect = true
 
+# Through a pooler nothing waits for the backend to exit, so give the lock up to 3s to
+# go away. Instant on Postgres; a pooler that really leaks it still shows count 1.
+[[step]]
+client = "check"
+direct = true
+simple = "DO $$ BEGIN FOR i IN 1..60 LOOP EXIT WHEN NOT EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND objid = 424242); PERFORM pg_sleep(0.05); END LOOP; END $$"
+
 [[step]]
 client = "check"
 direct = true

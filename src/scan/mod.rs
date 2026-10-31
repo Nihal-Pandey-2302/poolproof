@@ -5,7 +5,7 @@ use serde::Serialize;
 mod input;
 mod rules;
 
-pub use input::load_queries;
+pub use input::{InputFormat, load_queries, read_queries};
 pub use rules::scan;
 
 /// Severity of a finding under transaction pooling.
@@ -49,7 +49,8 @@ pub struct PoolerCheck {
 pub enum PoolerStatus {
     /// A related scenario fails silently: wrong results, no error.
     Breaks,
-    /// The pooler refuses the pattern with an error (or hangs), so it fails loudly.
+    /// A related scenario fails with an error or hangs: the pooler refuses the pattern,
+    /// or another client's query fails because of it.
     Rejected,
     /// The pooler passes every related scenario.
     Ok,
@@ -75,6 +76,8 @@ fn scenarios_for(rule: &str) -> Vec<&'static str> {
         "sql-prepare" => vec!["sql-prepare-isolated-between-clients"],
         "discard" => vec!["discard-all-resets-settings"],
         "multi-statement-transaction" => vec!["multi-statement-begin"],
+        "deallocate-all" => vec!["deallocate-all-isolated"],
+        "load" => vec!["load-isolated-between-clients"],
         _ => vec![],
     }
 }
@@ -89,14 +92,22 @@ pub const RULES: &[(&str, &str)] = &[
     ("with-hold-cursor", "WITH HOLD cursor"),
     ("sql-prepare", "SQL-level PREPARE"),
     ("discard", "DISCARD on a shared server connection"),
+    ("deallocate-all", "DEALLOCATE ALL on a shared server connection"),
+    ("load", "LOAD of a library into the session"),
     (
         "multi-statement-transaction",
         "Several statements in one query string that starts a transaction",
     ),
 ];
 
+/// What `scan` found. `--format json` prints it as is.
+#[derive(Serialize)]
 pub struct Report {
     pub findings: Vec<Finding>,
     pub queries: usize,
+    /// Queries the SQL parser rejected.
     pub unparsed: usize,
+    /// DO blocks and function bodies that could not be parsed (PL/pgSQL even after a
+    /// retry), so only their words were checked.
+    pub uninspected: usize,
 }

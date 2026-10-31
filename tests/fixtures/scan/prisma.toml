@@ -1,0 +1,76 @@
+# Prisma Client and Prisma Migrate (query engine / schema engine).
+
+[[query]]
+sql = 'SELECT "public"."User"."id", "public"."User"."email", "public"."User"."name" FROM "public"."User" WHERE "public"."User"."id" = $1 LIMIT $2 OFFSET $3'
+form = "pgss"
+expect = []
+note = "findUnique"
+
+[[query]]
+sql = 'INSERT INTO "public"."Post" ("title","published","authorId") VALUES ($1,$2,$3) RETURNING "public"."Post"."id", "public"."Post"."title", "public"."Post"."published", "public"."Post"."authorId"'
+form = "pgss"
+expect = []
+note = "create with RETURNING"
+
+[[query]]
+sql = 'BEGIN'
+form = "pgss"
+expect = []
+note = "interactive transaction"
+
+[[query]]
+sql = 'COMMIT'
+form = "pgss"
+expect = []
+note = "interactive transaction"
+
+[[query]]
+sql = 'DEALLOCATE ALL'
+form = "pgss"
+expect = ["deallocate-all"]
+note = "sent with ?pgbouncer=true to clear prepared statements on the server connection"
+
+[[query]]
+sql = 'SELECT pg_advisory_lock($1)'
+form = "pgss"
+expect = ["session-advisory-lock"]
+note = "prisma migrate takes lock 72707369 for the whole run"
+
+[[query]]
+sql = 'SELECT pg_advisory_lock(72707369)'
+form = "log"
+expect = ["session-advisory-lock"]
+note = "prisma migrate, simple protocol"
+
+[[query]]
+sql = 'SELECT pg_advisory_unlock(72707369)'
+form = "log"
+expect = []
+note = "prisma migrate releases the lock"
+
+[[query]]
+sql = '''CREATE TABLE IF NOT EXISTS "_prisma_migrations" (
+    "id"                    VARCHAR(36) PRIMARY KEY NOT NULL,
+    "checksum"              VARCHAR(64) NOT NULL,
+    "finished_at"           TIMESTAMPTZ,
+    "migration_name"        VARCHAR(255) NOT NULL,
+    "logs"                  TEXT,
+    "rolled_back_at"        TIMESTAMPTZ,
+    "started_at"            TIMESTAMPTZ NOT NULL DEFAULT now(),
+    "applied_steps_count"   INTEGER NOT NULL DEFAULT 0
+)'''
+form = "log"
+expect = []
+note = "migrations table"
+
+[[query]]
+sql = 'SET search_path = "app"'
+form = "pgss-17"
+expect = ["session-set"]
+note = "set on connect when the URL has ?schema=app (from memory of the quaint source, not captured)"
+
+[[query]]
+sql = 'SET search_path = $1'
+form = "pgss-18"
+expect = ["session-set"]
+note = "same, Postgres 18"

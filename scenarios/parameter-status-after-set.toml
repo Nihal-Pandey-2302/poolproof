@@ -1,0 +1,12 @@
+name = "parameter-status-after-set"
+description = "After a SET of a parameter Postgres reports, the client must get a ParameterStatus with the new value."
+
+[[step]]
+client = "a"
+send = ["query SET application_name = 'pp_status'"]
+compare_parameter_status = true
+
+[[step]]
+client = "a"
+send = ["query SET TimeZone = 'Asia/Kolkata'"]
+compare_parameter_status = true

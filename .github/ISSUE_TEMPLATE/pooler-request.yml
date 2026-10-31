@@ -1,0 +1,26 @@
+name: Pooler request
+description: Add a pooler, version or configuration to the test matrix.
+labels: [pooler]
+body:
+  - type: input
+    id: pooler
+    attributes:
+      label: Pooler and version
+      placeholder: pgpool-II 4.6
+    validations:
+      required: true
+  - type: input
+    id: image
+    attributes:
+      label: Docker image or install instructions
+      description: The test bed runs everything in Docker, so an official image helps most.
+  - type: textarea
+    id: config
+    attributes:
+      label: Configuration
+      description: Pooling mode and any settings that matter (e.g. a strict mode).
+  - type: textarea
+    id: why
+    attributes:
+      label: Why
+      description: Who uses it, or which behavior you want to see tested.

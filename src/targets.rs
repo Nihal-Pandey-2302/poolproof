@@ -69,7 +69,7 @@ enum ResetFile {
 
 /// A SQL statement to run on Postgres. Errors show it as written, with `${NAME}`
 /// unexpanded, so a value substituted from the environment never reaches output.
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Statement {
     sql: String,
     written: String,
@@ -86,6 +86,15 @@ impl Statement {
 
     pub fn plain_all(sqls: &[String]) -> Vec<Self> {
         sqls.iter().map(|sql| Self::plain(sql)).collect()
+    }
+
+    /// A statement as if `written` had been expanded to `sql`.
+    #[cfg(test)]
+    pub(crate) fn substituted(sql: &str, written: &str) -> Self {
+        Statement {
+            sql: sql.to_string(),
+            written: written.to_string(),
+        }
     }
 
     pub fn sql(&self) -> &str {

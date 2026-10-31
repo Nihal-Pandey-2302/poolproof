@@ -77,8 +77,7 @@ async fn close_all(
     }
     for (client, conn) in raw {
         let on_postgres = baseline || direct.get(client).copied().unwrap_or(false);
-        // TODO(#26): t.housekeeping once Timeouts has it.
-        if let Err(e) = conn.terminate(on_postgres.then_some(t.step)).await {
+        if let Err(e) = conn.terminate(on_postgres.then_some(t.housekeeping)).await {
             first_error.get_or_insert(e.context(format!("client '{client}' closing")));
         }
     }
@@ -132,15 +131,18 @@ async fn run_until_done<'s>(
                         }
                     }
                     let conn = raw.get_mut(step.client.as_str()).expect("just connected");
-                    match conn.exchange(&messages, &exchange_opts).await {
+                    let opts = ExchangeOpts {
+                        parameter_status: step.compare_parameter_status,
+                        ..exchange_opts
+                    };
+                    match conn.exchange(&messages, &opts).await {
                         Ok(messages) => Outcome::Messages { messages },
                         Err(e) => Outcome::error("CLIENT", format!("{e:#}")),
                     }
                 }
                 Action::Disconnect => {
                     if let Some(conn) = raw.remove(step.client.as_str()) {
-                        // TODO(#26): t.housekeeping once Timeouts has it.
-                        conn.terminate(on_postgres(step.direct).then_some(t.step))
+                        conn.terminate(on_postgres(step.direct).then_some(t.housekeeping))
                             .await
                             .with_context(|| format!("client '{}' disconnecting", step.client))?;
                     }

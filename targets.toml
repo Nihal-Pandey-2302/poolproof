@@ -77,6 +77,26 @@ direct = "postgres://postgres:postgres@127.0.0.1:55432/app?sslmode=disable"
 mode = "transaction"
 reset = "all"
 
+[[target]]
+name = "pgcat-1.2.0"
+product = "pgcat"
+version = "1.2.0"
+config = "default"
+pooler = "postgres://postgres:postgres@127.0.0.1:56481/app?sslmode=disable"
+direct = "postgres://postgres:postgres@127.0.0.1:55432/app?sslmode=disable"
+mode = "transaction"
+reset = "all"
+
+[[target]]
+name = "odyssey-1.5.2"
+product = "odyssey"
+version = "1.5.2"
+config = "default"
+pooler = "postgres://postgres:postgres@127.0.0.1:56491/app?sslmode=disable"
+direct = "postgres://postgres:postgres@127.0.0.1:55432/app?sslmode=disable"
+mode = "transaction"
+reset = "all"
+
 # Supavisor finds the tenant from the user name: <user>.<tenant>.
 [[target]]
 name = "supavisor-2.9.13"

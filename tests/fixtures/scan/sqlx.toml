@@ -1,0 +1,64 @@
+# sqlx (Rust): sqlx-postgres, sqlx migrate, PgListener.
+
+[[query]]
+sql = 'SELECT pg_advisory_lock($1)'
+form = "pgss"
+expect = ["session-advisory-lock"]
+note = "migrator lock, id derived from the database name"
+
+[[query]]
+sql = 'SELECT pg_advisory_unlock($1)'
+form = "pgss"
+expect = []
+note = "migrator unlock"
+
+[[query]]
+sql = '''CREATE TABLE IF NOT EXISTS _sqlx_migrations (
+    version BIGINT PRIMARY KEY,
+    description TEXT NOT NULL,
+    installed_on TIMESTAMPTZ NOT NULL DEFAULT now(),
+    success BOOLEAN NOT NULL,
+    checksum BYTEA NOT NULL,
+    execution_time BIGINT NOT NULL
+)'''
+form = "log"
+expect = []
+
+[[query]]
+sql = 'SELECT version, checksum FROM _sqlx_migrations ORDER BY version'
+form = "pgss"
+expect = []
+
+[[query]]
+sql = 'INSERT INTO _sqlx_migrations ( version, description, success, checksum, execution_time ) VALUES ( $1, $2, TRUE, $3, -1 )'
+form = "log"
+expect = []
+
+[[query]]
+sql = 'UPDATE _sqlx_migrations SET execution_time = $1 WHERE version = $2'
+form = "pgss"
+expect = []
+
+[[query]]
+sql = 'LISTEN "order_events"'
+form = "pgss"
+expect = ["listen"]
+note = "PgListener::listen"
+
+[[query]]
+sql = 'UNLISTEN *'
+form = "pgss"
+expect = []
+note = "PgListener::unlisten_all"
+
+[[query]]
+sql = 'SELECT typname, typtype, typcategory, typrelid, typelem, typbasetype FROM pg_catalog.pg_type WHERE oid = $1'
+form = "pgss"
+expect = []
+note = "type lookup for custom types"
+
+[[query]]
+sql = 'SELECT id, email FROM users WHERE id = $1'
+form = "pgss"
+expect = []
+note = "query_as!"
