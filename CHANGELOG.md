@@ -62,8 +62,8 @@ First release.
 - ERROR verdict when nothing could be compared, instead of a PASS or an aborted run: a
   target URL that doesn't answer before the run (checked once per target), a step on the
   Postgres side that fails in the harness (timeout, connection failure), a pooler that
-  doesn't answer again after a reset, setup, teardown or reset failing, or a client that
-  mixes `direct` and pooled steps. It stops that scenario only; the run goes on.
+  doesn't answer again after a reset, or setup, teardown or reset failing. It stops that
+  scenario only; the run goes on.
 - A `send` reply from the pooler that stops short of what Postgres sent counts as a hang.
 - `run --check-scenarios`: runs each scenario's Postgres side twice and gives ERROR if
   the two runs differ, e.g. a step that returns a random value, a time or a pid.
@@ -77,13 +77,19 @@ First release.
 - Setup, teardown and reset statements run with `lock_timeout` 5s and
   `statement_timeout` 30s, so a lock a pooler leaked gives ERROR instead of hanging the
   run.
+- Passwords as in psql: from the URL, else `PGPASSWORD`, else the password file
+  (`PGPASSFILE`, default `~/.pgpass`, `%APPDATA%\postgresql\pgpass.conf` on Windows). On
+  Unix a password file that group or others can read is ignored with a warning.
+- `${NAME}` in a targets file's `pooler`, `direct` and `reset` is replaced by that
+  environment variable; an unset one is an error. `$${` is a literal `${`.
+- Passwords never appear in output, errors or reports: URLs are printed without them.
 - `send` steps record COPY TO STDOUT replies: `CopyOutResponse`, one `CopyData` line per
   message (hex if it isn't UTF-8), `CopyDone`.
 - `compare_parameter_status = true` on a `send` step records ParameterStatus messages
   and compares them as a set. A dropped or changed value is a silent failure.
-- Scenario files are checked when loaded: two scenarios with the same name, or an
-  `execute` of a statement the client didn't prepare on that connection (also after a
-  `disconnect`), are errors.
+- Scenario files are checked when loaded: two scenarios with the same name, a client
+  that mixes `direct` and pooled steps, or an `execute` of a statement the client didn't
+  prepare on that connection (since its last `disconnect` or abandoned query) are errors.
 - `scan --input pgss|csvlog|log|jsonlog|sql`, and `-` for stdin. csvlog is new. Logs and
   CSV are read as a stream, so large logs use little memory, and invalid UTF-8 no longer
   fails the file. A log with no statements in it is an error that names `log_statement`
@@ -114,7 +120,8 @@ First release.
 - `run`: a direct step that couldn't connect on the pooler run no longer hides a pooler
   failure at an earlier step.
 - `run`: repeated scenarios waited for the pooler before each run even without a
-  `reset`, about 10s each. They only wait after a reset now.
+  `reset`, up to 10s each when the pooler was slow to answer. They only wait after a
+  reset now.
 - `send` steps reject a server message over 64 MB, or with an impossible length, instead
   of allocating it.
 - `scan`: the `set_config` rule reads each call's own third argument. `true` gives no

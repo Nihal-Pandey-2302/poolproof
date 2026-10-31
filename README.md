@@ -242,7 +242,7 @@ Step actions:
 - `simple`: simple query protocol, can hold several statements.
 - `prepare` + `name`, then `execute`: extended protocol. Cast columns to `text`. An
   `execute` needs an earlier `prepare` of that name by the same client since its last
-  `disconnect`, or the scenario fails to load.
+  `disconnect` or abandoned query, or the scenario fails to load.
 - `disconnect`: close the connection cleanly.
 - `wait`: collect the result of this client's `background` query.
 - `cancel`: send a CancelRequest with this client's key, through the same pooler.

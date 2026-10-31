@@ -105,8 +105,8 @@ Details that matter when changing this:
   scenario is ERROR rather than compared.
 - Anything that stops a comparison is `Verdict::Error` for that scenario only, and the
   run goes on: a failing reset, setup or teardown, a pooler that doesn't answer after a
-  reset, a client that mixes direct and pooled steps, or a direct step on the pooler run
-  that can't connect (unless the pooler already went wrong at an earlier step).
+  reset, or a direct step on the pooler run that can't connect (unless the pooler
+  already went wrong at an earlier step).
   Teardown always runs. On the pooler run a failing teardown only turns a PASS into
   ERROR, so a FAIL caused by, say, a leaked lock on the scenario's table is kept.
   Setup, teardown and reset run with `lock_timeout` and `statement_timeout` so they
@@ -141,7 +141,7 @@ report given with `--results`.
 | To add or change | Edit |
 |---|---|
 | A scenario | `scenarios/<name>.toml`, then `scripts/update-results.sh` (see CONTRIBUTING.md) |
-| A step action or option | `scenario.rs` (format, and the checks when a file loads), `runner/steps.rs`, README's step list |
+| A step action or option | `scenario.rs` (format, and the checks when a file loads: unique names, one side per client, `execute` after `prepare`), `runner/steps.rs`, README's step list |
 | A protocol message for `send` | `runner/raw.rs` (parsing the `send` line, encoding, reply lines) |
 | How outcomes are compared or classified | `runner/compare.rs`, with unit tests there |
 | Reset, setup, repeat or timing behavior | `runner/check.rs`, `runner/pg.rs`, `Timeouts` in `runner/mod.rs`; the step timeout is also set by `--step-timeout` in `cli.rs` and `timeout_ms` in `scenario.rs` |
