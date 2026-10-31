@@ -1,4 +1,5 @@
 # poolproof's pgjdbc program. Build with drivers/docker-bake.hcl.
+# The build image's JDK and the runtime's JRE are the same version (21); change both at once.
 FROM maven:3.9-eclipse-temurin-21@sha256:99e61abcff91a9b1333463bd8451fb18495d6eba9250ac66a338b518f8278320 AS build
 WORKDIR /src
 COPY pom.xml ./
