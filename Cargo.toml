@@ -11,7 +11,7 @@ keywords = ["postgres", "pgbouncer", "connection-pool", "testing", "pooler"]
 categories = ["command-line-utilities", "database", "development-tools::testing"]
 # The test bed and CI files are for this repo, not for `cargo install`. results/ stays:
 # `scan --pooler` reads it.
-exclude = [".github/", ".gitguardian.yaml", "docker/", "scripts/", "selftest/", "tools/", "RESULTS.md", "targets.toml"]
+exclude = [".github/", ".gitguardian.yaml", "docker/", "fuzz/", "scripts/", "selftest/", "tools/", "RESULTS.md", "targets.toml"]
 
 # cargo binstall poolproof: download the release archive instead of compiling.
 [package.metadata.binstall]
@@ -59,3 +59,7 @@ libc = "0.2.191"
 lto = "thin"
 codegen-units = 1
 strip = true
+
+[lints.rust]
+# Set by cargo-fuzz for the targets in fuzz/.
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)"] }

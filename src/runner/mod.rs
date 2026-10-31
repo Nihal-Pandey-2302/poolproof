@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 mod check;
 mod compare;
+pub mod doctor;
 mod pg;
 pub(crate) mod raw;
 mod steps;
@@ -17,6 +18,21 @@ pub use check::{Checked, DIRECT_UNREACHABLE, POOLER_UNREACHABLE, check, determin
 pub use compare::{FailKind, Mismatch, Verdict};
 pub use pg::{Privileges, privileges, resolve_reset, server_version};
 pub use raw::RawMessage;
+
+/// Entry points for the fuzz targets in `fuzz/`. Only built with `--cfg fuzzing`, which
+/// cargo-fuzz sets.
+#[cfg(fuzzing)]
+pub mod fuzzing {
+    /// Bytes from a server: every message parsed and turned into reply lines.
+    pub fn replies(data: &[u8]) {
+        super::raw::fuzz_replies(data);
+    }
+
+    /// One `send` line per input line: parsed and encoded.
+    pub fn send_messages(text: &str) {
+        super::raw::fuzz_send_messages(text);
+    }
+}
 
 /// How long the harness waits for each kind of thing. `Default` holds the values
 /// every run used before these were configurable.
