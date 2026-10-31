@@ -59,7 +59,13 @@ First release.
 - Documented limitations (`limitations/<product>.toml`): a FAIL that exactly matches a
   limitation in the pooler's own docs is marked expected, with the doc link and quote.
   It stays a FAIL. Entries that no longer match are reported as stale.
-  `run --ignore-expected` leaves those FAILs out of the exit code.
+  `run --ignore-expected` leaves those FAILs out of the exit code. The HTML report shows
+  expected FAILs apart from bugs (an outlined chip, separate counts for passes, expected
+  failures and bugs, an optional filter that is off on every load, the doc quoted in the
+  trace), and RESULTS.md marks them "(expected)" in their own section. Both list stale
+  entries.
+- Version notes in the HTML report name both tested versions, e.g. "fails from 0.1.56
+  (passed in 0.1.50)", since the tested versions skip releases.
 - Results for PgBouncer 1.24.1, 1.25.2, 1.26.1 (also with TLS between client and
   pooler), PgDog 0.1.50, 0.1.56, 0.1.62 (also with pub/sub), Supavisor 2.9.13,
   2.10.0-rc.1 (also in strict mode), PgCat 1.2.0 and Odyssey 1.5.2 on Postgres 17.11 and
