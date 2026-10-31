@@ -82,8 +82,9 @@ pub async fn inspect(target: &Target, scenarios: &[Scenario], yes: bool, t: &Tim
     }
 }
 
-/// Connects to one side and pushes its connect and TLS lines. Direct sessions are
-/// also made read-only, as a guard: doctor never writes.
+/// Connects to one side and pushes its connect and TLS lines. On direct, this session
+/// is made read-only as a guard (privileges() and resolve_reset() open their own,
+/// which run only SELECTs).
 async fn open_side(
     checks: &mut Vec<Check>,
     side: &'static str,
