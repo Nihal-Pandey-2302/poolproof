@@ -48,14 +48,18 @@ The file format is in [README.md](README.md#writing-a-scenario). The workflow:
 6. Check the verdicts make sense on every pooler, and run the whole suite with `--reverse`
    too. A verdict that changes with order means state leaks between scenarios.
 7. If the outcome depends on timing inside the pooler (pipelines, races), set `repeat`.
-8. Objects a scenario creates are named `pp_*` and dropped in `teardown`.
-9. Regenerate the committed results and add them to the same commit:
+8. If the scenario needs a privilege a managed database may not give (`CREATE ROLE`,
+   ending other sessions), list it in `requires` (`createrole`, `superuser`,
+   `pg_signal_backend`). Targets without it then SKIP the scenario instead of passing
+   on a permission error that both sides share.
+9. Objects a scenario creates are named `pp_*` and dropped in `teardown`.
+10. Regenerate the committed results and add them to the same commit:
 
-   ```sh
-   scripts/update-results.sh
-   ```
+    ```sh
+    scripts/update-results.sh
+    ```
 
-   CI compares its own verdicts with `results/` and fails if they differ.
+    CI compares its own verdicts with `results/` and fails if they differ.
 
 ## Code
 
