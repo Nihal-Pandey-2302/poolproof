@@ -30,8 +30,8 @@ releases page. The scenarios and the latest results are built into the binary.
 
 **[Results site](https://nihal-pandey-2302.github.io/poolproof/)**: every scenario against
 PgBouncer 1.24 to 1.26 (1.26 also over TLS), PgDog 0.1.50 to 0.1.62, Supavisor 2.9 and
-2.10, PgCat 1.2 and Odyssey 1.5, on Postgres 17 and 18, with the full step-by-step trace for each cell. It also marks the version where a
-behavior broke or got fixed.
+2.10, PgCat 1.2 and Odyssey 1.5, on Postgres 17 and 18, with the full step-by-step trace
+for each cell. It also marks the version where a behavior broke or got fixed.
 [RESULTS.md](RESULTS.md) has the same data as a table. Both are built from `results/`,
 which `scripts/update-results.sh` regenerates and CI checks.
 
@@ -298,10 +298,10 @@ Rules today: session `SET`/`RESET` (including `SET ROLE`) and `set_config(..., f
 parameter there, as pg_stat_statements shows it, gives a warning to check the value),
 session advisory locks, `LISTEN`, temp tables without `ON COMMIT DROP`, `WITH HOLD`
 cursors, SQL-level `PREPARE`, `DISCARD`, `DEALLOCATE ALL`, `LOAD`, and query strings that
-start a transaction and run more statements in it. Function calls are checked anywhere in a
-statement, including the query inside `PREPARE` and `DECLARE CURSOR`, but not in the body
-of `CREATE VIEW` or `CREATE RULE`, which doesn't run then (`CREATE MATERIALIZED VIEW` does
-run its query, so it is checked). Statements inside DO blocks and function bodies
+start a transaction and run more statements in it. Function calls are checked anywhere in
+a statement, including the query inside `PREPARE` and `DECLARE CURSOR`, but not in the
+body of `CREATE VIEW` or `CREATE RULE`, which doesn't run then (`CREATE MATERIALIZED VIEW`
+does run its query, so it is checked). Statements inside DO blocks and function bodies
 (PL/pgSQL and SQL) are checked too. Findings in a function body are warnings that name the
 function, since it runs whenever the function is called. Parameters a function sets in its
 own `SET` clause are restored on return, so setting them in its body is fine. Dynamic
@@ -351,11 +351,11 @@ Step actions:
   ```
 
   Messages: `parse NAME SQL`, `bind PORTAL STATEMENT`, `execute PORTAL [MAX_ROWS]`,
-  `describe statement|portal NAME`, `close statement|portal NAME`, `sync`, `flush`,
-  `query SQL`, `copydata TEXT`, `copydone`. `-` is the unnamed statement or portal. Replies
-  are read up to one ReadyForQuery per `sync`/`query`/`copydone`; without those, until the
-  server is quiet for half a second. Errors are recorded by SQLSTATE only. A client that uses
-  `send` has its own raw connection; `disconnect` is its only other step.
+  `describe statement|portal NAME`, `close statement|portal NAME`, `sync`, `flush`, `query
+  SQL`, `copydata TEXT`, `copydone`. `-` is the unnamed statement or portal. Replies are
+  read up to one ReadyForQuery per `sync`/`query`/`copydone`; without those, until the
+  server is quiet for half a second. Errors are recorded by SQLSTATE only. A client that
+  uses `send` has its own raw connection; `disconnect` is its only other step.
   ParameterStatus replies are skipped, since poolers add and drop them freely; with
   `compare_parameter_status = true` a `send` step records them and compares them as a
   set, wherever in the step's reply they come. A dropped or changed value is a silent
@@ -372,12 +372,11 @@ Options on any step: `delay_ms` sleeps first, e.g. so a cancel lands while a que
 `compare` can be `full` (default), `status` or `ignore`.
 
 Scenario options: `setup` and `teardown` run directly on Postgres around each run;
-`timeout_ms` overrides the step timeout for this scenario;
-`modes` limits which pooling modes a scenario applies to; `repeat = 5` runs the pooler side
-five times and fails if any run fails. Use `repeat` when the outcome depends on timing
-inside the pooler, as with pipelines: reports then show how many runs failed, and CI
-doesn't treat a change in those verdicts as a regression, because the worst case can differ
-between machines.
+`timeout_ms` overrides the step timeout for this scenario; `modes` limits which pooling
+modes a scenario applies to; `repeat = 5` runs the pooler side five times and fails if any
+run fails. Use `repeat` when the outcome depends on timing inside the pooler, as with
+pipelines: reports then show how many runs failed, and CI doesn't treat a change in those
+verdicts as a regression, because the worst case can differ between machines.
 `requires` lists privileges the `direct` user needs (`createrole`, `superuser`,
 `pg_signal_backend`); on a target without them the scenario is skipped, with the reason.
 If the privileges can't be read, it is ERROR instead.
