@@ -48,7 +48,7 @@ fraction like 2/5 means the scenario is timing-sensitive and failed in 2 of 5 ru
 | `temp-table-isolated-between-clients` | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | **FAIL** silent | **FAIL** silent | FAIL error | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | **FAIL** silent | **FAIL** silent | FAIL error | **FAIL** silent |
 | `temp-table-survives-own-transactions` | pass | pass | pass | pass | pass | pass | pass | pass | FAIL error | pass | pass | FAIL error | pass | pass | pass | pass | pass | pass | pass | pass | pass | FAIL error | pass | pass | FAIL error | pass |
 
-Documented limitations: built-in from poolproof 0.1.0.
+Documented limitations: built-in.
 
 ## Differences
 

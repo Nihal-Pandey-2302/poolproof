@@ -413,10 +413,7 @@ mod tests {
         let md = markdown(&[report]);
         assert!(md.contains("| `bug` | **FAIL** silent |"), "{md}");
         assert!(md.contains("| `doc` | FAIL silent (expected) |"), "{md}");
-        assert!(
-            md.contains("\nDocumented limitations: built-in from poolproof 0.\n"),
-            "{md}"
-        );
+        assert!(md.contains("\nDocumented limitations: built-in.\n"), "{md}");
         assert!(md.contains("- p / `gone`: passes now (https://d/gone)"), "{md}");
         let bugs = md.find("\n## Differences\n").unwrap();
         let documented = md.find("\n## Expected differences (documented limitations)\n").unwrap();

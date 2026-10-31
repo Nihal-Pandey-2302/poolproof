@@ -81,7 +81,12 @@ pub fn markdown(reports: &[Report]) -> String {
         out.push('\n');
     }
 
-    let mut sources: Vec<&str> = reports.iter().filter_map(|r| r.limitations.as_deref()).collect();
+    // "built-in" without the poolproof version, so a version bump doesn't change RESULTS.md.
+    let mut sources: Vec<&str> = reports
+        .iter()
+        .filter_map(|r| r.limitations.as_deref())
+        .map(|l| if l.starts_with("built-in") { "built-in" } else { l })
+        .collect();
     sources.dedup();
     if !sources.is_empty() {
         let _ = write!(out, "\nDocumented limitations: {}.\n", sources.join(", "));
