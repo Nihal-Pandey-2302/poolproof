@@ -11,16 +11,18 @@
   --pass: #e7f3ea; --pass-ink: #2f6b3c;
   --silent: #d93025; --silent-ink: #ffffff;
   --error: #f5c451; --error-ink: #4a3500;
-  --hang: #8e6bd1; --hang-ink: #ffffff;
-  --skip: #ececea; --skip-ink: #8a8a85;
+  --hang: #7a55c7; --hang-ink: #ffffff;
+  --skip: #ececea; --skip-ink: #62625d;
+  --silent-text: #c5221f; --error-text: #8a5a00;
   --accent: #2557d6; --hl: #fff4d6;
 }
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #141413; --panel: #1d1d1b; --text: #ecece8; --muted: #9a9a94; --line: #33332f;
     --pass: #1f3324; --pass-ink: #8fd19e;
-    --silent: #e5483d; --error: #d9a93a; --error-ink: #1d1500;
-    --hang: #9b7ce0; --skip: #2a2a27; --skip-ink: #77776f;
+    --silent: #c9302c; --error: #d9a93a; --error-ink: #1d1500;
+    --hang: #7652c9; --skip: #2a2a27; --skip-ink: #a3a39c;
+    --silent-text: #ff7b72; --error-text: #e0b04a;
     --accent: #7ea2ff; --hl: #3a3220;
   }
 }
@@ -36,7 +38,8 @@ h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: -0.01em; }
 .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; min-width: 120px; }
 .stat b { display: block; font-size: 20px; }
 .stat span { color: var(--muted); font-size: 12px; }
-.stat b.count-silent { color: var(--silent); }
+.stat b.count-silent { color: var(--silent-text); }
+.stat span small { display: block; }
 .controls { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin-bottom: 10px; }
 .controls label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
 .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
@@ -65,7 +68,7 @@ td.name .desc { color: var(--muted); font-size: 12px; }
 .step-hint { color: var(--muted); font-size: 12px; }
 .notes { margin-top: 3px; display: flex; flex-wrap: wrap; gap: 4px; }
 .note { font-size: 11px; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
-.note.broke { border-color: var(--silent); color: var(--silent); }
+.note.broke { border-color: var(--silent-text); color: var(--silent-text); }
 .note.fixed { border-color: var(--pass-ink); color: var(--pass-ink); }
 td.cell { padding: 3px; text-align: center; }
 td.cell.first { border-left: 1px solid var(--line); }
@@ -76,9 +79,25 @@ td.cell.first { border-left: 1px solid var(--line); }
 .error { background: var(--error); color: var(--error-ink); }
 .hang { background: var(--hang); color: var(--hang-ink); }
 .skip, .none { background: var(--skip); color: var(--skip-ink); }
+/* Expected failures (a documented limitation) are outlined, bugs are filled: the
+   shape tells them apart, not only the color. */
+.exp-silent { background: var(--panel); color: var(--silent-text); box-shadow: inset 0 0 0 2px var(--silent-text); }
+.exp-error { background: var(--panel); color: var(--error-text); box-shadow: inset 0 0 0 2px var(--error-text); }
+.exp-hidden { background: var(--panel); color: var(--muted); box-shadow: inset 0 0 0 2px var(--muted); }
+.banner { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; margin: 0 0 10px;
+  width: fit-content; max-width: 100%; }
+.stale { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px 14px; margin: 0 0 14px; max-width: 900px; }
+.stale summary { cursor: pointer; font-weight: 600; }
+.stale ul { margin: 6px 0 2px; padding-left: 20px; }
+.stale li { margin: 2px 0; overflow-wrap: anywhere; }
+.limitation { border-left: 3px solid var(--line); padding: 4px 0 4px 12px; margin: 10px 0; overflow-wrap: anywhere; }
+.limitation h3 { font-size: 13px; margin: 0 0 4px; }
+.limitation blockquote { margin: 4px 0; font-style: italic; }
+.limitation p { margin: 4px 0; }
 tfoot td { position: sticky; bottom: 0; background: var(--panel); font-size: 12px; color: var(--muted); text-align: center; padding: 6px 2px; }
 tfoot td.name { text-align: left; }
-tfoot b { color: var(--silent); }
+tfoot b { color: var(--silent-text); }
+tfoot small { display: block; font-size: 11px; }
 dialog { border: 1px solid var(--line); border-radius: 14px; padding: 0; width: min(920px, calc(100vw - 32px));
   background: var(--panel); color: var(--text); }
 dialog::backdrop { background: rgba(0,0,0,.45); }
@@ -112,19 +131,24 @@ footer { color: var(--muted); font-size: 12px; max-width: 1400px; margin: 0 auto
   <h1>poolproof results</h1>
   <p class="lede">Each scenario runs against plain Postgres, then through the pooler. A cell fails when the pooler's
     result differs from Postgres. <b>Silent</b> failures are the dangerous kind: the application gets a wrong
-    result and no error. Click a cell for the full trace.</p>
+    result and no error. Some failures are documented limitations of the pooling mode: they are expected, and still
+    break apps that rely on the feature. Click a cell for the full trace.</p>
   <div class="stats" id="stats"></div>
+  <details class="stale" id="stale" hidden></details>
   <div class="controls">
     <span class="seg" id="pg" role="group" aria-label="Postgres version"></span>
     <span id="products"></span>
     <label><input type="checkbox" id="diffonly"> Only scenarios with failures</label>
+    <label><input type="checkbox" id="hideexp"> Hide expected failures</label>
     <input type="search" id="q" placeholder="Filter scenarios" aria-label="Filter scenarios">
   </div>
+  <p class="banner" id="hidden-note" role="status" hidden></p>
   <div class="legend">
     <span><i class="pass"></i>pass</span>
     <span><i class="silent"></i>silent: wrong result, no error</span>
     <span><i class="error"></i>error: pooler refused</span>
     <span><i class="hang"></i>hang: no reply</span>
+    <span><i class="exp-silent"></i><i class="exp-error"></i>documented limitation: still breaks apps that rely on it</span>
     <span><i class="skip"></i>skipped / not run</span>
   </div>
 </header>
@@ -179,6 +203,9 @@ footer { color: var(--muted); font-size: 12px; max-width: 1400px; margin: 0 auto
     ? el("a", { href: r, target: "_blank", rel: "noopener noreferrer" }, r.replace("https://github.com/", ""))
     : el("span", {}, r);
   const state = (x) => !x ? "none" : x.result === "fail" ? x.mismatch.kind : x.result;
+  // A FAIL that a pooler's documentation explains. Still a failure, never a pass.
+  const expected = (x) => !!(x && x.result === "fail" && x.expected);
+  const bug = (x) => ["silent", "error", "hang"].includes(state(x)) && !expected(x);
   const symbol = { pass: "✓", silent: "✕", error: "!", hang: "⏱", skip: "–", none: "·", error_run: "?" };
   const word = { pass: "pass", silent: "silent failure", error: "pooler error", hang: "no reply", skip: "skipped", none: "not run" };
 
@@ -227,26 +254,38 @@ footer { color: var(--muted); font-size: 12px; max-width: 1400px; margin: 0 auto
     pbox.append(el("label", {}, cb, productName(p)), " ");
   }
   document.getElementById("diffonly").addEventListener("change", render);
+  // Off on every page load (not remembered), so expected failures are never hidden by default.
+  document.getElementById("hideexp").addEventListener("change", render);
   document.getElementById("q").addEventListener("input", render);
 
   function render() {
     const visible = cols.filter(c => productOn.has(c.product) && (pgSel === "all" || c.pg === pgSel));
     const q = document.getElementById("q").value.trim().toLowerCase();
     const diffOnly = document.getElementById("diffonly").checked;
+    const hideExp = document.getElementById("hideexp").checked;
     const rows = scenarios.filter(s => (!q || (s.name + " " + s.description).toLowerCase().includes(q)) &&
-      (!diffOnly || visible.some(c => ["silent", "error", "hang"].includes(state(results.get(c.key + "/" + s.name))))));
+      (!diffOnly || visible.some(c => {
+        const x = results.get(c.key + "/" + s.name);
+        return bug(x) || (!hideExp && expected(x));
+      })));
 
-    // Stats for what is on screen.
-    const all = visible.flatMap(c => rows.map(s => state(results.get(c.key + "/" + s.name))));
-    const count = k => all.filter(v => v === k).length;
+    // Stats for what is on screen: passes, expected failures and bugs, each on its own.
+    const all = visible.flatMap(c => rows.map(s => results.get(c.key + "/" + s.name)));
+    const count = k => all.filter(x => bug(x) && state(x) === k).length;
+    const nExpected = all.filter(expected).length;
     const stats = document.getElementById("stats");
     stats.replaceChildren(
       el("div", { class: "stat" }, el("b", {}, String(rows.length)), el("span", {}, "scenarios")),
       el("div", { class: "stat" }, el("b", {}, String(visible.length)), el("span", {}, "pooler configurations")),
       el("div", { class: "stat" }, el("b", { class: "count-silent" }, String(count("silent"))), el("span", {}, "silent failures")),
       el("div", { class: "stat" }, el("b", {}, String(count("error") + count("hang"))), el("span", {}, "errors and hangs")),
-      el("div", { class: "stat" }, el("b", {}, String(count("pass"))), el("span", {}, "passes")),
+      el("div", { class: "stat" }, el("b", {}, String(nExpected)), el("span", {}, "expected failures",
+        el("small", {}, "documented limitations"))),
+      el("div", { class: "stat" }, el("b", {}, String(all.filter(x => state(x) === "pass").length)), el("span", {}, "passes")),
     );
+    const note = document.getElementById("hidden-note");
+    note.hidden = !(hideExp && nExpected);
+    note.textContent = `${nExpected} expected ${nExpected === 1 ? "failure" : "failures"} hidden. Hidden cells show ≈.`;
 
     const grid = document.getElementById("grid");
     if (!visible.length || !rows.length) { grid.replaceChildren(el("div", { class: "empty" }, "Nothing matches these filters.")); return; }
@@ -272,10 +311,13 @@ footer { color: var(--muted); font-size: 12px; max-width: 1400px; margin: 0 auto
       for (const c of visible) {
         const x = results.get(c.key + "/" + s.name);
         let st = state(x);
-        const cls = x && x.result === "error" ? "skip" : st;
-        const sym = x && x.result === "error" ? symbol.error_run : symbol[st];
+        let cls = x && x.result === "error" ? "skip" : st;
+        let sym = x && x.result === "error" ? symbol.error_run : symbol[st];
         const flaky = x && x.runs > 1 && x.failures > 0 ? ` in ${x.failures} of ${x.runs} runs` : "";
-        const label = `${s.name} on ${c.t.name}, Postgres ${c.pg}: ${x && x.result === "error" ? "could not run" : word[st]}${flaky}`;
+        let what = x && x.result === "error" ? "could not run" : word[st];
+        if (expected(x) && hideExp) { cls = "exp-hidden"; sym = "≈"; what = "expected failure, hidden"; }
+        else if (expected(x)) { cls = "exp-" + st; what += ", expected: documented limitation"; }
+        const label = `${s.name} on ${c.t.name}, Postgres ${c.pg}: ${what}${flaky}`;
         tr.append(el("td", { class: "cell" + (c.first ? " first" : "") },
           el("button", { class: "chip " + cls, title: label, "aria-label": label, onclick: () => x && show(s, c, x) }, sym)));
       }
@@ -283,8 +325,10 @@ footer { color: var(--muted); font-size: 12px; max-width: 1400px; margin: 0 auto
     }
     const foot = el("tr", {}, el("td", { class: "name" }, "Silent failures"));
     for (const c of visible) {
-      const n = rows.filter(s => state(results.get(c.key + "/" + s.name)) === "silent").length;
-      foot.append(el("td", {}, n ? el("b", {}, String(n)) : "0"));
+      const silent = rows.map(s => results.get(c.key + "/" + s.name)).filter(x => state(x) === "silent");
+      const n = silent.filter(bug).length, e = silent.length - n;
+      foot.append(el("td", { title: `${n} silent failures, ${e} expected` }, n ? el("b", {}, String(n)) : "0",
+        e ? el("small", {}, "+" + e + " exp.") : null));
     }
     grid.replaceChildren(el("table", {}, el("thead", {}, head1, head2), body, el("tfoot", {}, foot)));
   }
@@ -302,14 +346,25 @@ footer { color: var(--muted); font-size: 12px; max-width: 1400px; margin: 0 auto
   function show(s, c, x) {
     const st = state(x);
     const failStep = x.result === "fail" ? x.mismatch.step : null;
+    const badge = x.result === "error" ? "could not run" : word[st] + (expected(x) ? " · expected" : "");
     const head = el("div", { class: "dlg-head" },
       el("div", {},
         el("h2", { id: "dlg-title" }, el("span", { class: "mono" }, s.name)),
         el("p", {}, `${c.t.name} · Postgres ${c.pg} · `,
-          el("span", { class: "badge " + (x.result === "error" ? "skip" : st) }, x.result === "error" ? "could not run" : word[st]))),
+          el("span", { class: "badge " + (x.result === "error" ? "skip" : expected(x) ? "exp-" + st : st) }, badge))),
       el("button", { class: "close", "aria-label": "Close", onclick: () => dlg.close() }, "×"));
     const body = el("div", { class: "dlg-body" }, el("p", {}, s.description));
     if (s.refs.length) body.append(el("p", {}, "From: ", s.refs.flatMap((r, i) => [i ? ", " : null, refLink(r)])));
+    if (expected(x)) {
+      const e = x.expected;
+      body.append(el("div", { class: "limitation" },
+        el("h3", {}, "Documented limitation"),
+        el("p", {}, `${productName(c.product)} documents this, so it is expected. It still breaks apps that rely on the feature.`),
+        e.quote ? el("blockquote", {}, e.quote) : null,
+        e.note ? el("p", {}, e.note) : null,
+        e.doc ? el("p", {}, "Source: ", refLink(e.doc),
+          e.doc_version ? ` (documentation for ${productName(c.product)} ${e.doc_version})` : null) : null));
+    }
     if (x.runs > 1) body.append(el("p", {}, `Timing-sensitive: the pooler side ran ${x.runs} times and failed ${x.failures} of them.` +
       (x.failures ? " The trace below is from the first failing run." : "") + " The worst case can vary between machines."));
     if (x.result === "error") body.append(el("p", { class: "mono" }, x.reason));
@@ -348,8 +403,26 @@ footer { color: var(--muted); font-size: 12px; max-width: 1400px; margin: 0 auto
     if (x) show(s, c, x);
   }
 
+  // Documented limitations that no longer match what the pooler does.
+  const stale = reports.flatMap((r, ri) => (r.stale_expectations || []).map(e => ({ ...e, ri })));
+  if (stale.length) {
+    const box = document.getElementById("stale");
+    const n = stale.length;
+    box.append(el("summary", {}, `${n} documented ${n === 1 ? "limitation no longer matches" : "limitations no longer match"}`),
+      el("ul", {}, stale.map(e => {
+        const c = cols.find(x => x.ri === e.ri && x.t.name === e.target);
+        const hash = "#" + [e.scenario, e.target, c ? c.pg : ""].map(encodeURIComponent).join("/");
+        const pg = c && pgs.length > 1 ? ` on Postgres ${c.pg}` : "";
+        return el("li", {}, el("a", { href: hash }, e.target + " / " + e.scenario), pg, ": ", String(e.reason),
+          e.doc ? [" (", refLink(e.doc), ")"] : null);
+      })));
+    box.hidden = false;
+  }
+
   const versions = [...new Set(reports.map(r => r.poolproof))].join(", ");
+  const limits = [...new Set(reports.map(r => r.limitations).filter(Boolean))];
   document.getElementById("foot").append("Generated by poolproof ", versions, ". Postgres ", pgs.join(", "), ". ",
+    limits.length ? "Documented limitations: " + limits.join(", ") + ". " : "",
     el("a", { href: "https://github.com/Nihal-Pandey-2302/poolproof" }, "Source and scenarios"), ".");
   render();
   openFromHash();
