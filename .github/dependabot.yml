@@ -50,3 +50,71 @@ updates:
     groups:
       proxy-images:
         patterns: ["*"]
+
+  # The driver programs (drivers/). Like the pooler images, each driver's version is part
+  # of what is tested: drivers/drivers.toml and results/drivers-*.json name it, and a bump
+  # would change the results without saying so. Drivers are bumped by hand (see
+  # drivers/README.md). The rest gets one grouped PR a month, without major versions;
+  # even that changes what runs, so the drivers workflow checks it against the results.
+  - package-ecosystem: uv
+    directory: /drivers/psycopg
+    schedule:
+      interval: monthly
+    ignore:
+      - dependency-name: "psycopg*"
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    groups:
+      driver-psycopg:
+        patterns: ["*"]
+
+  - package-ecosystem: gomod
+    directory: /drivers/pgx
+    schedule:
+      interval: monthly
+    ignore:
+      # pgx and the packages it is made of (pgpassfile, pgservicefile, puddle).
+      - dependency-name: "github.com/jackc/*"
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    groups:
+      driver-pgx:
+        patterns: ["*"]
+
+  - package-ecosystem: npm
+    directory: /drivers/node-postgres
+    schedule:
+      interval: monthly
+    ignore:
+      # pg and the packages it is made of (pg-protocol has the protocol code).
+      - dependency-name: "pg"
+      - dependency-name: "pg-*"
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    groups:
+      driver-node-postgres:
+        patterns: ["*"]
+
+  - package-ecosystem: maven
+    directory: /drivers/pgjdbc
+    schedule:
+      interval: monthly
+    ignore:
+      - dependency-name: "org.postgresql:postgresql"
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    groups:
+      driver-pgjdbc:
+        patterns: ["*"]
+
+  # The drivers' base images: language runtimes, not the drivers.
+  - package-ecosystem: docker
+    directories: ["/drivers/*"]
+    schedule:
+      interval: monthly
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    groups:
+      driver-images:
+        patterns: ["*"]

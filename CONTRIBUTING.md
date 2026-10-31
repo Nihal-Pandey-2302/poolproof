@@ -79,6 +79,11 @@ The file format is in [README.md](README.md#writing-a-scenario). The workflow:
 - Commit messages: a short summary line in the imperative ("Add ...", "Fix ..."), then
   why, if it isn't obvious.
 - Fill in the PR template. CI must be green before review.
+- The drivers workflow (real drivers through each pooler, about 15 minutes) runs on a PR
+  only when it touches `drivers/`, `src/drivers/` or the driver results, or has the
+  `drivers` label; add the label to a PR that changes how scenarios run or are compared.
+  It always runs on main. If it goes red there, the next merge waits until it is green
+  again or the change that broke it is reverted.
 
 ## Reporting a security problem
 
