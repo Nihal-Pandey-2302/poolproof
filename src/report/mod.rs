@@ -195,10 +195,6 @@ impl Report {
         Ok(serde_json::from_value(value)?)
     }
 
-    fn verdict(&self, target: &str, scenario: &str) -> Option<&Verdict> {
-        self.row(target, scenario).map(|r| &r.verdict)
-    }
-
     fn row(&self, target: &str, scenario: &str) -> Option<&ResultRow> {
         self.results
             .iter()
@@ -387,5 +383,49 @@ mod tests {
     fn markdown_has_a_row_per_scenario() {
         let md = markdown(&[sample()]);
         assert!(md.contains("| `s` | pass |"));
+    }
+
+    #[test]
+    fn markdown_keeps_expected_failures_apart_from_bugs() {
+        let fail = |scenario: &str, expected: &str| {
+            format!(
+                r#"{{"target":"p","scenario":"{scenario}","result":"fail","mismatch":{{"step":1,"action":"x","kind":"silent",
+                "expected":{{"status":"ok","rows":[],"tags":[]}},"actual":{{"status":"ok","rows":[],"tags":[]}}}},
+                "steps":[]{expected}}}"#
+            )
+        };
+        let scenario = |name: &str| format!(r#"{{"name":"{name}","description":"d {name}","refs":[],"steps":["x"]}}"#);
+        let report: Report = serde_json::from_str(&format!(
+            r#"{{"poolproof":"0","limitations":"built-in from poolproof 0","targets":[{{"name":"p","product":"pb",
+            "version":"1","config":null,"mode":"transaction","postgres":"17"}}],"scenarios":[{},{},{}],
+            "results":[{},{},{{"target":"p","scenario":"gone","result":"pass","steps":[]}}],
+            "stale_expectations":[{{"target":"p","scenario":"gone","doc":"https://d/gone","reason":"passes now"}}]}}"#,
+            scenario("bug"),
+            scenario("doc"),
+            scenario("gone"),
+            fail("bug", ""),
+            fail(
+                "doc",
+                r#","expected":{"doc":"https://d/","doc_version":"1.2","quote":"SET | Never","note":"n"}"#
+            ),
+        ))
+        .unwrap();
+        let md = markdown(&[report]);
+        assert!(md.contains("| `bug` | **FAIL** silent |"), "{md}");
+        assert!(md.contains("| `doc` | FAIL silent (expected) |"), "{md}");
+        assert!(
+            md.contains("\nDocumented limitations: built-in from poolproof 0.\n"),
+            "{md}"
+        );
+        assert!(md.contains("- p / `gone`: passes now (https://d/gone)"), "{md}");
+        let bugs = md.find("\n## Differences\n").unwrap();
+        let documented = md.find("\n## Expected differences (documented limitations)\n").unwrap();
+        assert!(bugs < documented);
+        // Each failure is listed once, in its own section.
+        assert_eq!(md.matches("### p / bug (silent)").count(), 1);
+        assert!(md[bugs..documented].contains("### p / bug (silent)"));
+        assert!(md[documented..].contains("### p / doc (silent)"));
+        assert!(md[documented..].contains(r#"- documented: "SET | Never", https://d/ (documentation for pb 1.2)"#));
+        assert!(md[documented..].contains("- note: n\n"));
     }
 }

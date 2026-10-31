@@ -95,4 +95,37 @@ mod tests {
         assert!(TEMPLATE.contains(r#"/^https?:\/\//i.test(r)"#));
         assert!(TEMPLATE.contains(r#"rel: "noopener noreferrer""#));
     }
+
+    #[test]
+    fn expected_failures_are_shown_by_default() {
+        // The filter that hides expected failures starts off on every load: it isn't
+        // checked in the markup and nothing on the page is remembered between visits.
+        assert!(TEMPLATE.contains(r#"<input type="checkbox" id="hideexp"> Hide expected failures"#));
+        assert!(!TEMPLATE.contains("localStorage") && !TEMPLATE.contains("sessionStorage"));
+        // Expected failures get their own look, and hidden ones are labeled.
+        assert!(TEMPLATE.contains(".exp-silent {") && TEMPLATE.contains(".exp-error {"));
+        assert!(TEMPLATE.contains(r#"what = "expected failure, hidden""#));
+    }
+
+    #[test]
+    fn expected_marks_and_stale_limitations_reach_the_page() {
+        let mut report = report_with_refs(&[]);
+        report.limitations = Some("custom".into());
+        report.results[0].expected = Some(crate::limitations::Expected {
+            doc: "https://d/".into(),
+            doc_version: None,
+            quote: "</script><script>alert(1)</script>".into(),
+            note: None,
+        });
+        report.stale_expectations = vec![crate::limitations::Stale {
+            target: "p".into(),
+            scenario: "s".into(),
+            doc: "https://d/".into(),
+            reason: "passes now".into(),
+        }];
+        let page = html(&[report]).unwrap();
+        assert!(page.contains(r#""expected":{"doc":"https://d/","quote":"\u003c/script>"#));
+        assert!(page.contains(r#""stale_expectations":[{"target":"p","scenario":"s""#));
+        assert_eq!(page.matches("</script>").count(), 2);
+    }
 }
