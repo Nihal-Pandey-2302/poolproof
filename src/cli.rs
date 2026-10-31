@@ -604,7 +604,10 @@ mod tests {
         let mut run = Vec::new();
         man(Some("run"), &mut run).unwrap();
         let run = String::from_utf8(run).unwrap();
-        assert!(run.contains("poolproof\\-run") && run.contains("\\-\\-fail\\-on"), "{run}");
+        assert!(
+            run.contains("poolproof\\-run") && run.contains("\\-\\-fail\\-on"),
+            "{run}"
+        );
         assert!(man(Some("man"), &mut Vec::new()).is_err());
         assert!(man(Some("nope"), &mut Vec::new()).is_err());
     }

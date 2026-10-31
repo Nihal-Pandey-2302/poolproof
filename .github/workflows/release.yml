@@ -13,7 +13,40 @@ permissions:
   contents: read
 
 jobs:
+  # Shell completions and man pages, the same for every target. Made once on Linux,
+  # since not every build job can run its own binary (x86_64 macOS on an arm64 runner).
+  extras:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
+        with:
+          toolchain: stable
+      - run: cargo build --locked
+      - name: Generate
+        run: |
+          pp=target/debug/poolproof
+          mkdir -p extras/completions extras/man
+          $pp completions bash > extras/completions/poolproof.bash
+          $pp completions zsh > extras/completions/_poolproof
+          $pp completions fish > extras/completions/poolproof.fish
+          $pp completions powershell > extras/completions/_poolproof.ps1
+          $pp completions elvish > extras/completions/poolproof.elv
+          $pp man > extras/man/poolproof.1
+          # One page per command the main page lists.
+          for cmd in $($pp man | sed -n 's/^poolproof\\-\([a-z-]*\)(1)$/\1/p'); do
+            [ "$cmd" = help ] && continue
+            $pp man "$cmd" > "extras/man/poolproof-$cmd.1"
+          done
+          ls -R extras
+          [ -s extras/man/poolproof-run.1 ]
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: extras
+          path: extras
+
   build:
+    needs: extras
     strategy:
       fail-fast: false
       matrix:
@@ -32,6 +65,10 @@ jobs:
           toolchain: stable
           targets: ${{ matrix.target }}
       - run: cargo build --release --locked --target ${{ matrix.target }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: extras
+          path: extras
       - name: Package
         shell: bash
         run: |
@@ -39,6 +76,7 @@ jobs:
           exe=poolproof; [ "$RUNNER_OS" = Windows ] && exe=poolproof.exe
           mkdir "$name"
           cp "target/${{ matrix.target }}/release/$exe" README.md LICENSE-MIT LICENSE-APACHE "$name"/
+          cp -r extras/completions extras/man "$name"/
           if [ "$RUNNER_OS" = Windows ]; then 7z a "$name.zip" "$name" >/dev/null; else tar czf "$name.tar.gz" "$name"; fi
       - name: Smoke test
         if: matrix.target != 'x86_64-apple-darwin'
