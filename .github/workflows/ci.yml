@@ -34,6 +34,8 @@ jobs:
       - run: cargo test
       # RESULTS.md must be what the committed results render to.
       - run: cargo run -q -- report results/postgres-*.json | diff RESULTS.md -
+      # Same for DRIVERS.md and the drivers workflow's committed results.
+      - run: cargo run -q -- report results/drivers-postgres-*.json | diff DRIVERS.md -
 
   fmt:
     runs-on: ubuntu-latest
