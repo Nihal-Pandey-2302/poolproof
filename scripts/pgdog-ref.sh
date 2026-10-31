@@ -44,7 +44,10 @@ for tool in git cargo docker jq; do
 done
 # The script takes its test bed down when it's done, so never borrow one that's running.
 eval "$(scripts/testbed.sh env "$offset")"
-if [ -n "$(docker compose -p "$COMPOSE_PROJECT_NAME" ps -a -q 2>/dev/null)" ]; then
+# By label, so containers of any profile count, and a docker error isn't read as "free".
+ids=$(docker ps -a -q --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME") ||
+  { echo "docker ps failed" >&2; exit 2; }
+if [ -n "$ids" ]; then
   echo "test bed $offset is in use; pick another offset" >&2
   exit 2
 fi
