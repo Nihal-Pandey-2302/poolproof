@@ -97,6 +97,13 @@ mod tests {
     }
 
     #[test]
+    fn long_probe_details_are_cut_in_the_column_tooltip_only() {
+        assert!(TEMPLATE.contains("const probe = probeText(c.t, 120);"));
+        assert!(TEMPLATE.contains("probeText(c.t) ? el(\"p\", {}, probeText(c.t)) : null"));
+        assert!(TEMPLATE.contains(r#"text.slice(0, max - 1) + "…""#));
+    }
+
+    #[test]
     fn steps_that_never_ran_and_preconditions_are_explained() {
         // A precondition runs only through the pooler, and a run stops at one that wasn't
         // met: the trace says so instead of showing an empty cell.

@@ -218,9 +218,12 @@ footer { color: var(--muted); font-size: 12px; max-width: 1400px; margin: 0 auto
   // What the pool probes saw: whether a second client shares, waits for or gets its own
   // server connection.
   const probeWord = { shared: "shared", separate: "separate", waited: "waited", refused: "refused", unknown: "unknown" };
-  const probeText = (t) => {
+  // `max` cuts each detail (e.g. a pooler's error text) for the column tooltip; the
+  // dialog shows it whole.
+  const clip = (text, max) => text.length > max ? text.slice(0, max - 1) + "…" : text;
+  const probeText = (t, max = Infinity) => {
     if (!t.idle_probe && !t.busy_probe) return null;
-    const one = (p) => !p ? "not probed" : (probeWord[p.result] || String(p.result)) + (p.detail ? ` (${p.detail})` : "");
+    const one = (p) => !p ? "not probed" : (probeWord[p.result] || String(p.result)) + (p.detail ? ` (${clip(p.detail, max)})` : "");
     return `pool probe: idle ${one(t.idle_probe)}, in a transaction ${one(t.busy_probe)}`;
   };
   // Only silent and error failures can be expected; anything else keeps its own look.
@@ -324,7 +327,7 @@ footer { color: var(--muted); font-size: 12px; max-width: 1400px; margin: 0 auto
       prev = c.product;
       c.first = first;
       const pgLabel = pgSel === "all" && pgs.length > 1 ? " · pg " + c.pg : "";
-      const probe = probeText(c.t);
+      const probe = probeText(c.t, 120);
       head2.append(el("th", { class: "col" + (first ? " first" : ""), title: c.t.name + " on Postgres " + c.pg + (probe ? "; " + probe : "") },
         el("div", {}, c.label + pgLabel)));
     });
