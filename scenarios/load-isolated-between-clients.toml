@@ -1,5 +1,9 @@
 name = "load-isolated-between-clients"
 description = "A library one client loads with LOAD must not show up for another client."
+# Without a superuser both sides get 42501, and with auto_explain already preloaded or
+# configured both sides see a value, so either would pass without testing anything.
+# Becomes `requires = ["superuser"]` once #18 lands.
+setup = ["DO $$ BEGIN IF NOT (SELECT rolsuper FROM pg_roles WHERE rolname = current_user) THEN RAISE 'LOAD needs a superuser'; END IF; IF current_setting('auto_explain.log_min_duration', true) IS NOT NULL THEN RAISE 'auto_explain is already loaded or configured'; END IF; END $$"]
 
 # auto_explain ships with Postgres and defines auto_explain.* settings once loaded.
 [[step]]
