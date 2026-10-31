@@ -107,8 +107,9 @@ First release.
   2.10.0-rc.1 (also in strict mode), PgCat 1.2.0 and Odyssey 1.5.2 on Postgres 17.11 and
   18.4, built into the binary.
 - Variant targets in `targets-variants.toml`, started with the test bed's `variants`
-  profile (`COMPOSE_PROFILES=variants`): session mode and a pool of four for PgBouncer
-  1.26.1, PgDog 0.1.62 and Supavisor 2.10.0-rc.1, and one changed setting each for
+  profile (`COMPOSE_PROFILES=variants`): session mode and `pool_size = 4` for PgBouncer
+  1.26.1, PgDog 0.1.62 and Supavisor 2.10.0-rc.1 (Supavisor may open more than
+  pool_size), and one changed setting each for
   PgBouncer (`max_prepared_statements = 0`, `server_reset_query_always = 1`), PgDog
   (`prepared_statements = "full"`) and PgCat (`prepared_statements_cache_size = 500`).
   Their results (Postgres 18.4, 15s step timeout) are on the results site under a
