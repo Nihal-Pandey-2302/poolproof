@@ -1,0 +1,38 @@
+# Variant targets: non-default configs of the poolers in targets.toml. They need the
+# variants profile: COMPOSE_PROFILES=variants docker compose -f docker/compose.yml up -d --wait
+# Results: results/variants-postgres-18.4.json (scripts/update-results.sh --variants).
+# Names end in the config label, so they never clash with targets.toml.
+
+# Session mode, pool of one server connection. Scenarios that need two connected
+# clients at once can't run here and SKIP; the rest must match Postgres, since session
+# mode keeps every client on its own server connection until it disconnects.
+
+[[target]]
+name = "pgbouncer-1.26.1-session"
+product = "pgbouncer"
+version = "1.26.1"
+config = "session"
+pooler = "postgres://postgres:postgres@127.0.0.1:56445/app?sslmode=disable"
+direct = "postgres://postgres:postgres@127.0.0.1:55432/app?sslmode=disable"
+mode = "session"
+reset = "all"
+
+[[target]]
+name = "pgdog-0.1.62-session"
+product = "pgdog"
+version = "0.1.62"
+config = "session"
+pooler = "postgres://postgres:postgres@127.0.0.1:56455/app?sslmode=disable"
+direct = "postgres://postgres:postgres@127.0.0.1:55432/app?sslmode=disable"
+mode = "session"
+reset = "all"
+
+[[target]]
+name = "supavisor-2.10.0-rc.1-session"
+product = "supavisor"
+version = "2.10.0-rc.1"
+config = "session"
+pooler = "postgres://postgres.ppsession:postgres@127.0.0.1:56463/app?sslmode=disable"
+direct = "postgres://postgres:postgres@127.0.0.1:55432/app?sslmode=disable"
+mode = "session"
+reset = "all"

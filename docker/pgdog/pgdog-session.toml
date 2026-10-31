@@ -1,0 +1,11 @@
+[general]
+host = "0.0.0.0"
+port = 6432
+default_pool_size = 1
+min_pool_size = 0
+pooler_mode = "session"
+
+[[databases]]
+name = "app"
+host = "postgres"
+port = 5432
