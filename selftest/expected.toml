@@ -133,6 +133,10 @@ set-role-isolated-between-clients = { result = "silent", why = "SET ROLE leaks t
 set-role-reset-after-pinned-disconnect = { result = "silent", why = "SET ROLE survives the disconnect on the released connection" }
 sql-prepare-isolated-between-clients = { result = "silent", why = "b gets a's released connection, with the SQL PREPARE" }
 temp-table-isolated-between-clients = { result = "silent", why = "b gets a's released connection, with the temp table" }
+protocol-prepare-survives-server-change = { result = "error", why = "c takes a's released connection, so a's Bind goes to the other one, which never saw the Parse (26000)" }
+set-survives-server-change = { result = "silent", why = "c takes a's released connection, so a's SHOW runs on the other one, at the default" }
+sql-prepare-survives-server-change = { result = "error", why = "c takes a's released connection, so a's EXECUTE runs on the other one (26000)" }
+temp-table-survives-server-change = { result = "error", why = "c takes a's released connection, so a's SELECT runs on the other one (42P01)" }
 
 # Accepts and closes. Preflight marks every scenario ERROR; nothing may pass.
 [targets.selftest-refuse]
