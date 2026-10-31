@@ -70,6 +70,8 @@ First release.
 - A harness self-test: a small proxy (`tools/pp-proxy`) puts known faults between
   poolproof and Postgres, and CI checks that every scenario gets the verdicts listed in
   `selftest/expected.toml`.
+- Shell completions (bash, zsh, fish, PowerShell, elvish) and man pages, in the release
+  archives and from `poolproof completions <shell>` and `poolproof man [command]`.
 - Release binaries are built with thin LTO and stripped: 9.2 MB to 6.5 MB on Linux x86_64.
 - ERROR verdict when nothing could be compared, instead of a PASS or an aborted run: a
   target URL that doesn't answer before the run (checked once per target), a step on the

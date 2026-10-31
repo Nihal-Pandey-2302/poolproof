@@ -26,6 +26,18 @@ cargo install --git https://github.com/Nihal-Pandey-2302/poolproof
 Or download a binary for Linux, macOS (x86_64 and arm64) or Windows (x86_64) from the
 releases page. The scenarios and the latest results are built into the binary.
 
+The release archives also hold shell completions (`completions/`) and man pages (`man/`).
+Installed another way, poolproof prints them itself:
+
+```sh
+poolproof completions bash > ~/.local/share/bash-completion/completions/poolproof
+poolproof completions zsh > ~/.zfunc/_poolproof   # with fpath+=(~/.zfunc) in ~/.zshrc
+poolproof completions fish > ~/.config/fish/completions/poolproof.fish
+poolproof man > ~/.local/share/man/man1/poolproof.1   # `poolproof man run`: poolproof-run(1)
+```
+
+`completions` also takes `powershell` and `elvish`.
+
 ## Results
 
 **[Results site](https://nihal-pandey-2302.github.io/poolproof/)**: every scenario against
