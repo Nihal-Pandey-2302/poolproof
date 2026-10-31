@@ -14,6 +14,7 @@ use crate::scenario::PoolMode;
 /// What changed between the baseline and this run. Results match by target and
 /// scenario name.
 #[derive(Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 pub struct Comparison {
     pub baseline: Baseline,
     /// Worse than in the baseline: PASS to FAIL or ERROR, a FAIL to a worse kind
@@ -36,6 +37,7 @@ pub struct Comparison {
 }
 
 #[derive(Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 pub struct Baseline {
     pub poolproof: String,
     pub schema_version: u32,
@@ -44,12 +46,14 @@ pub struct Baseline {
 }
 
 #[derive(Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 pub struct Key {
     pub target: String,
     pub scenario: String,
 }
 
 #[derive(Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 pub struct Entry {
     pub target: String,
     pub scenario: String,
@@ -65,6 +69,7 @@ pub struct Entry {
 
 /// One side of an entry, without the step details.
 #[derive(Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 pub struct State {
     /// pass, fail, error or skip.
     pub result: String,

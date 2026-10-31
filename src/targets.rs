@@ -61,10 +61,18 @@ impl Reset {
 
 /// `reset` as written: "auto", "all", or a list of statements.
 #[derive(Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(untagged)]
 enum ResetFile {
+    #[cfg_attr(test, schemars(extend("enum" = ["auto", "all"])))]
     Kind(String),
     Statements(Vec<String>),
+}
+
+/// The targets file's JSON Schema, for `schemas/`.
+#[cfg(test)]
+pub(crate) fn file_schema() -> schemars::Schema {
+    schemars::schema_for!(TargetsFile)
 }
 
 /// A SQL statement to run on Postgres. Errors show it as written, with `${NAME}`
@@ -122,6 +130,7 @@ impl fmt::Debug for Statement {
 
 /// A target as written in the file, before `${VAR}` substitution and URL parsing.
 #[derive(Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct TargetsFile {
     #[serde(rename = "target")]
@@ -129,6 +138,7 @@ struct TargetsFile {
 }
 
 #[derive(Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct TargetFile {
     name: String,
@@ -323,10 +333,30 @@ impl Endpoint {
     }
 
     fn resolve(url: &str, env: &dyn Fn(&str) -> Option<String>) -> Result<Self> {
-        let (url, sslmode, sslrootcert) = take_tls_params(url)?;
+        let (
+            url,
+            TlsParams {
+                sslmode,
+                sslrootcert,
+                sslnegotiation,
+            },
+        ) = take_tls_params(url)?;
         // The parse error never includes the URL, so it can't leak a password.
         let mut config = Config::from_str(&url).context("invalid connection URL")?;
         check_supported(&config)?;
+        // tokio-postgres would start TLS directly, but send clients always send SSLRequest.
+        // The string's own value wins over the environment, as in libpq.
+        let negotiation = match (sslnegotiation, env("PGSSLNEGOTIATION")) {
+            (Some(value), _) => Some(("sslnegotiation", value)),
+            (None, Some(value)) => Some(("PGSSLNEGOTIATION", value)),
+            (None, None) => None,
+        };
+        match negotiation {
+            Some((_, value)) if value == "postgres" => {}
+            Some((name, value)) if value == "direct" => bail!("not supported yet: {name}=direct"),
+            Some((name, _)) => bail!("unknown {name} value: use postgres or direct"),
+            None => {}
+        }
         // libpq's default is prefer: TLS when the server offers it, without checks.
         let roots = sslrootcert.or_else(|| env("PGSSLROOTCERT")).map(|r| match r.as_str() {
             "system" => RootCerts::System,
@@ -377,7 +407,7 @@ impl Endpoint {
 /// rather than ignored: `h1,h2?target_session_attrs=read-write` would otherwise test
 /// whichever host comes first, maybe a standby.
 fn check_supported(config: &Config) -> Result<()> {
-    use tokio_postgres::config::{LoadBalanceHosts, SslNegotiation, TargetSessionAttrs};
+    use tokio_postgres::config::{LoadBalanceHosts, TargetSessionAttrs};
     if config.get_hosts().len() > 1 {
         bail!("not supported: more than one host");
     }
@@ -393,34 +423,39 @@ fn check_supported(config: &Config) -> Result<()> {
     if config.get_load_balance_hosts() != LoadBalanceHosts::Disable {
         bail!("not supported: load_balance_hosts");
     }
-    // tokio-postgres would start TLS directly, but send clients always send SSLRequest.
-    if config.get_ssl_negotiation() != SslNegotiation::Postgres {
-        bail!("not supported yet: sslnegotiation=direct");
-    }
     Ok(())
 }
 
-/// Takes `sslmode` and `sslrootcert` out of a connection string, from either form.
-/// tokio-postgres doesn't accept verify-ca, verify-full or sslrootcert, so poolproof
-/// handles them itself. Errors don't quote the string: it can hold a password.
-fn take_tls_params(url: &str) -> Result<(String, Option<String>, Option<String>)> {
-    let (mut sslmode, mut sslrootcert) = (None, None);
-    let mut take = |key: &str, value: String| match key {
-        "sslmode" => {
-            sslmode = Some(value);
-            true
-        }
-        "sslrootcert" => {
-            sslrootcert = Some(value);
-            true
-        }
-        _ => false,
+/// The TLS parameters a connection string sets, taken out of it.
+#[derive(Default)]
+struct TlsParams {
+    sslmode: Option<String>,
+    sslrootcert: Option<String>,
+    sslnegotiation: Option<String>,
+}
+
+/// Takes `sslmode`, `sslrootcert` and `sslnegotiation` out of a connection string, from
+/// either form. tokio-postgres doesn't accept verify-ca, verify-full or sslrootcert,
+/// and can't tell whether the string set sslnegotiation (which wins over
+/// PGSSLNEGOTIATION), so poolproof handles them itself. Errors don't quote the string:
+/// it can hold a password.
+fn take_tls_params(url: &str) -> Result<(String, TlsParams)> {
+    let mut params = TlsParams::default();
+    let mut take = |key: &str, value: String| {
+        let slot = match key {
+            "sslmode" => &mut params.sslmode,
+            "sslrootcert" => &mut params.sslrootcert,
+            "sslnegotiation" => &mut params.sslnegotiation,
+            _ => return false,
+        };
+        *slot = Some(value);
+        true
     };
     let rest = if url.starts_with("postgres://") || url.starts_with("postgresql://") {
         // A `?` before the `@` is part of the password, not the start of the query.
         let after_userinfo = url.find('@').map_or(0, |i| i + 1);
         let Some(at) = url[after_userinfo..].find('?').map(|i| after_userinfo + i) else {
-            return Ok((url.to_string(), None, None));
+            return Ok((url.to_string(), TlsParams::default()));
         };
         let (base, query) = (&url[..at], &url[at + 1..]);
         let kept: Vec<&str> = query
@@ -443,7 +478,7 @@ fn take_tls_params(url: &str) -> Result<(String, Option<String>, Option<String>)
             .collect();
         kept.join(" ")
     };
-    Ok((rest, sslmode, sslrootcert))
+    Ok((rest, params))
 }
 
 /// `%XX` sequences to bytes; anything else is kept as it is.
@@ -828,24 +863,25 @@ mod tests {
 
     #[test]
     fn takes_tls_parameters_out() {
-        let (rest, mode, root) = take_tls_params(
-            "postgres://u:p@h/db?sslmode=verify-full&application_name=x&sslrootcert=%2Ftmp%2Fca%20x.pem",
+        let (rest, params) = take_tls_params(
+            "postgres://u:p@h/db?sslmode=verify-full&application_name=x&sslrootcert=%2Ftmp%2Fca%20x.pem&sslnegotiation=postgres",
         )
         .unwrap();
         assert_eq!(rest, "postgres://u:p@h/db?application_name=x");
-        assert_eq!(mode.as_deref(), Some("verify-full"));
-        assert_eq!(root.as_deref(), Some("/tmp/ca x.pem"));
+        assert_eq!(params.sslmode.as_deref(), Some("verify-full"));
+        assert_eq!(params.sslrootcert.as_deref(), Some("/tmp/ca x.pem"));
+        assert_eq!(params.sslnegotiation.as_deref(), Some("postgres"));
         let (rest, ..) = take_tls_params("postgresql://u@h/db?sslmode=require").unwrap();
         assert_eq!(rest, "postgresql://u@h/db");
         // A `?` in the password is not the query.
-        let (rest, mode, _) = take_tls_params("postgres://u:p?w@h/db?sslmode=require").unwrap();
+        let (rest, params) = take_tls_params("postgres://u:p?w@h/db?sslmode=require").unwrap();
         assert_eq!(rest, "postgres://u:p?w@h/db");
-        assert_eq!(mode.as_deref(), Some("require"));
+        assert_eq!(params.sslmode.as_deref(), Some("require"));
 
-        let (rest, mode, root) =
+        let (rest, params) =
             take_tls_params("host=h sslmode = 'verify-ca' password='a b\\'c\\\\' sslrootcert=/x dbname=d").unwrap();
-        assert_eq!(mode.as_deref(), Some("verify-ca"));
-        assert_eq!(root.as_deref(), Some("/x"));
+        assert_eq!(params.sslmode.as_deref(), Some("verify-ca"));
+        assert_eq!(params.sslrootcert.as_deref(), Some("/x"));
         let config = Config::from_str(&rest).unwrap();
         assert_eq!(config.get_password(), Some(&b"a b'c\\"[..]));
         assert_eq!(config.get_dbname(), Some("d"));
@@ -884,6 +920,20 @@ mod tests {
         assert!(err("postgres://u@h/db?sslnegotiation=direct").contains("not supported yet: sslnegotiation=direct"));
         assert!(err("host=h user=u sslnegotiation=direct").contains("sslnegotiation=direct"));
         assert!(Endpoint::resolve("postgres://u@h/db?sslnegotiation=postgres", &env_of(&[])).is_ok());
+        // From the environment too, unless the URL says otherwise, as in libpq.
+        let direct = env_of(&[("PGSSLNEGOTIATION", "direct")]);
+        let env_err = format!("{:#}", Endpoint::resolve("postgres://u@h/db", &direct).unwrap_err());
+        assert!(
+            env_err.contains("not supported yet: PGSSLNEGOTIATION=direct"),
+            "{env_err}"
+        );
+        assert!(Endpoint::resolve("postgres://u@h/db?sslnegotiation=postgres", &direct).is_ok());
+        let postgres = env_of(&[("PGSSLNEGOTIATION", "postgres")]);
+        assert!(Endpoint::resolve("postgres://u@h/db", &postgres).is_ok());
+        assert!(err("postgres://u@h/db?sslnegotiation=foo").contains("unknown sslnegotiation value"));
+        let foo = env_of(&[("PGSSLNEGOTIATION", "foo")]);
+        let foo_err = format!("{:#}", Endpoint::resolve("postgres://u@h/db", &foo).unwrap_err());
+        assert!(foo_err.contains("unknown PGSSLNEGOTIATION value"), "{foo_err}");
     }
 
     #[test]

@@ -1,0 +1,243 @@
+{
+  "$defs": {
+    "Compare": {
+      "oneOf": [
+        {
+          "const": "full",
+          "description": "Rows, row counts and SQLSTATE must match.",
+          "type": "string"
+        },
+        {
+          "const": "status",
+          "description": "Only success vs. error (and the SQLSTATE) must match.",
+          "type": "string"
+        },
+        {
+          "const": "ignore",
+          "description": "Run the step but don't compare it.",
+          "type": "string"
+        }
+      ]
+    },
+    "PoolMode": {
+      "description": "Pooling mode of a target. Scenarios list the modes they apply to.",
+      "enum": [
+        "session",
+        "transaction",
+        "statement"
+      ],
+      "type": "string"
+    },
+    "Requirement": {
+      "description": "A privilege a scenario's setup or steps need on Postgres. A target whose `direct`\nuser lacks one skips the scenario instead of failing it.",
+      "oneOf": [
+        {
+          "enum": [
+            "superuser"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "createrole",
+          "description": "Create, drop and grant roles.",
+          "type": "string"
+        },
+        {
+          "const": "pg_signal_backend",
+          "description": "Cancel or terminate other users' sessions.",
+          "type": "string"
+        }
+      ]
+    },
+    "Step": {
+      "additionalProperties": false,
+      "properties": {
+        "abandon_after_ms": {
+          "description": "With `simple`: drop the connection without Terminate if the query hasn't\nfinished after this many ms, like a client that crashed or timed out.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "background": {
+          "default": false,
+          "description": "With `simple`: start the query and move on. A later `wait` step collects the result.",
+          "type": "boolean"
+        },
+        "cancel": {
+          "default": false,
+          "description": "Send a CancelRequest with this client's key, the way a driver would.",
+          "type": "boolean"
+        },
+        "client": {
+          "description": "Client name. A client connects on its first step.",
+          "type": "string"
+        },
+        "compare": {
+          "$ref": "#/$defs/Compare"
+        },
+        "compare_parameter_status": {
+          "default": false,
+          "description": "With `send`: record ParameterStatus replies too and compare them, ignoring where\nin the reply they come. For poolers that drop or fake them, e.g. after a SET.",
+          "type": "boolean"
+        },
+        "delay_ms": {
+          "description": "Sleep this long before the step, e.g. so a cancel lands while a query runs.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "direct": {
+          "default": false,
+          "description": "Connect straight to Postgres, bypassing the pooler. Used to check server state.",
+          "type": "boolean"
+        },
+        "disconnect": {
+          "default": false,
+          "description": "Close the client connection.",
+          "type": "boolean"
+        },
+        "execute": {
+          "description": "Execute a statement this client prepared earlier.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "notifications": {
+          "default": false,
+          "description": "Record the NOTIFY messages this client has received since the last such step.",
+          "type": "boolean"
+        },
+        "prepare": {
+          "description": "Prepare SQL with the extended protocol and store it under `name`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "send": {
+          "description": "Write these protocol messages directly (e.g. `parse s1 SELECT 1`, `bind - s1`,\n`execute -`, `sync`) and record every reply. A client that uses `send` talks\nraw protocol for its whole life; `disconnect` is its only other step.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "simple": {
+          "description": "Run SQL with the simple query protocol. May contain several statements.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "wait": {
+          "default": false,
+          "description": "Wait for this client's background query and record its result.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "client"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://nihal-pandey-2302.github.io/poolproof/schemas/v1/scenario.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A scenario is a script of client actions. It runs once against plain Postgres\n(every client gets its own connection) and once through the pooler. Any step\nwhose outcome differs is a failure.",
+  "properties": {
+    "description": {
+      "type": "string"
+    },
+    "modes": {
+      "default": [
+        "session",
+        "transaction",
+        "statement"
+      ],
+      "items": {
+        "$ref": "#/$defs/PoolMode"
+      },
+      "type": "array"
+    },
+    "name": {
+      "type": "string"
+    },
+    "refs": {
+      "default": [],
+      "description": "Links to the bug reports this scenario came from.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "repeat": {
+      "default": 1,
+      "description": "Run the pooler side this many times and fail if any run fails. For scenarios\nwhose outcome depends on timing inside the pooler, such as pipelines.",
+      "format": "uint32",
+      "minimum": 1,
+      "type": "integer"
+    },
+    "requires": {
+      "default": [],
+      "description": "Privileges the `direct` user needs; without them the scenario is skipped.",
+      "items": {
+        "$ref": "#/$defs/Requirement"
+      },
+      "type": "array"
+    },
+    "setup": {
+      "default": [],
+      "description": "Statements run directly on Postgres before each run.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "step": {
+      "items": {
+        "$ref": "#/$defs/Step"
+      },
+      "type": "array"
+    },
+    "teardown": {
+      "default": [],
+      "description": "Statements run directly on Postgres after each run.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "timeout_ms": {
+      "description": "How long each step may take, overriding `run --step-timeout`.",
+      "format": "uint64",
+      "minimum": 1,
+      "type": [
+        "integer",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "name",
+    "description",
+    "step"
+  ],
+  "title": "poolproof scenario file",
+  "type": "object"
+}

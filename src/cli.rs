@@ -264,6 +264,7 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
                 })
                 .collect();
             let mut report = report::Report {
+                schema: Some(report::REPORT_SCHEMA.to_string()),
                 schema_version: report::SCHEMA_VERSION,
                 poolproof: env!("CARGO_PKG_VERSION").to_string(),
                 generated_at: Some(report::now_rfc3339()),

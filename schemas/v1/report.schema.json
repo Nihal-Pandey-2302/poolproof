@@ -1,0 +1,616 @@
+{
+  "$defs": {
+    "Baseline": {
+      "properties": {
+        "generated_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "poolproof": {
+          "type": "string"
+        },
+        "results": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "schema_version": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "poolproof",
+        "schema_version",
+        "results"
+      ],
+      "type": "object"
+    },
+    "Comparison": {
+      "description": "What changed between the baseline and this run. Results match by target and\nscenario name.",
+      "properties": {
+        "baseline": {
+          "$ref": "#/$defs/Baseline"
+        },
+        "changed": {
+          "description": "A FAIL of a milder kind, or for a repeated scenario any change of kind: its\nmismatch can come from a different run each time.",
+          "items": {
+            "$ref": "#/$defs/Entry"
+          },
+          "type": "array"
+        },
+        "fixed": {
+          "description": "FAIL or ERROR in the baseline, PASS now.",
+          "items": {
+            "$ref": "#/$defs/Entry"
+          },
+          "type": "array"
+        },
+        "gone": {
+          "description": "In the baseline but not in this run, e.g. after --filter. Never a regression.",
+          "items": {
+            "$ref": "#/$defs/Key"
+          },
+          "type": "array"
+        },
+        "new": {
+          "description": "In this run but not in the baseline. Never a regression.",
+          "items": {
+            "$ref": "#/$defs/Key"
+          },
+          "type": "array"
+        },
+        "regressed": {
+          "description": "Worse than in the baseline: PASS to FAIL or ERROR, a FAIL to a worse kind\n(hang, then error, then silent), a FAIL to ERROR, or an ERROR to FAIL.",
+          "items": {
+            "$ref": "#/$defs/Entry"
+          },
+          "type": "array"
+        },
+        "skipped": {
+          "description": "SKIP on one side only, so nothing to compare.",
+          "items": {
+            "$ref": "#/$defs/Entry"
+          },
+          "type": "array"
+        },
+        "warnings": {
+          "description": "Targets whose product, version, config, Postgres or reset differ, and\nscenarios whose steps differ.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "baseline",
+        "regressed",
+        "fixed",
+        "changed",
+        "skipped",
+        "new",
+        "gone",
+        "warnings"
+      ],
+      "type": "object"
+    },
+    "Entry": {
+      "properties": {
+        "after": {
+          "$ref": "#/$defs/State"
+        },
+        "before": {
+          "$ref": "#/$defs/State"
+        },
+        "counted": {
+          "description": "Whether --fail-on counts the new result. Only regressions that do make the\nexit code 1.",
+          "type": "boolean"
+        },
+        "scenario": {
+          "type": "string"
+        },
+        "scenario_changed": {
+          "description": "The scenario's steps differ from the baseline's.",
+          "type": "boolean"
+        },
+        "target": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "target",
+        "scenario",
+        "before",
+        "after",
+        "counted"
+      ],
+      "type": "object"
+    },
+    "FailKind": {
+      "description": "How a failure shows up to the application. Silent failures are the dangerous ones:\nthe client gets a result and no hint that it's wrong.",
+      "oneOf": [
+        {
+          "const": "silent",
+          "description": "The pooler returned a result, but not the one Postgres returned.",
+          "type": "string"
+        },
+        {
+          "const": "error",
+          "description": "The pooler returned an error where Postgres didn't, or a different one.",
+          "type": "string"
+        },
+        {
+          "const": "hang",
+          "description": "The pooler didn't answer within the step timeout.",
+          "type": "string"
+        }
+      ]
+    },
+    "Key": {
+      "properties": {
+        "scenario": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "target",
+        "scenario"
+      ],
+      "type": "object"
+    },
+    "Mismatch": {
+      "properties": {
+        "action": {
+          "type": "string"
+        },
+        "actual": {
+          "$ref": "#/$defs/Outcome"
+        },
+        "expected": {
+          "$ref": "#/$defs/Outcome"
+        },
+        "kind": {
+          "$ref": "#/$defs/FailKind"
+        },
+        "step": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "step",
+        "action",
+        "kind",
+        "expected",
+        "actual"
+      ],
+      "type": "object"
+    },
+    "Outcome": {
+      "description": "What a client observed for one step.",
+      "oneOf": [
+        {
+          "properties": {
+            "rows": {
+              "items": {
+                "items": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "type": "array"
+              },
+              "type": "array"
+            },
+            "status": {
+              "const": "ok",
+              "type": "string"
+            },
+            "tags": {
+              "description": "Affected-row counts from CommandComplete, one per statement.",
+              "items": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "status",
+            "rows",
+            "tags"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "connect": {
+              "description": "The server refused the connection (e.g. 53300 too many connections). On the\nPostgres side that is a harness failure, not something to compare. Left out\nof JSON when false, so stored results don't change.",
+              "type": "boolean"
+            },
+            "message": {
+              "type": "string"
+            },
+            "status": {
+              "const": "error",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status",
+            "code",
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The client dropped the connection before the reply came.",
+          "properties": {
+            "status": {
+              "const": "abandoned",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Every reply to a `send` step, one line each.",
+          "properties": {
+            "messages": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "status": {
+              "const": "messages",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status",
+            "messages"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "PoolMode": {
+      "description": "Pooling mode of a target. Scenarios list the modes they apply to.",
+      "enum": [
+        "session",
+        "transaction",
+        "statement"
+      ],
+      "type": "string"
+    },
+    "ResultRow": {
+      "oneOf": [
+        {
+          "properties": {
+            "result": {
+              "const": "pass",
+              "type": "string"
+            }
+          },
+          "required": [
+            "result"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "mismatch": {
+              "$ref": "#/$defs/Mismatch"
+            },
+            "result": {
+              "const": "fail",
+              "type": "string"
+            }
+          },
+          "required": [
+            "result",
+            "mismatch"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "result": {
+              "const": "skip",
+              "type": "string"
+            }
+          },
+          "required": [
+            "result",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The run could not be set up, so there is nothing to compare.",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "result": {
+              "const": "error",
+              "type": "string"
+            }
+          },
+          "required": [
+            "result",
+            "reason"
+          ],
+          "type": "object"
+        }
+      ],
+      "properties": {
+        "failures": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "runs": {
+          "default": 1,
+          "description": "How many times the pooler side ran (the scenario's `repeat`) and how many of\nthose runs failed.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "scenario": {
+          "type": "string"
+        },
+        "steps": {
+          "description": "Every step's outcome on both sides; empty if the pooler run never happened.",
+          "items": {
+            "$ref": "#/$defs/StepOutcomes"
+          },
+          "type": "array"
+        },
+        "target": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "target",
+        "scenario",
+        "steps"
+      ],
+      "type": "object"
+    },
+    "ScenarioInfo": {
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "refs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "repeat": {
+          "default": 1,
+          "description": "More than 1 for timing-sensitive scenarios, whose worst case can vary by machine.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "steps": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "description",
+        "refs",
+        "steps"
+      ],
+      "type": "object"
+    },
+    "State": {
+      "description": "One side of an entry, without the step details.",
+      "properties": {
+        "failed_runs": {
+          "description": "For repeated scenarios: how many runs failed, of how many.",
+          "maxItems": 2,
+          "minItems": 2,
+          "prefixItems": [
+            {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          ],
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FailKind"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "result": {
+          "description": "pass, fail, error or skip.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "StepOutcomes": {
+      "properties": {
+        "pooler": {
+          "$ref": "#/$defs/Outcome"
+        },
+        "postgres": {
+          "$ref": "#/$defs/Outcome"
+        }
+      },
+      "required": [
+        "postgres",
+        "pooler"
+      ],
+      "type": "object"
+    },
+    "TargetInfo": {
+      "properties": {
+        "config": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "mode": {
+          "$ref": "#/$defs/PoolMode"
+        },
+        "name": {
+          "type": "string"
+        },
+        "postgres": {
+          "description": "Version of the Postgres server behind the pooler, if it could be read.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "product": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reset": {
+          "description": "The target's reset: none, auto, all or custom. Never the SQL. Missing in\nreports from before it was recorded.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "mode"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://nihal-pandey-2302.github.io/poolproof/schemas/v1/report.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Self-describing results of one `run`. Connection URLs are left out because they\nhold credentials.",
+  "properties": {
+    "$schema": {
+      "description": "The report's JSON Schema. Missing in reports from before it was recorded.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "comparison": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Comparison"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "With `run --compare-to`: what changed since that report."
+    },
+    "generated_at": {
+      "description": "When the run finished, RFC 3339 in UTC. Missing in reports from before it was\nrecorded.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "poolproof": {
+      "type": "string"
+    },
+    "results": {
+      "items": {
+        "$ref": "#/$defs/ResultRow"
+      },
+      "type": "array"
+    },
+    "scenarios": {
+      "items": {
+        "$ref": "#/$defs/ScenarioInfo"
+      },
+      "type": "array"
+    },
+    "schema_version": {
+      "default": 1,
+      "description": "Reports from before it was recorded are version 1.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "targets": {
+      "items": {
+        "$ref": "#/$defs/TargetInfo"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "poolproof",
+    "targets",
+    "scenarios",
+    "results"
+  ],
+  "title": "poolproof report (run --format json)",
+  "type": "object"
+}

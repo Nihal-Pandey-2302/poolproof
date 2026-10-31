@@ -29,6 +29,7 @@ impl Outcome {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 pub struct Mismatch {
     pub step: usize,
     pub action: String,
@@ -40,6 +41,7 @@ pub struct Mismatch {
 /// How a failure shows up to the application. Silent failures are the dangerous ones:
 /// the client gets a result and no hint that it's wrong.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum FailKind {
     /// The pooler returned a result, but not the one Postgres returned.
@@ -132,6 +134,7 @@ impl std::fmt::Display for FailKind {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(tag = "result", rename_all = "lowercase")]
 pub enum Verdict {
     Pass,

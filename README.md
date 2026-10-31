@@ -141,8 +141,8 @@ as in psql. Not supported yet: client certificates.
 
 A URL names one host and port: several hosts or ports, `hostaddr`,
 `target_session_attrs` and `load_balance_hosts` are refused, since poolproof would
-otherwise pick a host on its own. So is `sslnegotiation=direct`, since `send` clients
-always start with SSLRequest. Socket options work as in psql: `connect_timeout`,
+otherwise pick a host on its own. So is `sslnegotiation=direct` (or
+`PGSSLNEGOTIATION=direct`), since `send` clients always start with SSLRequest. Socket options work as in psql: `connect_timeout`,
 `keepalives` (on unless `keepalives=0`) with `keepalives_idle`, `keepalives_interval` and
 `keepalives_retries`, and `tcp_user_timeout` in milliseconds. One the system can't set
 is an error rather than ignored.
@@ -183,8 +183,14 @@ reset = "auto"
 - Without `reset`, nothing is reset: leaks carry over between scenarios, and `run`
   warns. With `--pooler` and `--direct`, `--reset auto` or `--reset all` picks one.
 
-Ending other roles' sessions needs superuser or `pg_signal_backend` on the `direct` user;
-`run` warns when a reset terminates sessions without either.
+A user that isn't a superuser needs `pg_signal_backend` and `pg_read_all_stats` to end
+other roles' sessions, and can never end a superuser's. Without `pg_read_all_stats`,
+Postgres hides the details of other roles' sessions from it, so a reset would match
+nothing. Unless the `direct` user is a superuser, `"auto"` and `"all"` therefore check the
+role the pooler connects as, and refuse to run when the reset couldn't end its sessions,
+naming what is missing and the `GRANT` that adds it. `"all"` then leaves alone the
+sessions it may not end. For your own statements, `run` warns when they terminate sessions
+without those privileges.
 
 Before the first scenario, `run` prints what the reset will touch, e.g.
 `reset: 'prod-like-pgbouncer': ends every session of user app from 10.0.0.7 (not only the
@@ -229,6 +235,15 @@ JSON carries `schema_version` and `generated_at`; poolproof refuses a report in 
 format than it reads. In these formats, a progress line per result goes to stderr. Text
 output is colored on a terminal unless `NO_COLOR` is set; `FORCE_COLOR` or
 `CLICOLOR_FORCE` colors it anywhere.
+
+JSON Schemas for the report, scenario files and targets files are published at
+`https://nihal-pandey-2302.github.io/poolproof/schemas/v1/` as `report.schema.json`,
+`scenario.schema.json` and `targets.schema.json`. A report names its schema in `$schema`,
+so editors validate it. For a TOML file, put `#:schema` and the schema's URL on the first
+line, and Even Better TOML (taplo) checks it as you type and shows what each field means.
+This repo's `.taplo.toml` does that for its own scenarios and targets files. The schemas
+check the shape of a file, not the rules poolproof applies when it loads one: one action
+per step, unique names, `execute` after `prepare`, one side per client.
 
 Scenarios create and drop their own objects (prefixed `pp_`), so use a scratch database.
 That matters even more with `reset = "all"`, which kills every session on it.

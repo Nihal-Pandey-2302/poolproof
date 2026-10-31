@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 /// Pooling mode of a target. Scenarios list the modes they apply to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, clap::ValueEnum)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum PoolMode {
     Session,
@@ -29,6 +30,7 @@ impl std::fmt::Display for PoolMode {
 /// A privilege a scenario's setup or steps need on Postgres. A target whose `direct`
 /// user lacks one skips the scenario instead of failing it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum Requirement {
     /// Create, drop and grant roles.
@@ -60,6 +62,7 @@ fn all_modes() -> Vec<PoolMode> {
 /// (every client gets its own connection) and once through the pooler. Any step
 /// whose outcome differs is a failure.
 #[derive(Debug, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct Scenario {
     pub name: String,
@@ -72,11 +75,13 @@ pub struct Scenario {
     /// Run the pooler side this many times and fail if any run fails. For scenarios
     /// whose outcome depends on timing inside the pooler, such as pipelines.
     #[serde(default = "one")]
+    #[cfg_attr(test, schemars(range(min = 1)))]
     pub repeat: u32,
     /// Privileges the `direct` user needs; without them the scenario is skipped.
     #[serde(default)]
     pub requires: Vec<Requirement>,
     /// How long each step may take, overriding `run --step-timeout`.
+    #[cfg_attr(test, schemars(range(min = 1)))]
     pub timeout_ms: Option<u64>,
     /// Statements run directly on Postgres before each run.
     #[serde(default)]
@@ -89,6 +94,7 @@ pub struct Scenario {
 }
 
 #[derive(Debug, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct Step {
     /// Client name. A client connects on its first step.
@@ -136,6 +142,7 @@ pub struct Step {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum Compare {
     /// Rows, row counts and SQLSTATE must match.
