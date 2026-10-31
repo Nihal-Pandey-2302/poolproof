@@ -68,6 +68,7 @@ impl Default for Timeouts {
 
 /// What a client observed for one step.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(tag = "status", rename_all = "lowercase")]
 pub enum Outcome {
     Ok {

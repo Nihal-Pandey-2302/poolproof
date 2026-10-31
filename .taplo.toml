@@ -1,0 +1,14 @@
+# Editor validation for this repo's TOML files (Even Better TOML, or `taplo check`).
+# The schemas are generated from the Rust types; see src/report/schema.rs.
+
+[[rule]]
+include = ["scenarios/*.toml"]
+
+[rule.schema]
+path = "./schemas/v1/scenario.schema.json"
+
+[[rule]]
+include = ["targets.toml", "selftest/targets.toml"]
+
+[rule.schema]
+path = "./schemas/v1/targets.schema.json"

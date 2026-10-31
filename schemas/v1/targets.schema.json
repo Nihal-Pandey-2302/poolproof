@@ -1,0 +1,103 @@
+{
+  "$defs": {
+    "PoolMode": {
+      "description": "Pooling mode of a target. Scenarios list the modes they apply to.",
+      "enum": [
+        "session",
+        "transaction",
+        "statement"
+      ],
+      "type": "string"
+    },
+    "ResetFile": {
+      "anyOf": [
+        {
+          "enum": [
+            "auto",
+            "all"
+          ],
+          "type": "string"
+        },
+        {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      ],
+      "description": "`reset` as written: \"auto\", \"all\", or a list of statements."
+    },
+    "TargetFile": {
+      "additionalProperties": false,
+      "properties": {
+        "config": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "direct": {
+          "type": "string"
+        },
+        "mode": {
+          "$ref": "#/$defs/PoolMode"
+        },
+        "name": {
+          "type": "string"
+        },
+        "pooler": {
+          "type": "string"
+        },
+        "product": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reset": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ResetFile"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "version": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "pooler",
+        "direct",
+        "mode"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://nihal-pandey-2302.github.io/poolproof/schemas/v1/targets.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A target as written in the file, before `${VAR}` substitution and URL parsing.",
+  "properties": {
+    "target": {
+      "items": {
+        "$ref": "#/$defs/TargetFile"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "target"
+  ],
+  "title": "poolproof targets file",
+  "type": "object"
+}
