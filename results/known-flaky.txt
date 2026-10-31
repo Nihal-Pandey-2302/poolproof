@@ -13,7 +13,3 @@ supavisor-2.10.0-rc.1 set-local-reverts-after-commit
 supavisor-2.10.0-rc.1 cursor-survives-own-transactions
 supavisor-2.10.0-rc.1 temp-table-survives-own-transactions
 supavisor-2.10.0-rc.1 advisory-lock-survives-own-transactions
-
-# 2026-10-31: flips between pass and fail (error) on CI runners, about every other run.
-# Rate being measured; drop once the settle fix (#35) is on main and CI is clean ~10 runs.
-supavisor-2.10.0-rc.1 prepared-statement-survives-other-clients
