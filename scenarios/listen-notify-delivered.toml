@@ -1,14 +1,24 @@
 name = "listen-notify-delivered"
 description = "A client that ran LISTEN must receive NOTIFY messages sent by another client."
 refs = ["https://github.com/pgbouncer/pgbouncer/issues/655"]
+# Counts only when b really reached a's server connection.
+same_backend = [[2, 4]]
 
 [[step]]
 client = "a"
 simple = "LISTEN pp_chan"
 
 [[step]]
+client = "a"
+evidence = true
+
+[[step]]
 client = "b"
 simple = "NOTIFY pp_chan, 'hello'"
+
+[[step]]
+client = "b"
+evidence = true
 
 [[step]]
 client = "a"

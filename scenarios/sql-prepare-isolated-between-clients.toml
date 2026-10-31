@@ -1,13 +1,23 @@
 name = "sql-prepare-isolated-between-clients"
 description = "A statement made with SQL PREPARE must be usable by the client that made it, and only by it."
+# Counts only when b really reached a's server connection.
+same_backend = [[2, 4]]
 
 [[step]]
 client = "a"
 simple = "PREPARE pp_q AS SELECT 'from a'::text"
 
 [[step]]
+client = "a"
+evidence = true
+
+[[step]]
 client = "b"
 simple = "EXECUTE pp_q"
+
+[[step]]
+client = "b"
+evidence = true
 
 [[step]]
 client = "a"

@@ -1,13 +1,23 @@
 name = "protocol-statement-names-isolated"
 description = "Two clients can prepare protocol-level statements with the same name, and each runs its own."
+# Counts only when b really reached a's server connection.
+same_backend = [[2, 4]]
 
 [[step]]
 client = "a"
 send = ["parse s1 SELECT 'from a'::text", "sync"]
 
 [[step]]
+client = "a"
+evidence = true
+
+[[step]]
 client = "b"
 send = ["parse s1 SELECT 'from b'::text", "sync"]
+
+[[step]]
+client = "b"
+evidence = true
 
 [[step]]
 client = "b"

@@ -1,5 +1,7 @@
 name = "prepared-statement-survives-other-clients"
 description = "A protocol-level prepared statement must still work after other clients used the pool."
+# Counts only when b really reached a's server connection.
+same_backend = [[2, 4]]
 
 [[step]]
 client = "a"
@@ -7,8 +9,16 @@ prepare = "SELECT 'from a'::text"
 name = "q"
 
 [[step]]
+client = "a"
+evidence = true
+
+[[step]]
 client = "b"
 simple = "SELECT 1"
+
+[[step]]
+client = "b"
+evidence = true
 
 [[step]]
 client = "b"
