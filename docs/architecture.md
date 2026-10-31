@@ -34,7 +34,8 @@ src/limitations.rs       documented pooler limitations (limitations/*.toml): loa
                          marking a FAIL that matches an entry exactly as expected; cli.rs
                          applies them to every report it prints
 src/version.rs           version order (17.11, 0.1.62, 2.10.0-rc.1): limitation version
-                         ranges, and the newest Postgres for scan --pooler
+                         ranges, the newest Postgres for scan --pooler, and the newest
+                         driver results
 src/runner/
   mod.rs                 Outcome (what a client saw for one step), Timeouts (every limit
                          and its default in one struct)
@@ -225,8 +226,9 @@ These decide whether a result means anything, so read them before changing a ver
 - **Limitations** (`limitations.rs`, data in `limitations/`). Applied after a run, by
   `cli.rs`, to every report it prints or renders. A FAIL that matches an entry exactly
   (product, version range, config, Postgres, step, outcome) stays a FAIL, marked
-  expected with the doc's link and quote. Entries that match nothing are listed as
-  stale.
+  expected with the doc's link and quote. An entry that applies to a target but doesn't
+  match its result is listed as stale, unless another entry explains that result or
+  it is a SKIP or ERROR; entries that apply to no target are silent.
 
 ## How `scan` works
 

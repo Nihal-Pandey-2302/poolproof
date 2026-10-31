@@ -499,7 +499,8 @@ driver, and drivers prepare statements, cache them and name them in their own wa
 `poolproof drivers` runs five cases (repeated queries past the auto-prepare threshold,
 two connections whose statement names collide, the same query on two connections, a
 transaction, a session `SET`) with each driver, against plain Postgres and then through
-the pooler:
+the pooler. The driver images are built from a checkout of
+github.com/Nihal-Pandey-2302/poolproof (their Dockerfiles aren't part of the crate):
 
 ```sh
 docker buildx bake -f drivers/docker-bake.hcl --load   # build the driver images once

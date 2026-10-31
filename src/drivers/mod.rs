@@ -239,7 +239,8 @@ pub fn check_images(drivers: &[String]) -> Result<()> {
         .collect();
     if !missing.is_empty() {
         bail!(
-            "missing driver images: {}. Build them with `docker buildx bake -f drivers/docker-bake.hcl --load`",
+            "missing driver images: {}. Build them from a checkout of github.com/Nihal-Pandey-2302/poolproof: \
+             `docker buildx bake -f drivers/docker-bake.hcl --load`",
             missing.join(", ")
         );
     }
