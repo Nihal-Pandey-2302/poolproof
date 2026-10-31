@@ -196,7 +196,7 @@ ok    prod-like-pgbouncer direct       connected to postgres://user@postgres-hos
 ok    prod-like-pgbouncer direct tls   TLS (TLSv1.3, sslmode=verify-full)
 ok    prod-like-pgbouncer pooler       connected to postgres://user@pooler-host:6432/db
 warn  prod-like-pgbouncer pooler tls   plaintext: sslmode=prefer and the server declined TLS; set sslmode=require to insist
-ok    prod-like-pgbouncer same server  database db, port 5432, started 2026-10-31 07:59:09, 17.11 (addr 10.0.0.5 via pooler, 10.0.0.5 direct)
+ok    prod-like-pgbouncer same server  database db, port 5432, started 2026-10-31 07:59:09.418230, 17.11 (addr 10.0.0.5 via pooler, 10.0.0.5 direct)
 ok    prod-like-pgbouncer privileges   every scenario's requirements are met
 ok    prod-like-pgbouncer reset        ends every session of user app from 10.0.0.7 (not only the pooler's) on database db at postgres-host:5432 (auto); matching sessions now: 1
 ok    prod-like-pgbouncer mode         transaction or statement pooling (b got a's server connection)

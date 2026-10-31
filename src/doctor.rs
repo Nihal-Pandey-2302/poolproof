@@ -120,6 +120,8 @@ pub fn json(reports: &[TargetReport]) -> String {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerFacts {
     pub database: String,
+    /// pg_postmaster_start_time() in UTC, to the microsecond: two servers started in
+    /// the same second still differ.
     pub started: String,
     pub version: String,
     /// The server's listen port, the same through any path to it.
@@ -130,7 +132,7 @@ pub struct ServerFacts {
 }
 
 pub const FACTS_SQL: &str = "SELECT current_database(), \
-     to_char(pg_postmaster_start_time() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'), \
+     to_char(pg_postmaster_start_time() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS.US'), \
      split_part(current_setting('server_version'), ' ', 1), inet_server_port()::text, host(inet_server_addr())";
 
 pub async fn server_facts(client: &Client, within: Duration) -> anyhow::Result<ServerFacts> {
