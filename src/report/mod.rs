@@ -289,6 +289,7 @@ pub fn check_finding(report: &Report, target: &TargetInfo, scenarios: &[&str]) -
         scenarios: results,
         documented: if undocumented { vec![] } else { documented },
         fix: None,
+        other_postgres: false,
     })
 }
 

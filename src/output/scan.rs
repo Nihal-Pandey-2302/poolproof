@@ -19,7 +19,11 @@ pub fn pooler_summary(check: &scan::PoolerCheck) -> String {
         [] => String::new(),
         docs => format!(" (documented: {})", docs.join(", ")),
     };
-    format!("on {}: {}{documented}", check.target, parts.join(", "))
+    let from = match (check.other_postgres, &check.postgres) {
+        (true, Some(pg)) => format!(", driver results from Postgres {pg}"),
+        _ => String::new(),
+    };
+    format!("on {}{from}: {}{documented}", check.target, parts.join(", "))
 }
 
 /// A driver finding's documented fix and how it does on the pooler.
