@@ -33,21 +33,10 @@ pub fn scan(input: &Input) -> Report {
             continue;
         };
         let mut hits = Vec::new();
-        let starts_transaction = parsed.protobuf.stmts.first().is_some_and(|raw| {
-            matches!(
-                raw.stmt.as_ref().and_then(|s| s.node.as_ref()),
-                Some(NodeEnum::TransactionStmt(_))
-            )
-        });
-        if starts_transaction && parsed.protobuf.stmts.len() > 1 {
-            hits.push(Hit::new(
-                "multi-statement-transaction",
-                Severity::Warn,
-                "This one query string starts with BEGIN, COMMIT or ROLLBACK and has more statements \
-                 after it. Some poolers only handle the first statement and defer or drop the rest \
-                 (PgDog: https://github.com/pgdogdev/pgdog/issues/1849). Send them separately."
-                    .to_string(),
-            ));
+        if parsed.protobuf.stmts.len() > 1
+            && let Some(hit) = multi_statement_transaction(&parsed.protobuf.stmts)
+        {
+            hits.push(hit);
         }
         let statements: Vec<&NodeEnum> = parsed
             .protobuf
@@ -84,6 +73,54 @@ pub fn scan(input: &Input) -> Report {
         uninspected: uninspected_bodies,
         notes,
     }
+}
+
+/// A query string of several statements with BEGIN, COMMIT or ROLLBACK among them. The
+/// scenarios are the ones with the same shape: a transaction statement first, BEGIN
+/// first, or one after other statements.
+fn multi_statement_transaction(stmts: &[pg_query::protobuf::RawStmt]) -> Option<Hit> {
+    use pg_query::protobuf::TransactionStmtKind;
+    let (at, kind) = stmts
+        .iter()
+        .enumerate()
+        .find_map(|(i, raw)| match raw.stmt.as_ref()?.node.as_ref()? {
+            NodeEnum::TransactionStmt(t) => Some((i, t.kind())),
+            _ => None,
+        })?;
+    let begins = matches!(
+        kind,
+        TransactionStmtKind::TransStmtBegin | TransactionStmtKind::TransStmtStart
+    );
+    let (detail, scenarios) = match at {
+        0 => (
+            "This one query string starts with BEGIN, COMMIT or ROLLBACK and has more statements \
+             after it. Some poolers only handle the first statement and defer or drop the rest \
+             (PgDog: https://github.com/pgdogdev/pgdog/issues/1849). Send them separately.",
+            if begins {
+                vec![
+                    "multi-statement-begin",
+                    "multi-statement-begin-variants",
+                    "multi-statement-begin-error",
+                    "multi-statement-begin-left-open",
+                ]
+            } else {
+                vec!["multi-statement-commit-first"]
+            },
+        ),
+        _ => (
+            "This one query string runs other statements, then BEGIN, COMMIT or ROLLBACK. Some \
+             poolers decide about the transaction from the first statement, so its statements or \
+             an error that should abort it don't behave as on Postgres (PgDog: \
+             https://github.com/pgdogdev/pgdog/issues/1849). Send them separately.",
+            vec![
+                "multi-statement-begin-not-first",
+                "multi-statement-error-aborts-transaction",
+            ],
+        ),
+    };
+    let mut hit = Hit::new("multi-statement-transaction", Severity::Warn, detail.to_string());
+    hit.scenarios = scenarios;
+    Some(hit)
 }
 
 /// A rule match, before it becomes a [`Finding`] for a query.
@@ -171,8 +208,12 @@ fn check(statements: &[&NodeEnum], scoped: &[String]) -> Vec<Hit> {
                         "role" | "session_authorization" => Some(vec![
                             "set-role-isolated-between-clients",
                             "set-role-reset-after-pinned-disconnect",
+                            "set-survives-server-change",
                         ]),
-                        "search_path" => Some(vec!["search-path-isolated-between-clients"]),
+                        "search_path" => Some(vec![
+                            "search-path-isolated-between-clients",
+                            "set-survives-server-change",
+                        ]),
                         _ => None,
                     };
                     if let Some(scenarios) = refined {
@@ -828,6 +869,50 @@ mod tests {
             vec!["multi-statement-transaction"]
         );
         assert_eq!(rules("ROLLBACK; SELECT 1"), vec!["multi-statement-transaction"]);
+        assert_eq!(
+            rules("SELECT 1; BEGIN; INSERT INTO t VALUES (1); COMMIT"),
+            vec!["multi-statement-transaction"]
+        );
+        assert!(rules("SELECT 1; SELECT 2").is_empty());
+        assert!(rules("BEGIN").is_empty());
+    }
+
+    #[test]
+    fn multi_statement_scenarios_follow_the_shape() {
+        let scenarios = |sql: &str| scan(&[query(sql, 1)]).findings[0].scenarios.clone();
+        assert_eq!(
+            scenarios("START TRANSACTION; INSERT INTO t VALUES (1); COMMIT")[0],
+            "multi-statement-begin"
+        );
+        assert_eq!(
+            scenarios("COMMIT; INSERT INTO t VALUES (1)"),
+            ["multi-statement-commit-first"]
+        );
+        assert_eq!(
+            scenarios("SELECT 1; BEGIN; INSERT INTO t VALUES (1)"),
+            [
+                "multi-statement-begin-not-first",
+                "multi-statement-error-aborts-transaction"
+            ]
+        );
+        // Every scenario a finding narrows its list to exists (the rule lists are checked
+        // in findings_point_to_scenarios).
+        let all: Vec<String> = crate::scenario::bundled()
+            .unwrap()
+            .into_iter()
+            .map(|s| s.name)
+            .collect();
+        for sql in [
+            "BEGIN; SELECT 1",
+            "COMMIT; SELECT 1",
+            "SELECT 1; COMMIT",
+            "SET ROLE x",
+            "SET search_path TO x",
+        ] {
+            for s in &scan(&[query(sql, 1)]).findings[0].scenarios {
+                assert!(all.iter().any(|a| a == s), "{sql}: {s}");
+            }
+        }
     }
 
     #[test]
@@ -913,7 +998,8 @@ mod tests {
             findings[0].scenarios,
             vec![
                 "set-role-isolated-between-clients",
-                "set-role-reset-after-pinned-disconnect"
+                "set-role-reset-after-pinned-disconnect",
+                "set-survives-server-change"
             ]
         );
         assert_eq!(rules("RESET SESSION AUTHORIZATION"), vec!["session-set"]);
@@ -1217,17 +1303,22 @@ mod tests {
         let scenarios = |sql: &str| scan(&[query(sql, 1)]).findings[0].scenarios.clone();
         assert_eq!(
             scenarios("SET work_mem = '1MB'"),
-            vec!["set-isolated-between-clients", "set-does-not-leak-after-disconnect"]
+            vec![
+                "set-isolated-between-clients",
+                "set-does-not-leak-after-disconnect",
+                "set-survives-server-change"
+            ]
         );
         assert_eq!(
             scenarios("SET search_path TO app"),
-            vec!["search-path-isolated-between-clients"]
+            vec!["search-path-isolated-between-clients", "set-survives-server-change"]
         );
         assert_eq!(
             scenarios("SET ROLE r"),
             vec![
                 "set-role-isolated-between-clients",
-                "set-role-reset-after-pinned-disconnect"
+                "set-role-reset-after-pinned-disconnect",
+                "set-survives-server-change"
             ]
         );
         assert_eq!(scenarios("LISTEN a"), vec!["listen-notify-delivered"]);
