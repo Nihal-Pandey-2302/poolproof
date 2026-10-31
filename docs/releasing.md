@@ -61,5 +61,63 @@ it is out.
    cargo binstall poolproof
    ```
 
+   And the action's download path, which CI can't test before a release exists: in any
+   repository, a workflow with `uses: Nihal-Pandey-2302/poolproof@vX.Y.Z` and
+   `command: scan` must log the attestation check and poolproof's version. After the
+   first release, add a scheduled job to `ci.yml` that runs the action that way against
+   the latest release, so a broken download or verification shows up on its own.
+
 Running `release.yml` by hand (Actions > release > Run workflow) only builds, which is
 the way to check the build matrix without releasing.
+
+## Later: a Homebrew tap (owner)
+
+A tap is a separate public repository named `homebrew-poolproof`; then
+`brew install Nihal-Pandey-2302/poolproof/poolproof` works. It needs one file,
+`Formula/poolproof.rb`, updated for every release with the new version and the archives'
+SHA-256 sums from SHA256SUMS:
+
+```ruby
+class Poolproof < Formula
+  desc "Find out what breaks when you put a connection pooler in front of Postgres"
+  homepage "https://github.com/Nihal-Pandey-2302/poolproof"
+  version "X.Y.Z"
+  license any_of: ["MIT", "Apache-2.0"]
+
+  on_macos do
+    on_arm do
+      url "https://github.com/Nihal-Pandey-2302/poolproof/releases/download/vX.Y.Z/poolproof-aarch64-apple-darwin.tar.gz"
+      sha256 "..."
+    end
+    on_intel do
+      url "https://github.com/Nihal-Pandey-2302/poolproof/releases/download/vX.Y.Z/poolproof-x86_64-apple-darwin.tar.gz"
+      sha256 "..."
+    end
+  end
+  on_linux do
+    on_arm do
+      url "https://github.com/Nihal-Pandey-2302/poolproof/releases/download/vX.Y.Z/poolproof-aarch64-unknown-linux-gnu.tar.gz"
+      sha256 "..."
+    end
+    on_intel do
+      url "https://github.com/Nihal-Pandey-2302/poolproof/releases/download/vX.Y.Z/poolproof-x86_64-unknown-linux-gnu.tar.gz"
+      sha256 "..."
+    end
+  end
+
+  def install
+    bin.install "poolproof"
+    man1.install Dir["man/*.1"]
+    bash_completion.install "completions/poolproof.bash" => "poolproof"
+    zsh_completion.install "completions/_poolproof"
+    fish_completion.install "completions/poolproof.fish"
+  end
+
+  test do
+    assert_match "multi-statement-begin", shell_output("#{bin}/poolproof list")
+  end
+end
+```
+
+Homebrew unpacks the archive's single top-level directory, so the paths in `install` are
+relative to `poolproof-<target>/`.

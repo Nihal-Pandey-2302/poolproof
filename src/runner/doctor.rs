@@ -16,9 +16,10 @@ use super::check::{DIRECT_UNREACHABLE, POOLER_UNREACHABLE};
 use super::pg::{Privileges, ResetRefusal, connect, privileges, resolve_reset, tcp_connect};
 use super::tls::SslMode;
 use crate::doctor::{
-    Check, Connected, Status, TargetReport, first_row, mode_check, probe_mode, same_server, server_facts,
+    Check, Connected, Observed, Status, TargetReport, first_row, mode_check, probe, probe_mode, same_server,
+    server_facts,
 };
-use crate::scenario::Scenario;
+use crate::scenario::{PoolMode, Scenario};
 use crate::targets::{Endpoint, Reset, Target};
 
 /// Counts the other sessions on the database, as `reset = "all"` sees them; more
@@ -71,14 +72,50 @@ pub async fn inspect(target: &Target, scenarios: &[Scenario], yes: bool, t: &Tim
             let (client, driver, _) = connect(&target.pooler, t).await?;
             Ok::<Connected, anyhow::Error>((client, driver))
         };
-        checks.push(match probe_mode(connect, t.housekeeping).await {
+        let within = t.housekeeping.min(super::probe::BUSY_WAIT);
+        checks.push(match probe_mode(connect, within, t.housekeeping).await {
             Ok(observed) => mode_check(observed, target.mode),
             Err(e) => Check::new("mode", Status::Warn, format!("probe failed: {e:#}")).public(failed("probe", &e)),
         });
+        // What `run` decides one_server_connection and several_server_connections by.
+        if target.mode != PoolMode::Statement {
+            checks.push(match probe(connect, within, t.housekeeping, true).await {
+                Ok((observed, _)) => server_connections_check(&observed),
+                Err(e) => Check::new("server connections", Status::Warn, format!("probe failed: {e:#}"))
+                    .public(failed("probe", &e)),
+            });
+        }
     }
     TargetReport {
         name: target.name.clone(),
         checks,
+    }
+}
+
+/// The busy probe: what a second client got inside the first one's open transaction.
+fn server_connections_check(observed: &Observed) -> Check {
+    match observed {
+        Observed::Shared => Check::new(
+            "server connections",
+            Status::Fail,
+            "the pooler gave another client a server connection inside an open transaction",
+        ),
+        Observed::Separate => Check::new(
+            "server connections",
+            Status::Ok,
+            "several (b got its own while a was in a transaction)",
+        ),
+        Observed::Waited => Check::new(
+            "server connections",
+            Status::Ok,
+            "one (b waited while a was in a transaction)",
+        ),
+        Observed::Refused(refusal) => Check::new(
+            "server connections",
+            Status::Ok,
+            format!("one (the pooler refused b while a was in a transaction: {refusal})"),
+        ),
+        Observed::Unclear(why) => Check::new("server connections", Status::Warn, format!("not determined ({why})")),
     }
 }
 
@@ -646,11 +683,14 @@ mod tests {
                 ("privileges", Status::Ok),
                 ("reset", Status::Warn),
                 ("mode", Status::Ok),
+                ("server connections", Status::Ok),
             ],
             "{:#?}",
             report.checks
         );
-        let mode = report.checks.last().unwrap();
+        let mode = &report.checks[report.checks.len() - 2];
         assert!(mode.detail.starts_with("not determined"), "{mode:?}");
+        let servers = report.checks.last().unwrap();
+        assert!(servers.detail.starts_with("several"), "{servers:?}");
     }
 }

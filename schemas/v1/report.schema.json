@@ -337,6 +337,19 @@
             "messages"
           ],
           "type": "object"
+        },
+        {
+          "description": "The step didn't run: a precondition on Postgres, or a step after a precondition\nthat wasn't met through the pooler.",
+          "properties": {
+            "status": {
+              "const": "not_run",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -348,6 +361,54 @@
         "statement"
       ],
       "type": "string"
+    },
+    "Probe": {
+      "description": "One probe's result, as reports record it.",
+      "properties": {
+        "detail": {
+          "description": "What the pooler said when it refused the second client, or why the probe failed.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "result": {
+          "$ref": "#/$defs/ProbeResult"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "ProbeResult": {
+      "oneOf": [
+        {
+          "const": "shared",
+          "description": "The second client got the first one's backend.",
+          "type": "string"
+        },
+        {
+          "const": "separate",
+          "description": "The second client got a backend of its own.",
+          "type": "string"
+        },
+        {
+          "const": "waited",
+          "description": "The second client waited for the first one's server connection.",
+          "type": "string"
+        },
+        {
+          "const": "refused",
+          "description": "The pooler refused the second client until the first one was gone.",
+          "type": "string"
+        },
+        {
+          "const": "unknown",
+          "description": "Not probed: statement mode can't hold a transaction, or the probe failed.",
+          "type": "string"
+        }
+      ]
     },
     "ResultRow": {
       "oneOf": [
@@ -430,6 +491,15 @@
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
+        },
+        "precondition_unmet": {
+          "description": "For a scenario with a precondition: runs where it wasn't met. They aren't in\n`runs` or `failures`, so runs + unmet is how many ran.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "runs": {
           "default": 1,
@@ -605,11 +675,33 @@
     },
     "TargetInfo": {
       "properties": {
+        "busy_probe": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Probe"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The same inside the first client's open transaction: whether the pooler has\none server connection or several."
+        },
         "config": {
           "type": [
             "string",
             "null"
           ]
+        },
+        "idle_probe": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Probe"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What a second client got while the first was connected and idle. Missing when\nthe target wasn't probed, and in older reports."
         },
         "mode": {
           "$ref": "#/$defs/PoolMode"

@@ -38,6 +38,23 @@ pub enum Requirement {
     Superuser,
     /// Cancel or terminate other users' sessions.
     PgSignalBackend,
+    /// The pooler gives a second client no server connection while the first holds one
+    /// in a transaction: a pool of one. Judged by a probe on the pooler, not a privilege.
+    OneServerConnection,
+    /// The pooler gives a second client its own server connection while the first holds
+    /// one in a transaction.
+    SeveralServerConnections,
+}
+
+impl Requirement {
+    /// Whether the pooler's server connections decide it, rather than a privilege of the
+    /// `direct` user.
+    pub fn is_server(self) -> bool {
+        matches!(
+            self,
+            Requirement::OneServerConnection | Requirement::SeveralServerConnections
+        )
+    }
 }
 
 impl std::fmt::Display for Requirement {
@@ -46,6 +63,8 @@ impl std::fmt::Display for Requirement {
             Requirement::Createrole => "createrole",
             Requirement::Superuser => "superuser",
             Requirement::PgSignalBackend => "pg_signal_backend",
+            Requirement::OneServerConnection => "one_server_connection",
+            Requirement::SeveralServerConnections => "several_server_connections",
         })
     }
 }
@@ -141,6 +160,12 @@ pub struct Step {
     pub compare_parameter_status: bool,
     /// Sleep this long before the step, e.g. so a cancel lands while a query runs.
     pub delay_ms: Option<u64>,
+    /// With `simple` on a pooled client: a query returning one boolean that says whether
+    /// this run tests what the scenario means to, e.g. that this client got a given
+    /// backend. Not run on Postgres and never compared. Through the pooler, false stops
+    /// the run as a SKIP; anything but true or false is a FAIL.
+    #[serde(default)]
+    pub precondition: bool,
     #[serde(default)]
     pub compare: Compare,
     /// How a driver step describes itself. Never from a file: driver steps have no
@@ -194,6 +219,7 @@ impl Step {
             send: None,
             compare_parameter_status: false,
             delay_ms: None,
+            precondition: false,
             compare,
             label: Some(label),
         }
@@ -287,11 +313,46 @@ impl Step {
             Ok(Action::Notifications) => "notifications".to_string(),
             Err(e) => e.to_string(),
         };
-        format!("[{}{via}] {what}", self.client)
+        let precondition = if self.precondition { "precondition " } else { "" };
+        format!("[{}{via}] {precondition}{what}", self.client)
+    }
+
+    /// How the step is compared: a precondition never is.
+    pub fn compare_mode(&self) -> Compare {
+        if self.precondition {
+            Compare::Ignore
+        } else {
+            self.compare
+        }
     }
 }
 
 impl Scenario {
+    /// How each step is compared, in order.
+    pub fn compare_modes(&self) -> Vec<Compare> {
+        self.steps.iter().map(Step::compare_mode).collect()
+    }
+
+    /// The most server connections the pooler's clients hold at once, if each pooled
+    /// client holds one from its first step until it disconnects or abandons a query (or
+    /// the scenario ends). Direct clients don't count, and a cancel opens nothing: a
+    /// CancelRequest takes no server connection.
+    pub fn max_concurrent(&self) -> usize {
+        let mut open: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        let mut most = 0;
+        for step in self.steps.iter().filter(|s| !s.direct) {
+            let closes = step.disconnect || step.abandon_after_ms.is_some();
+            if !step.cancel && !(step.disconnect && !open.contains(step.client.as_str())) {
+                open.insert(&step.client);
+            }
+            most = most.max(open.len());
+            if closes {
+                open.remove(step.client.as_str());
+            }
+        }
+        most
+    }
+
     /// Every client connects either straight to Postgres or through the pooler, never
     /// both, so all of a client's steps must agree on `direct`.
     pub fn check_clients(&self) -> Result<()> {
@@ -325,6 +386,18 @@ fn parse(origin: &str, text: &str) -> Result<Scenario> {
     }
     if scenario.timeout_ms == Some(0) {
         bail!("{origin}: timeout_ms must be at least 1");
+    }
+    for (i, step) in scenario.steps.iter().enumerate().filter(|(_, s)| s.precondition) {
+        let simple = matches!(
+            step.action().with_context(|| format!("in {origin}"))?,
+            Action::Simple(_)
+        );
+        if step.direct || !simple || i == 0 {
+            bail!(
+                "{origin}: the precondition at step {} must be a plain `simple` step of a pooled client, after the first step",
+                i + 1
+            );
+        }
     }
     let mut prepared = std::collections::HashSet::new();
     for step in &scenario.steps {
@@ -416,6 +489,101 @@ mod tests {
                 assert!(declared, "{name} manages roles but doesn't require createrole");
             }
         }
+    }
+
+    #[test]
+    fn a_precondition_is_a_later_simple_step_of_a_pooled_client() {
+        let steps = |pre: &str| {
+            format!(
+                "name = 'p'\ndescription = ''\n[[step]]\nclient = 'a'\nsimple = 'BEGIN'\n\
+                 [[step]]\nclient = 'c'\n{pre}\n"
+            )
+        };
+        assert!(parse("ok", &steps("precondition = true\nsimple = 'SELECT true'")).is_ok());
+        for bad in [
+            "precondition = true\ndirect = true\nsimple = 'SELECT true'",
+            "precondition = true\nsimple = 'SELECT true'\nbackground = true",
+            "precondition = true\nsimple = 'SELECT true'\nabandon_after_ms = 5",
+            "precondition = true\nprepare = 'SELECT true'\nname = 's'",
+        ] {
+            let err = format!("{:#}", parse("bad", &steps(bad)).err().unwrap());
+            assert!(err.contains("must be a plain `simple` step"), "{bad}: {err}");
+        }
+        let first =
+            "name = 'p'\ndescription = ''\n[[step]]\nclient = 'a'\nprecondition = true\nsimple = 'SELECT true'\n";
+        assert!(parse("first", first).is_err());
+        // Never compared, and named in the step's description.
+        let s = parse("ok", &steps("precondition = true\nsimple = 'SELECT true'")).unwrap();
+        assert_eq!(s.compare_modes(), [Compare::Full, Compare::Ignore]);
+        assert_eq!(s.steps[1].describe(), "[c] precondition simple: SELECT true");
+    }
+
+    /// Validated on session PgBouncer 1.26.1 with a pool of 1: exactly these hang there
+    /// (two clients hold a server connection at once), and every other scenario passes.
+    #[test]
+    fn scenarios_needing_two_session_connections() {
+        let mut two: Vec<String> = bundled()
+            .unwrap()
+            .into_iter()
+            .filter(|s| s.max_concurrent() > 1)
+            .map(|s| s.name)
+            .collect();
+        two.sort();
+        assert_eq!(
+            two,
+            [
+                "cancel-from-idle-client-is-harmless",
+                "cancel-under-saturated-pool",
+                "cursor-isolated-between-clients",
+                "deallocate-all-isolated",
+                "empty-search-path-from-set-config",
+                "listen-notify-delivered",
+                "load-isolated-between-clients",
+                "prepared-statement-survives-other-clients",
+                "protocol-statement-names-isolated",
+                "protocol-statement-reparsed-after-close",
+                "protocol-unnamed-statement-survives-other-clients",
+                "search-path-isolated-between-clients",
+                "set-isolated-between-clients",
+                "set-role-isolated-between-clients",
+                "sql-prepare-isolated-between-clients",
+                "temp-table-isolated-between-clients",
+            ]
+        );
+    }
+
+    #[test]
+    fn connections_open_at_first_step_and_close_at_disconnect_or_abandon() {
+        let s =
+            |steps: &str| -> Scenario { toml::from_str(&format!("name = 'c'\ndescription = ''\n{steps}")).unwrap() };
+        let step = |client: &str, what: &str| format!("[[step]]\nclient = '{client}'\n{what}\n");
+        let q = "simple = 'SELECT 1'";
+        // A direct observer and a cancel take no server connection.
+        let observed = s(&[
+            step("a", q),
+            step("pg", &format!("direct = true\n{q}")),
+            step("a", "cancel = true"),
+        ]
+        .concat());
+        assert_eq!(observed.max_concurrent(), 1);
+        // Reconnecting after a disconnect or an abandoned query opens a new interval.
+        let handoff = s(&[
+            step("a", q),
+            step("a", "disconnect = true"),
+            step("b", q),
+            step("b", &format!("{q}\nabandon_after_ms = 10")),
+            step("a", q),
+        ]
+        .concat());
+        assert_eq!(handoff.max_concurrent(), 1);
+        // A background query keeps its connection.
+        let overlap = s(&[
+            step("a", &format!("{q}\nbackground = true")),
+            step("b", q),
+            step("a", "wait = true"),
+        ]
+        .concat());
+        assert_eq!(overlap.max_concurrent(), 2);
     }
 
     #[test]

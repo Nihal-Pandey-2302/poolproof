@@ -5,7 +5,7 @@ use tokio::time::{Instant, timeout};
 
 use super::compare::{FailKind, Mismatch, Verdict, baseline_failure, same_failure};
 use super::pg::{connect, connect_with, wait_ready};
-use super::steps::run_steps;
+use super::steps::{precondition_met, run_steps_on};
 use super::tls::TlsSetup;
 use super::{Outcome, Timeouts};
 use crate::drivers::Broken;
@@ -18,7 +18,7 @@ pub const POOLER_UNREACHABLE: &str = "target unreachable: pooler:";
 /// Same for the target's direct (plain Postgres) URL.
 pub const DIRECT_UNREACHABLE: &str = "target unreachable: direct:";
 
-async fn run_direct(direct: &Endpoint, statements: &[Statement], t: &Timeouts) -> Result<()> {
+pub(super) async fn run_direct(direct: &Endpoint, statements: &[Statement], t: &Timeouts) -> Result<()> {
     if statements.is_empty() {
         return Ok(());
     }
@@ -111,6 +111,8 @@ pub struct Checked {
     /// With `repeat`: a failing run failed differently from the kept one (other steps,
     /// other outcomes, or no comparison at all), so the kept steps don't speak for it.
     pub varied: bool,
+    /// Runs whose precondition wasn't met. They aren't in `runs` or `failures`.
+    pub unmet: u32,
 }
 
 impl Checked {
@@ -122,6 +124,7 @@ impl Checked {
             runs: 0,
             failures: 0,
             varied: false,
+            unmet: 0,
         }
     }
 }
@@ -197,7 +200,7 @@ async fn run_once(
                 broken = b;
                 outcomes
             }),
-            None => run_steps(scenario, pooled, direct, t).await,
+            None => run_steps_on(scenario, pooled, direct, side == Side::Baseline, t).await,
         }
         .map_err(|e| format!("steps ({side}): {e:#}")),
         Err(e) => Err(format!("setup ({side}): {e:#}")),
@@ -230,16 +233,24 @@ pub async fn check(
     if let Some(reason) = baseline_failure(&expected) {
         return Checked::error(reason);
     }
-    let modes: Vec<Compare> = scenario.steps.iter().map(|s| s.compare).collect();
+    let modes = scenario.compare_modes();
     let mut kept: Option<Checked> = None;
     let mut failures = 0;
     let mut varied = false;
+    // Runs whose precondition wasn't met don't count; the first is kept in case no run met it.
+    let mut unmet = 0;
+    let mut first_unmet: Option<Checked> = None;
     for _ in 0..scenario.repeat {
         let run = run_once(scenario, pooled, direct, reset, Side::Target, t).await;
         let checked = match run.outcomes {
             Ok(actual) => after_teardown(compare(scenario, &expected, actual, run.broken), run.teardown),
             Err(reason) => Checked::error(reason),
         };
+        if checked.unmet > 0 {
+            unmet += 1;
+            first_unmet.get_or_insert(checked);
+            continue;
+        }
         let failed = !matches!(checked.verdict, Verdict::Pass);
         failures += u32::from(failed);
         if failed && let Some(first) = kept.as_ref().filter(|k| !matches!(k.verdict, Verdict::Pass)) {
@@ -255,10 +266,20 @@ pub async fn check(
         }
     }
     // Loading rejects repeat = 0, so the loop ran at least once.
-    let mut checked = kept.unwrap_or_else(|| Checked::error("repeat is 0".into()));
-    checked.runs = scenario.repeat;
+    let mut checked = match (kept, first_unmet) {
+        (Some(kept), _) => kept,
+        (None, Some(mut skipped)) => {
+            if let (Verdict::Skip { reason }, true) = (&mut skipped.verdict, scenario.repeat > 1) {
+                *reason = format!("{reason} (in all {} runs)", scenario.repeat);
+            }
+            skipped
+        }
+        (None, None) => Checked::error("repeat is 0".into()),
+    };
+    checked.runs = scenario.repeat - unmet;
     checked.failures = failures;
     checked.varied = varied;
+    checked.unmet = unmet;
     checked
 }
 
@@ -277,7 +298,7 @@ fn baseline_diff(scenario: &Scenario, first: &[Outcome], second: &[Outcome]) -> 
         .steps
         .iter()
         .enumerate()
-        .find(|(i, step)| !first[*i].matches(&second[*i], step.compare))?;
+        .find(|(i, step)| !first[*i].matches(&second[*i], step.compare_mode()))?;
     Some(format!(
         "nondeterministic scenario: step {} gave {} then {} on Postgres",
         i + 1,
@@ -313,13 +334,45 @@ pub async fn deterministic(
 /// kind and says it too; steps that would pass become a FAIL (error) at the last step,
 /// with the program's state as the pooler outcome, while `steps` keeps what it reported.
 fn compare(scenario: &Scenario, expected: &[Outcome], actual: Vec<Outcome>, broken: Option<Broken>) -> Checked {
-    let mismatch = scenario.steps.iter().enumerate().find_map(|(i, step)| {
-        (!expected[i].matches(&actual[i], step.compare)).then(|| Mismatch {
-            step: i + 1,
-            action: step.describe(),
-            kind: FailKind::of(&expected[i], &actual[i]),
-            expected: expected[i].clone(),
-            actual: actual[i].clone(),
+    // The first precondition that wasn't met: the steps after it never ran.
+    let unmet = scenario
+        .steps
+        .iter()
+        .zip(&actual)
+        .position(|(step, outcome)| step.precondition && !precondition_met(outcome));
+    let mismatch = scenario
+        .steps
+        .iter()
+        .enumerate()
+        .take(unmet.unwrap_or(usize::MAX))
+        .find_map(|(i, step)| {
+            (!expected[i].matches(&actual[i], step.compare_mode())).then(|| Mismatch {
+                step: i + 1,
+                action: step.describe(),
+                kind: FailKind::of(&expected[i], &actual[i]),
+                expected: expected[i].clone(),
+                actual: actual[i].clone(),
+            })
+        });
+    // False means this run can't test it; anything else (an error, a hang, no row) is
+    // the pooler failing a plain query.
+    let met = Outcome::Ok {
+        rows: vec![vec![Some("t".into())]],
+        tags: vec![1],
+    };
+    let not_met = Outcome::Ok {
+        rows: vec![vec![Some("f".into())]],
+        tags: vec![1],
+    };
+    let mismatch = mismatch.or_else(|| {
+        let p = unmet?;
+        let actual = &actual[p];
+        (!not_met.matches(actual, Compare::Full)).then(|| Mismatch {
+            step: p + 1,
+            action: scenario.steps[p].describe(),
+            kind: FailKind::of(&met, actual),
+            expected: met.clone(),
+            actual: actual.clone(),
         })
     });
     // A direct step that couldn't reach Postgres says nothing about the pooler, unless
@@ -340,29 +393,43 @@ fn compare(scenario: &Scenario, expected: &[Outcome], actual: Vec<Outcome>, brok
             runs: 1,
             failures: 0,
             varied: false,
+            unmet: 0,
         };
     }
-    let verdict = match (mismatch, broken) {
-        (Some(mut mismatch), Some(broken)) => {
+    // Driver scenarios (the only ones with `broken`) have no preconditions.
+    let (verdict, unmet) = match (mismatch, unmet, broken) {
+        (Some(mut mismatch), _, Some(broken)) => {
             mismatch.action = format!("{}; the program then {}", mismatch.action, broken.what);
-            Verdict::Fail { mismatch }
+            (Verdict::Fail { mismatch }, 0)
         }
-        (Some(mismatch), None) => Verdict::Fail { mismatch },
-        (None, Some(broken)) => match expected.len().checked_sub(1) {
-            Some(last) => Verdict::Fail {
-                mismatch: Mismatch {
-                    step: last + 1,
-                    action: format!("program: {}", broken.what),
-                    kind: FailKind::Error,
-                    expected: expected[last].clone(),
-                    actual: crate::drivers::driver_error(broken.code),
+        (Some(mismatch), _, None) => (Verdict::Fail { mismatch }, 0),
+        (None, Some(p), _) => (
+            Verdict::Skip {
+                reason: format!("precondition at step {} not met: {}", p + 1, actual[p]),
+            },
+            1,
+        ),
+        (None, None, Some(broken)) => match expected.len().checked_sub(1) {
+            Some(last) => (
+                Verdict::Fail {
+                    mismatch: Mismatch {
+                        step: last + 1,
+                        action: format!("program: {}", broken.what),
+                        kind: FailKind::Error,
+                        expected: expected[last].clone(),
+                        actual: crate::drivers::driver_error(broken.code),
+                    },
                 },
-            },
-            None => Verdict::Error {
-                reason: format!("the driver program {}", broken.what),
-            },
+                0,
+            ),
+            None => (
+                Verdict::Error {
+                    reason: format!("the driver program {}", broken.what),
+                },
+                0,
+            ),
         },
-        (None, None) => Verdict::Pass,
+        (None, None, None) => (Verdict::Pass, 0),
     };
     Checked {
         verdict,
@@ -370,6 +437,7 @@ fn compare(scenario: &Scenario, expected: &[Outcome], actual: Vec<Outcome>, brok
         runs: 1,
         failures: 0,
         varied: false,
+        unmet,
     }
 }
 
@@ -428,6 +496,42 @@ mod tests {
             "took {:?}",
             started.elapsed()
         );
+    }
+
+    #[test]
+    fn a_precondition_decides_whether_the_run_counts() {
+        let s = scenario(
+            "name = 't'\ndescription = 't'\n[[step]]\nclient = 'a'\nsimple = 'SELECT 1'\n\
+             [[step]]\nclient = 'a'\nprecondition = true\nsimple = 'SELECT true'\n\
+             [[step]]\nclient = 'a'\nsimple = 'SELECT 2'\n",
+        );
+        let one = |v: &str| Outcome::Ok {
+            rows: vec![vec![Some(v.into())]],
+            tags: vec![1],
+        };
+        let expected = [one("1"), Outcome::NotRun, one("2")];
+        let run = |pre: Outcome, last: Outcome| compare(&s, &expected, vec![one("1"), pre, last], None);
+        // True: the steps after it are compared as usual.
+        assert!(matches!(run(one("t"), one("2")).verdict, Verdict::Pass));
+        assert!(matches!(run(one("t"), one("3")).verdict, Verdict::Fail { .. }));
+        // False: this run can't test it, whatever ran after.
+        let skipped = run(one("f"), Outcome::NotRun);
+        assert_eq!(skipped.unmet, 1);
+        match skipped.verdict {
+            Verdict::Skip { reason } => assert_eq!(reason, "precondition at step 2 not met: ok rows=[(f)] tags=[1]"),
+            _ => panic!("not a skip"),
+        }
+        // Anything else is the pooler failing a plain query.
+        let kind = |pre: Outcome| match run(pre, Outcome::NotRun).verdict {
+            Verdict::Fail { mismatch } => (mismatch.step, mismatch.kind),
+            _ => panic!("not a fail"),
+        };
+        assert_eq!(kind(Outcome::error("08P01", "x")), (2, FailKind::Error));
+        assert_eq!(kind(Outcome::error("TIMEOUT", "x")), (2, FailKind::Hang));
+        assert_eq!(kind(Outcome::empty()), (2, FailKind::Silent));
+        // A step before it that differs is the FAIL, not the precondition.
+        let earlier = compare(&s, &expected, vec![one("9"), one("f"), Outcome::NotRun], None);
+        assert!(matches!(earlier.verdict, Verdict::Fail { mismatch } if mismatch.step == 1));
     }
 
     #[test]
@@ -733,6 +837,45 @@ mod tests {
             broken: stopped(),
         };
         assert!(baseline.all().unwrap_err().contains("stopped after 2 of 2 steps"));
+    }
+
+    #[tokio::test]
+    #[ignore = "needs POOLPROOF_TEST_PG"]
+    async fn preconditions_run_only_through_the_pooler() {
+        let direct = Endpoint::parse(&test_pg()).unwrap();
+        // The same server under another name, standing in for a pooler.
+        let sep = if test_pg().contains('?') { '&' } else { '?' };
+        let pooled = Endpoint::parse(&format!("{}{sep}application_name=pp_pooled", test_pg())).unwrap();
+        let with = |pre: &str, repeat: u32| {
+            scenario(&format!(
+                "name = 't'\ndescription = 't'\nrepeat = {repeat}\n[[step]]\nclient = 'a'\nsimple = 'SELECT 1'\n\
+                 [[step]]\nclient = 'a'\nprecondition = true\nsimple = \"{pre}\"\n\
+                 [[step]]\nclient = 'a'\nsimple = 'SELECT 2'\n"
+            ))
+        };
+        let t = Timeouts::default();
+        let met = check(&with("SELECT true", 3), &pooled, &direct, &[], &t).await;
+        assert!(matches!(met.verdict, Verdict::Pass));
+        assert_eq!((met.runs, met.unmet), (3, 0));
+        // Postgres never runs it: there this would fail with 22012.
+        let error = check(&with("SELECT 1/0 = 1", 1), &pooled, &direct, &[], &t).await;
+        assert_eq!(error.steps[1].0, Outcome::NotRun);
+        match error.verdict {
+            Verdict::Fail { mismatch } => assert_eq!((mismatch.step, mismatch.kind), (2, FailKind::Error)),
+            _ => panic!("not a fail"),
+        }
+        assert_eq!(error.steps[2].1, Outcome::NotRun);
+        let never = check(&with("SELECT false", 3), &pooled, &direct, &[], &t).await;
+        assert_eq!((never.runs, never.failures, never.unmet), (0, 0, 3));
+        match never.verdict {
+            Verdict::Skip { reason } => assert!(reason.ends_with("(in all 3 runs)"), "{reason}"),
+            _ => panic!("not a skip"),
+        }
+        assert_eq!(never.steps[2].1, Outcome::NotRun);
+        // Postgres standing in for its own pooler, at the very same URL: the pooler
+        // side still runs the precondition.
+        let passthrough = check(&with("SELECT false", 1), &direct, &direct, &[], &t).await;
+        assert!(matches!(passthrough.verdict, Verdict::Skip { .. }));
     }
 
     #[tokio::test]

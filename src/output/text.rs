@@ -79,6 +79,15 @@ pub fn print_verdict(
 /// One scenario's result on one target, as `run` prints it.
 pub fn print_result(s: &scenario::Scenario, row: &ResultRow, style: Style) {
     print_verdict(&row.target, s, &row.verdict, row.expected.as_ref(), style.color);
+    if let Some(unmet) = row.precondition_unmet.filter(|u| *u > 0 || row.runs > 1) {
+        let ran = row.runs + unmet;
+        let rests = if row.runs == 1 && ran > 1 && matches!(row.verdict, Verdict::Pass) {
+            "; the PASS rests on one run"
+        } else {
+            ""
+        };
+        println!("      precondition met in {} of {ran} runs{rests}", row.runs);
+    }
     if row.runs > 1 && row.failures > 0 {
         println!(
             "      failed in {} of {} runs (timing-sensitive)",

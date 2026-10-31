@@ -46,6 +46,16 @@
           "const": "pg_signal_backend",
           "description": "Cancel or terminate other users' sessions.",
           "type": "string"
+        },
+        {
+          "const": "one_server_connection",
+          "description": "The pooler gives a second client no server connection while the first holds one\nin a transaction: a pool of one. Judged by a probe on the pooler, not a privilege.",
+          "type": "string"
+        },
+        {
+          "const": "several_server_connections",
+          "description": "The pooler gives a second client its own server connection while the first holds\none in a transaction.",
+          "type": "string"
         }
       ]
     },
@@ -119,6 +129,11 @@
         "notifications": {
           "default": false,
           "description": "Record the NOTIFY messages this client has received since the last such step.",
+          "type": "boolean"
+        },
+        "precondition": {
+          "default": false,
+          "description": "With `simple` on a pooled client: a query returning one boolean that says whether\nthis run tests what the scenario means to, e.g. that this client got a given\nbackend. Not run on Postgres and never compared. Through the pooler, false stops\nthe run as a SKIP; anything but true or false is a FAIL.",
           "type": "boolean"
         },
         "prepare": {

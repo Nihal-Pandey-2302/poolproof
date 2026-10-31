@@ -3,7 +3,7 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use anyhow::Result;
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 
 use crate::output::sarif::sarif;
 use crate::output::scan::print_scan;
@@ -131,6 +131,12 @@ enum Command {
         #[arg(short, long)]
         scenarios: Option<PathBuf>,
     },
+    /// Print a shell completion script, e.g. `poolproof completions bash`.
+    #[command(hide = true)]
+    Completions { shell: clap_complete::Shell },
+    /// Print a man page in roff: poolproof(1), or poolproof-COMMAND(1) for a command.
+    #[command(hide = true)]
+    Man { command: Option<String> },
 }
 
 /// Flags `run` and `drivers` share.
@@ -153,6 +159,11 @@ struct SuiteArgs {
     /// Without it, nothing is reset.
     #[arg(long, value_enum, requires = "pooler")]
     reset: Option<ResetArg>,
+    /// With --pooler: run scenarios that need one server connection (or several) even
+    /// when the probes say otherwise, as ignore_server_requirements in a targets file.
+    /// For Postgres standing in for its own pooler.
+    #[arg(long, requires = "pooler")]
+    ignore_server_requirements: bool,
     /// Allow reset = "all" against a Postgres that isn't on this machine. It gates
     /// nothing else.
     #[arg(long)]
@@ -370,6 +381,14 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
             }
             Ok(ExitCode::SUCCESS)
         }
+        Command::Completions { shell } => {
+            completions(shell, &mut std::io::stdout());
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Man { command } => {
+            man(command.as_deref(), &mut std::io::stdout())?;
+            Ok(ExitCode::SUCCESS)
+        }
     }
 }
 
@@ -387,6 +406,7 @@ async fn run_suite(
         direct,
         mode,
         reset,
+        ignore_server_requirements,
         yes,
         filter,
         only,
@@ -399,7 +419,10 @@ async fn run_suite(
         ignore_expected,
         limitations,
     } = suite;
-    let targets = load_targets(&targets, pooler, direct, mode, reset)?;
+    let mut targets = load_targets(&targets, pooler, direct, mode, reset)?;
+    if ignore_server_requirements {
+        targets.targets[0].ignore_server_requirements = true;
+    }
     // Before the run, so a bad baseline fails fast.
     let mut baseline = compare_to.as_deref().map(report::Report::load).transpose()?;
     if let Some(baseline) = &baseline {
@@ -443,7 +466,7 @@ async fn run_suite(
             refs: s.refs.clone(),
             steps: s.steps.iter().map(|step| step.describe()).collect(),
             repeat: s.repeat,
-            compare: s.steps.iter().map(|step| step.compare).collect(),
+            compare: s.compare_modes(),
         })
         .collect();
     let mut report = report::Report {
@@ -504,6 +527,17 @@ async fn run_suite(
             n => format!(" ({n} documented)"),
         };
         println!("\n{passed} passed, {failed} failed{documented}, {errors} errors, {skipped} skipped");
+        for r in results
+            .iter()
+            .filter(|r| r.runs == 0 && r.precondition_unmet.is_some_and(|u| u > 0))
+        {
+            println!(
+                "precondition never met: {} / {} ({} runs); the scenario tested nothing there",
+                r.target,
+                r.scenario,
+                r.precondition_unmet.unwrap_or(0)
+            );
+        }
         for stale in &report.stale_expectations {
             println!(
                 "stale expectation: {} / {}: {} ({})",
@@ -537,6 +571,30 @@ async fn run_suite(
     } else {
         ExitCode::SUCCESS
     })
+}
+
+fn completions(shell: clap_complete::Shell, out: &mut dyn std::io::Write) {
+    clap_complete::generate(shell, &mut Cli::command(), "poolproof", out);
+}
+
+/// The man page for poolproof, or for one of its visible commands.
+fn man(command: Option<&str>, out: &mut dyn std::io::Write) -> Result<()> {
+    let mut cli = Cli::command();
+    // Gives each command what it inherits: the version, and `poolproof-run` as its
+    // name in the page title and usage.
+    cli.build();
+    let page = match command {
+        None => cli,
+        Some(name) => cli
+            .get_subcommands()
+            .find(|c| c.get_name() == name && !c.is_hide_set())
+            .ok_or_else(|| anyhow::anyhow!("no command `{name}`"))?
+            .clone(),
+    };
+    clap_mangen::Man::new(page)
+        .source(format!("poolproof {}", env!("CARGO_PKG_VERSION")))
+        .render(out)?;
+    Ok(())
 }
 
 /// The targets file, or the one target `--pooler` and `--direct` describe.
@@ -595,5 +653,28 @@ mod tests {
         for bad in ["0", "0ms", "", "s", "1.5s", "10m", "-1s"] {
             assert!(parse_duration(bad).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn completions_and_man_pages() {
+        let mut bash = Vec::new();
+        completions(clap_complete::Shell::Bash, &mut bash);
+        let bash = String::from_utf8(bash).unwrap();
+        assert!(bash.contains("poolproof") && bash.contains("--fail-on"), "{bash}");
+
+        let mut page = Vec::new();
+        man(None, &mut page).unwrap();
+        let page = String::from_utf8(page).unwrap();
+        assert!(page.starts_with(".ie"), "{page}");
+        assert!(page.contains("doctor"), "{page}");
+        let mut run = Vec::new();
+        man(Some("run"), &mut run).unwrap();
+        let run = String::from_utf8(run).unwrap();
+        assert!(
+            run.contains("poolproof\\-run") && run.contains("\\-\\-fail\\-on"),
+            "{run}"
+        );
+        assert!(man(Some("man"), &mut Vec::new()).is_err());
+        assert!(man(Some("nope"), &mut Vec::new()).is_err());
     }
 }

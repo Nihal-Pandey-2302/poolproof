@@ -2,10 +2,11 @@
 
 Each scenario runs against plain Postgres, then through the pooler. FAIL means the
 pooler gave a different result than Postgres: **silent** means a wrong result with no
-error (the dangerous kind), error means the pooler refused, hang means no reply. Not
-every FAIL is a bug: some are documented limits of the pooling mode. Links point to the
-report each scenario came from. A fraction like 2/5 means the scenario is timing-sensitive
-and failed in 2 of 5 runs.
+error (the dangerous kind), error means the pooler refused, hang means no reply. A FAIL
+marked (expected) is a limitation the pooler's own documentation describes: not a bug, but
+it still breaks apps that rely on the feature, and it fails the run unless
+--ignore-expected is given. Links point to the report each scenario came from. A
+fraction like 2/5 means the scenario is timing-sensitive and failed in 2 of 5 runs.
 
 | Scenario | pgbouncer-1.26.1 | pgdog-0.1.62 | pgcat-1.2.0 | odyssey-1.5.2 | supavisor-2.10.0-rc.1 | supavisor-2.10.0-rc.1-strict |
 |---|---|---|---|---|---|---|
@@ -49,6 +50,8 @@ and failed in 2 of 5 runs.
 | `driver/psycopg-no-prepare/same-sql-both-connections` | pass | pass | pass | pass | pass | pass |
 | `driver/psycopg-no-prepare/set-leak` | **FAIL** silent | pass | **FAIL** silent | **FAIL** silent | **FAIL** silent | FAIL error |
 | `driver/psycopg-no-prepare/transaction` | pass | pass | pass | pass | pass | pass |
+
+Documented limitations: built-in.
 
 ## Differences
 

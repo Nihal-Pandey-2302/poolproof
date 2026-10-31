@@ -55,7 +55,7 @@ pub fn from_harness(outcome: &Outcome) -> bool {
             *connect || HARNESS_CODES.contains(&code.as_str()) || code.starts_with(DRIVER_CODE)
         }
         Outcome::Messages { messages } => messages.iter().any(|l| l == "TIMEOUT" || l == "CLOSED"),
-        Outcome::Ok { .. } | Outcome::Abandoned => false,
+        Outcome::Ok { .. } | Outcome::Abandoned | Outcome::NotRun => false,
     }
 }
 
@@ -149,7 +149,7 @@ impl FailKind {
                     FailKind::Silent
                 }
             }
-            Outcome::Ok { .. } | Outcome::Abandoned => FailKind::Silent,
+            Outcome::Ok { .. } | Outcome::Abandoned | Outcome::NotRun => FailKind::Silent,
         }
     }
 }

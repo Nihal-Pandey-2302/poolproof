@@ -9,6 +9,7 @@ mod check;
 mod compare;
 pub mod doctor;
 mod pg;
+pub mod probe;
 pub(crate) mod raw;
 mod steps;
 pub mod suite;
@@ -105,6 +106,10 @@ pub enum Outcome {
     Abandoned,
     /// Every reply to a `send` step, one line each.
     Messages { messages: Vec<String> },
+    /// The step didn't run: a precondition on Postgres, or a step after a precondition
+    /// that wasn't met through the pooler.
+    #[serde(rename = "not_run")]
+    NotRun,
 }
 
 impl Outcome {
@@ -140,6 +145,7 @@ impl std::fmt::Display for Outcome {
             Outcome::Error { code, message, .. } => write!(f, "error {code}: {message}"),
             Outcome::Abandoned => write!(f, "abandoned"),
             Outcome::Messages { messages } => write!(f, "{}", messages.join(", ")),
+            Outcome::NotRun => write!(f, "not run"),
         }
     }
 }

@@ -1,0 +1,176 @@
+name: poolproof
+description: Find out what breaks when you put a connection pooler in front of Postgres.
+
+# Every input reaches the shell through an environment variable, never through ${{ }}
+# inside a script, so no input value is ever run as shell code.
+inputs:
+  command:
+    description: "`scan` (check queries for patterns that break under transaction pooling) or `run` (the scenarios, through your pooler)."
+    required: true
+  args:
+    description: Arguments for the command, one per line. Each line is one argument, taken as is (no shell quoting, no variables); blank lines are skipped. Don't pass --format.
+    default: ""
+  version:
+    description: Release to download, e.g. `v0.1.0`, or `latest`. Defaults to the version in `uses:` when that is a release tag, else the latest release.
+    default: ""
+  binary:
+    description: Path to a poolproof binary to use instead of downloading one. It is not verified.
+    default: ""
+  sarif:
+    description: "scan only: also write the findings as SARIF."
+    default: "false"
+  upload-sarif:
+    description: "With sarif: upload them to GitHub code scanning. The job needs `security-events: write`."
+    default: "true"
+  summary:
+    description: "run only: add the results table to the job summary."
+    default: "true"
+
+outputs:
+  exit-code:
+    description: poolproof's exit code (0, 1 when something failed, 2 when poolproof itself failed).
+    value: ${{ steps.poolproof.outputs.exit-code }}
+  report:
+    description: "run only: path to the JSON report."
+    value: ${{ steps.poolproof.outputs.report }}
+  sarif:
+    description: "scan with sarif: path to the SARIF file."
+    value: ${{ steps.poolproof.outputs.sarif }}
+
+runs:
+  using: composite
+  steps:
+    - id: install
+      shell: bash
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+        INPUT_BINARY: ${{ inputs.binary }}
+        ACTION_REF: ${{ github.action_ref }}
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        repo=Nihal-Pandey-2302/poolproof
+
+        if [ -n "$INPUT_BINARY" ]; then
+          if [ ! -f "$INPUT_BINARY" ]; then echo "::error::binary: no file at $INPUT_BINARY"; exit 1; fi
+          echo "::notice::Using $INPUT_BINARY; it is not verified."
+          echo "path=$INPUT_BINARY" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        if ! command -v gh > /dev/null; then
+          echo "::error::The GitHub CLI (gh) is needed to download and verify poolproof; install it on this runner, or pass binary:"
+          exit 1
+        fi
+
+        release='^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'
+        version=$INPUT_VERSION
+        if [ -z "$version" ]; then
+          if [[ "$ACTION_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::The action is pinned by commit, so it can't tell which release to download: set version: vX.Y.Z"
+            exit 1
+          fi
+          if [[ "$ACTION_REF" =~ $release ]]; then version=$ACTION_REF; else version=latest; fi
+        fi
+        if [ "$version" = latest ]; then
+          tag=$(gh release view --repo "$repo" --json tagName --jq .tagName)
+          echo "::warning::Using the latest poolproof release, $tag. Pin it with uses: $repo@$tag or version: $tag."
+        elif [[ "$version" =~ $release ]]; then
+          tag=v${version#v}
+        else
+          echo "::error::version: '$version' is not a release like v0.1.0, or latest"
+          exit 1
+        fi
+
+        case "$RUNNER_OS/$RUNNER_ARCH" in
+          Linux/X64) target=x86_64-unknown-linux-gnu ;;
+          Linux/ARM64) target=aarch64-unknown-linux-gnu ;;
+          macOS/X64) target=x86_64-apple-darwin ;;
+          macOS/ARM64) target=aarch64-apple-darwin ;;
+          Windows/X64) target=x86_64-pc-windows-msvc ;;
+          *) echo "::error::No poolproof release for $RUNNER_OS/$RUNNER_ARCH; pass binary: instead"; exit 1 ;;
+        esac
+        archive=poolproof-$target.tar.gz exe=poolproof
+        if [ "$RUNNER_OS" = Windows ]; then archive=poolproof-$target.zip exe=poolproof.exe; fi
+
+        dir=$RUNNER_TEMP/poolproof-download
+        rm -rf "$dir" && mkdir -p "$dir"
+        gh release download "$tag" --repo "$repo" --dir "$dir" --pattern "$archive" --pattern SHA256SUMS
+        cd "$dir"
+        awk -v a="$archive" '$2 == a' SHA256SUMS > archive.sha256
+        if [ ! -s archive.sha256 ]; then echo "::error::$archive is not in the release's SHA256SUMS"; exit 1; fi
+        if command -v sha256sum > /dev/null; then sha256sum -c archive.sha256; else shasum -a 256 -c archive.sha256; fi
+        gh attestation verify "$archive" --repo "$repo" \
+          --signer-workflow "$repo/.github/workflows/release.yml"
+        if [ "$RUNNER_OS" = Windows ]; then 7z x -y "$archive" > /dev/null; else tar xzf "$archive"; fi
+
+        bin=$dir/poolproof-$target
+        "$bin/$exe" --version
+        echo "$bin" >> "$GITHUB_PATH"
+        echo "path=$bin/$exe" >> "$GITHUB_OUTPUT"
+
+    # Always ends with success and the exit code as an output, so the SARIF upload still
+    # runs after findings; the last step fails the job with that code.
+    - id: poolproof
+      shell: bash
+      env:
+        PP: ${{ steps.install.outputs.path }}
+        INPUT_COMMAND: ${{ inputs.command }}
+        INPUT_ARGS: ${{ inputs.args }}
+        INPUT_SARIF: ${{ inputs.sarif }}
+        INPUT_SUMMARY: ${{ inputs.summary }}
+      run: |
+        # GitHub runs bash with -e; here a failing poolproof is a result to record.
+        set +e
+        # A read loop rather than mapfile, which bash 3.2 (macOS) lacks.
+        args=()
+        while IFS= read -r line; do
+          line=${line%$'\r'}
+          if [ -n "$line" ]; then args+=("$line"); fi
+        done <<< "$INPUT_ARGS"
+        for a in "${args[@]}"; do
+          case "$a" in
+            --format|--format=*) echo "::error::args: leave out --format; the action sets it"; echo "exit-code=2" >> "$GITHUB_OUTPUT"; exit 0 ;;
+          esac
+        done
+
+        case "$INPUT_COMMAND" in
+          scan)
+            "$PP" scan "${args[@]}"
+            code=$?
+            if [ "$INPUT_SARIF" = true ]; then
+              sarif=$RUNNER_TEMP/poolproof.sarif
+              "$PP" scan "${args[@]}" --format sarif > "$sarif"
+              if [ $? -gt 1 ]; then code=2; fi
+              echo "sarif=$sarif" >> "$GITHUB_OUTPUT"
+            fi
+            ;;
+          run)
+            report=$RUNNER_TEMP/poolproof-report.json
+            # Progress, one line per result, goes to stderr and so to the log.
+            "$PP" run "${args[@]}" --format json > "$report"
+            code=$?
+            echo "report=$report" >> "$GITHUB_OUTPUT"
+            if [ "$INPUT_SUMMARY" = true ] && [ -s "$report" ]; then
+              "$PP" report "$report" --format markdown >> "$GITHUB_STEP_SUMMARY" \
+                || echo "::warning::Could not write the job summary"
+            fi
+            ;;
+          *)
+            echo "::error::command: '$INPUT_COMMAND' is not scan or run"
+            code=2
+            ;;
+        esac
+        echo "exit-code=$code" >> "$GITHUB_OUTPUT"
+
+    - if: inputs.command == 'scan' && inputs.sarif == 'true' && inputs.upload-sarif == 'true' && steps.poolproof.outputs.sarif != ''
+      uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+      with:
+        sarif_file: ${{ steps.poolproof.outputs.sarif }}
+        category: poolproof
+
+    - shell: bash
+      env:
+        CODE: ${{ steps.poolproof.outputs.exit-code }}
+      run: |
+        if [ "$CODE" != 0 ]; then echo "poolproof exited with $CODE"; exit "$CODE"; fi

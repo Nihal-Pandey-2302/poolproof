@@ -40,6 +40,11 @@
         "direct": {
           "type": "string"
         },
+        "ignore_server_requirements": {
+          "default": false,
+          "description": "Run scenarios that need one (or several) server connections even when the\nprobes say the pooler has otherwise. For Postgres used as its own pooler.",
+          "type": "boolean"
+        },
         "mode": {
           "$ref": "#/$defs/PoolMode"
         },

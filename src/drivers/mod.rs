@@ -603,6 +603,12 @@ mod tests {
         names.dedup();
         assert_eq!(names.len(), all.len(), "scenario names must be unique");
         assert!(all.iter().all(|s| s.repeat == 1), "driver cases run once");
+        // No driver step is a precondition, so every step is compared as it says.
+        for s in &all {
+            let own: Vec<Compare> = s.steps.iter().map(|step| step.compare).collect();
+            assert_eq!(s.compare_modes(), own, "{}", s.name);
+            assert!(s.steps.iter().all(|step| !step.precondition));
+        }
         // Scenario metadata carries the driver version, the target name doesn't.
         let s = all
             .iter()
