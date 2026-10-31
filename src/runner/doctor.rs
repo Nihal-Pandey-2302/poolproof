@@ -262,16 +262,21 @@ async fn reset(
             Err(e) => return fail(format!("{e:#}")),
         };
         let now = format!("other sessions now: {total}");
-        return match line {
-            Err(reason) => Check::new("reset", Status::Warn, format!("all: {reason}; {now}")),
-            Ok(_) if superusers != "0" && !have.superuser => fail(format!(
+        // Privileges first: once those are fine, the only refusal left is `run --yes`.
+        if superusers != "0" && !have.superuser {
+            return fail(format!(
                 "all: {superusers} of the {total} other sessions belong to superusers, and only a superuser can \
                  end them"
-            )),
-            Ok(_) if others != "0" && !missing.is_empty() => fail(format!(
+            ));
+        }
+        if others != "0" && !missing.is_empty() {
+            return fail(format!(
                 "all: {others} of the {total} other sessions belong to roles whose sessions this user can't end \
                  without {missing}"
-            )),
+            ));
+        }
+        return match line {
+            Err(reason) => Check::new("reset", Status::Warn, format!("all: {reason}; {now}")),
             Ok((_, line)) => Check::new("reset", Status::Ok, format!("{}; {now}", summary(&line))),
         };
     }
