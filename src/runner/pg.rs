@@ -197,9 +197,9 @@ pub async fn privileges(direct: &Endpoint, t: &Timeouts) -> Result<Privileges> {
     let (client, driver, _) = connect(direct, t).await?;
     let sql = "SELECT rolsuper, rolcreaterole, pg_has_role(current_user, 'pg_signal_backend', 'MEMBER') \
                FROM pg_roles WHERE rolname = current_user";
-    let res = timeout(t.step, client.simple_query(sql)).await;
+    let res = timeout(t.housekeeping, client.simple_query(sql)).await;
     drop(client);
-    let _ = timeout(t.step, driver).await;
+    let _ = timeout(t.housekeeping, driver).await;
     let row = res
         .context("privilege check timed out")??
         .into_iter()
@@ -294,5 +294,16 @@ mod tests {
         );
         assert_eq!(createrole.missing(&[Requirement::Createrole]), None);
         assert_eq!(superuser.missing(&all), None);
+    }
+
+    #[tokio::test]
+    #[ignore = "needs POOLPROOF_TEST_PG"]
+    async fn the_step_timeout_does_not_limit_the_privilege_check() {
+        let url = std::env::var("POOLPROOF_TEST_PG").expect("set POOLPROOF_TEST_PG to a Postgres URL");
+        let t = Timeouts {
+            step: Duration::from_nanos(1),
+            ..Timeouts::default()
+        };
+        privileges(&Endpoint::parse(&url).unwrap(), &t).await.unwrap();
     }
 }
