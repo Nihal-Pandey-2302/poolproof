@@ -374,7 +374,7 @@ impl Program {
                 Err(mpsc::RecvTimeoutError::Timeout) => {
                     // Killing the docker client would leave the container running.
                     let _ = Command::new("docker")
-                        .args(["rm", "-f", &name])
+                        .args(["rm", "-fv", &name])
                         .stdout(Stdio::null())
                         .stderr(Stdio::null())
                         .status();
