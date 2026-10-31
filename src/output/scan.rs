@@ -62,6 +62,7 @@ pub fn print_scan(report: &scan::Report) {
             count(scan::PoolerStatus::Ok),
         );
         println!("See a scenario step by step: poolproof run -v --filter <scenario>");
+        print_uninspected(report);
         return;
     }
     let breaks = report
@@ -75,4 +76,15 @@ pub fn print_scan(report: &scan::Report) {
         report.findings.len(),
         report.unparsed
     );
+    print_uninspected(report);
+}
+
+/// Bodies only word-scanned are not parse failures, but the reader should know.
+fn print_uninspected(report: &scan::Report) {
+    if report.uninspected > 0 {
+        println!(
+            "Function and DO bodies not fully parsed, so only their words were checked: {}",
+            report.uninspected
+        );
+    }
 }
