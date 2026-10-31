@@ -136,7 +136,7 @@ impl RawMessage {
     }
 
     /// Messages after which the server sends ReadyForQuery.
-    pub(crate) fn ends_cycle(&self) -> bool {
+    fn ends_cycle(&self) -> bool {
         matches!(self, RawMessage::Sync | RawMessage::Query(_) | RawMessage::CopyDone)
     }
 }
