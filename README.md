@@ -233,7 +233,10 @@ two connections at once is skipped: it would only show the pool waiting. So is i
 the probe can't tell. A second client counts as waiting only if, once the first client
 closes, it gets the first one's backend, and does again in a second round right after
 (a pool still opening its second server can hand the first one's over once); anything
-else is unknown.
+else is unknown. A second client the pooler refuses with an error while the first holds
+its connection counts the same way: only if, reconnecting once the first is gone, it gets
+the first one's backend, in both rounds. Some poolers accept any connect and refuse at
+the query, so getting in again proves nothing by itself.
 `ignore_server_requirements = true` on a target (`--ignore-server-requirements` with
 `run --pooler`) runs scenarios whose `one_server_connection` or
 `several_server_connections` isn't met anyway, for Postgres standing in for its own

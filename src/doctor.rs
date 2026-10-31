@@ -255,14 +255,21 @@ where
     Fut: Future<Output = anyhow::Result<Connected>>,
 {
     let first = probe_once(&connect, within, late, in_transaction).await?;
-    if first.0 != Observed::Waited {
+    if !first.0.one_at_a_time() {
         return Ok(first);
     }
     let (again, pid) = probe_once(&connect, within, late, in_transaction).await?;
     Ok(match again {
         // Sharing a backend inside a transaction is the pooler's bug whenever it shows.
-        Observed::Waited | Observed::Shared => (again, pid),
-        _ => (Observed::Unclear("waited once, then got another backend".into()), pid),
+        Observed::Waited | Observed::Refused(_) | Observed::Shared => (again, pid),
+        _ => {
+            let once = if first.0 == Observed::Waited {
+                "waited"
+            } else {
+                "was refused"
+            };
+            (Observed::Unclear(format!("{once} once, then got another backend")), pid)
+        }
     })
 }
 
@@ -338,13 +345,27 @@ where
             let Some(refusal) = server_refusal(&e).filter(|_| !late_answer) else {
                 return Err(e.context("second client"));
             };
-            let (again, driver) = timeout(within, connect())
+            // Some poolers accept any connect and refuse only at the query, so a
+            // reconnect proves nothing: b must now get a's backend.
+            let again = async {
+                let (again, driver) = timeout(within, connect())
+                    .await
+                    .map_err(|_| anyhow::anyhow!("no reconnect within {within:?}"))??;
+                let pid = timeout(late, again.simple_query("SELECT pg_backend_pid()")).await;
+                drop(again);
+                let _ = timeout(within, driver).await;
+                pid.map_err(|_| anyhow::anyhow!("no answer within {late:?}"))?
+                    .map_err(anyhow::Error::from)
+                    .and_then(first_value)
+            };
+            let pid = again
                 .await
-                .map_err(|_| e.context(format!("second client; and no reconnect within {within:?}")))?
-                .context("second client, again after the first closed")?;
-            drop(again);
-            let _ = timeout(within, driver).await;
-            Observed::Refused(refusal)
+                .with_context(|| format!("second client: {e:#}; then, after the first closed"))?;
+            if pid == a_pid {
+                Observed::Refused(refusal)
+            } else {
+                Observed::Unclear("was refused while a was connected, then got another backend".into())
+            }
         }
     };
     Ok((observed, a_pid))
@@ -514,6 +535,20 @@ mod tests {
         /// Like `SessionOfOne` for the first two clients; after that every client gets
         /// backend 7 at once, even inside another's transaction.
         WaitsThenShares,
+        /// Accepts every connect, and answers a query with 58000 while another client
+        /// holds the one backend, like PgCat. Once it's free, a client gets `After`.
+        ErrorsWhileHeld(After),
+    }
+
+    /// What a client of `ErrorsWhileHeld` gets once the backend is free.
+    #[derive(Clone, Copy)]
+    enum After {
+        /// Backend 7, the one the first client had.
+        Same,
+        /// Another backend.
+        Other,
+        /// Another 58000: it can't open a server at all.
+        Error,
     }
 
     /// A Postgres server that knows only startup and `SELECT pg_backend_pid()`.
@@ -525,7 +560,13 @@ mod tests {
         let idle = Arc::new(std::sync::Mutex::new(vec![7]));
         let opened = Arc::new(std::sync::atomic::AtomicBool::new(false));
         tokio::spawn(async move {
+            let holder = Arc::new(std::sync::Mutex::new(None));
             while let Ok((socket, _)) = listener.accept().await {
+                if let Pool::ErrorsWhileHeld(after) = pool {
+                    let conn = next.fetch_add(1, Ordering::SeqCst);
+                    tokio::spawn(serve_holding(socket, conn, holder.clone(), after));
+                    continue;
+                }
                 if let Pool::LazySecond = pool {
                     let (backend, idle, opened) = (backend.clone(), idle.clone(), opened.clone());
                     tokio::spawn(async move {
@@ -553,7 +594,7 @@ mod tests {
                 let n = next.fetch_add(1, Ordering::SeqCst);
                 let pid = match pool {
                     // One backend, whoever holds it.
-                    Pool::Shared | Pool::SessionOfOne | Pool::WaitsThenShares => 7,
+                    Pool::Shared | Pool::SessionOfOne | Pool::WaitsThenShares | Pool::RefusesWhileHeld(_) => 7,
                     _ => n,
                 };
                 let backend = backend.clone();
@@ -578,6 +619,94 @@ mod tests {
             }
         });
         format!("postgres://pp@127.0.0.1:{port}/pp?sslmode=disable")
+    }
+
+    /// One backend for `ErrorsWhileHeld`: the first client to query holds it until it
+    /// disconnects; meanwhile others get 58000 at query time.
+    async fn serve_holding(
+        mut socket: TcpStream,
+        conn: i32,
+        holder: Arc<std::sync::Mutex<Option<i32>>>,
+        after: After,
+    ) -> std::io::Result<()> {
+        let len = socket.read_i32().await?;
+        let mut startup = vec![0; len as usize - 4];
+        socket.read_exact(&mut startup).await?;
+        let mut out = BytesMut::new();
+        message(&mut out, b'R', |b| b.put_i32(0));
+        message(&mut out, b'K', |b| {
+            b.put_i32(conn);
+            b.put_i32(0);
+        });
+        message(&mut out, b'Z', |b| b.put_u8(b'I'));
+        socket.write_all(&out).await?;
+        let result = async {
+            loop {
+                let kind = socket.read_u8().await?;
+                let len = socket.read_i32().await?;
+                let mut body = vec![0; len as usize - 4];
+                socket.read_exact(&mut body).await?;
+                if kind != b'Q' {
+                    return Ok(());
+                }
+                let pid = {
+                    let mut held = holder.lock().unwrap();
+                    match (*held, after) {
+                        (Some(other), _) if other != conn => None,
+                        (Some(_), _) => Some(7),
+                        // The first client ever gets backend 7; later ones what `after` says.
+                        (None, _) if conn == 100 => Some(7),
+                        (None, After::Same) => Some(7),
+                        (None, After::Other) => Some(8),
+                        (None, After::Error) => None,
+                    }
+                    .inspect(|_| *held = Some(conn))
+                };
+                let mut out = BytesMut::new();
+                match pid {
+                    Some(pid) => {
+                        let value = pid.to_string();
+                        message(&mut out, b'T', |b| {
+                            b.put_i16(1);
+                            b.put_slice(b"pg_backend_pid\0");
+                            b.put_i32(0);
+                            b.put_i16(0);
+                            b.put_u32(23);
+                            b.put_i16(4);
+                            b.put_i32(-1);
+                            b.put_i16(0);
+                        });
+                        message(&mut out, b'D', |b| {
+                            b.put_i16(1);
+                            b.put_i32(value.len() as i32);
+                            b.put_slice(value.as_bytes());
+                        });
+                        message(&mut out, b'C', |b| b.put_slice(b"SELECT 1\0"));
+                    }
+                    None => message(&mut out, b'E', |b| {
+                        for (field, value) in [
+                            (b'S', "ERROR"),
+                            (b'V', "ERROR"),
+                            (b'C', "58000"),
+                            (b'M', "AllServersDown"),
+                        ] {
+                            b.put_u8(field);
+                            b.put_slice(value.as_bytes());
+                            b.put_u8(0);
+                        }
+                        b.put_u8(0);
+                    }),
+                }
+                message(&mut out, b'Z', |b| b.put_u8(b'I'));
+                socket.write_all(&out).await?;
+            }
+        }
+        .await;
+        let mut held = holder.lock().unwrap();
+        if *held == Some(conn) {
+            *held = None;
+        }
+        result
     }
 
     /// Reads the startup message and answers with a FATAL error.
@@ -701,6 +830,21 @@ mod tests {
         // and the second round finds two servers.
         let lazy = run_probe(Pool::LazySecond, true).await.unwrap();
         assert_eq!(lazy, Observed::Unclear("waited once, then got another backend".into()));
+        // Refused at query time, like PgCat: only a's backend afterwards says one.
+        let refused = Observed::Refused("58000: AllServersDown".into());
+        for busy in [false, true] {
+            assert_eq!(
+                run_probe(Pool::ErrorsWhileHeld(After::Same), busy).await.unwrap(),
+                refused
+            );
+            let other = run_probe(Pool::ErrorsWhileHeld(After::Other), busy).await.unwrap();
+            assert!(
+                matches!(other, Observed::Unclear(ref why) if why.contains("refused")),
+                "{other:?}"
+            );
+            let down = run_probe(Pool::ErrorsWhileHeld(After::Error), busy).await;
+            assert!(down.is_err(), "{down:?}");
+        }
         // A backend shared inside a transaction in the second round stays visible.
         assert_eq!(run_probe(Pool::WaitsThenShares, true).await.unwrap(), Observed::Shared);
     }
