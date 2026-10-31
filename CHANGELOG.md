@@ -61,6 +61,9 @@ First release.
   makes the target ERROR. Scenarios can require `one_server_connection` or
   `several_server_connections`, and session pools of one skip scenarios that need two
   connections at once. `doctor` shows the second probe as "server connections".
+- `reset = "exact"` (with `pool_size`): ends only the pooler's own server connections,
+  found through the pooler before each run, and leaves neighbours with the same user and
+  address alone.
 - Scenario steps can be a `precondition`: a boolean query that decides whether a run
   through the pooler counts.
 - Documented limitations (`limitations/<product>.toml`): a FAIL that exactly matches a

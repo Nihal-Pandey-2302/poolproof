@@ -484,6 +484,7 @@ mod tests {
             mode: PoolMode::Transaction,
             postgres: Some(postgres.into()),
             reset: None,
+            pool_size: None,
             idle_probe: None,
             busy_probe: None,
         }
