@@ -1,7 +1,16 @@
 name = "cursor-isolated-between-clients"
 description = "A WITH HOLD cursor declared by one client must not be visible to another client."
-# Counts only when b really reached a's server connection.
-same_backend = [[2, 4]]
+# Counts only when b really reached a's server connection. Each state step and the
+# evidence before it share a transaction, so they run on one server connection.
+same_backend = [[2, 6]]
+
+[[step]]
+client = "a"
+simple = "BEGIN"
+
+[[step]]
+client = "a"
+evidence = true
 
 [[step]]
 client = "a"
@@ -9,6 +18,14 @@ simple = "DECLARE pp_cur CURSOR WITH HOLD FOR SELECT generate_series(1, 3)::text
 
 [[step]]
 client = "a"
+simple = "COMMIT"
+
+[[step]]
+client = "b"
+simple = "BEGIN"
+
+[[step]]
+client = "b"
 evidence = true
 
 [[step]]
@@ -17,4 +34,4 @@ simple = "FETCH 1 FROM pp_cur"
 
 [[step]]
 client = "b"
-evidence = true
+simple = "COMMIT"

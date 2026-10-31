@@ -1,8 +1,17 @@
 name = "listen-notify-delivered"
 description = "A client that ran LISTEN must receive NOTIFY messages sent by another client."
 refs = ["https://github.com/pgbouncer/pgbouncer/issues/655"]
-# Counts only when b really reached a's server connection.
-same_backend = [[2, 4]]
+# Counts only when b really reached a's server connection. Each state step and the
+# evidence before it share a transaction, so they run on one server connection.
+same_backend = [[2, 6]]
+
+[[step]]
+client = "a"
+simple = "BEGIN"
+
+[[step]]
+client = "a"
+evidence = true
 
 [[step]]
 client = "a"
@@ -10,6 +19,14 @@ simple = "LISTEN pp_chan"
 
 [[step]]
 client = "a"
+simple = "COMMIT"
+
+[[step]]
+client = "b"
+simple = "BEGIN"
+
+[[step]]
+client = "b"
 evidence = true
 
 [[step]]
@@ -18,7 +35,7 @@ simple = "NOTIFY pp_chan, 'hello'"
 
 [[step]]
 client = "b"
-evidence = true
+simple = "COMMIT"
 
 [[step]]
 client = "a"
