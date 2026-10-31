@@ -147,7 +147,7 @@ async fn tls(side: &'static str, endpoint: &Endpoint, client: &Client, t: &Timeo
             )
         })
     } else if mode == SslMode::Prefer {
-        offers_tls(endpoint).await.map(|offered| (offered, None))
+        offers_tls(endpoint, t).await.map(|offered| (offered, None))
     } else {
         // Anything stricter than prefer fails to connect without TLS.
         Ok((true, None))
@@ -167,18 +167,23 @@ async fn tls(side: &'static str, endpoint: &Endpoint, client: &Client, t: &Timeo
 }
 
 /// Sends an SSLRequest and reads the one-byte answer, then hangs up.
-async fn offers_tls(endpoint: &Endpoint) -> Result<bool> {
+async fn offers_tls(endpoint: &Endpoint, t: &Timeouts) -> Result<bool> {
     let config = endpoint.config();
     let port = config.get_ports().first().copied().unwrap_or(5432);
     let Some(Host::Tcp(host)) = config.get_hosts().first() else {
         return Ok(false);
     };
-    let mut stream = tcp_connect(config, host, port).await?;
-    let mut out = BytesMut::new();
-    frontend::ssl_request(&mut out);
-    stream.write_all(&out).await?;
-    let answer = stream.read_u8().await.context("reading the SSLRequest answer")?;
-    Ok(answer == b'S')
+    let asking = async {
+        let mut stream = tcp_connect(config, host, port).await?;
+        let mut out = BytesMut::new();
+        frontend::ssl_request(&mut out);
+        stream.write_all(&out).await?;
+        let answer = stream.read_u8().await.context("reading the SSLRequest answer")?;
+        Ok(answer == b'S')
+    };
+    timeout(t.housekeeping, asking)
+        .await
+        .map_err(|_| anyhow::anyhow!("no answer to SSLRequest within {:?}", t.housekeeping))?
 }
 
 /// The scenarios that would SKIP for privileges the direct user lacks.
