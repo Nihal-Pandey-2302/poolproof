@@ -32,6 +32,10 @@ pub struct Target {
     /// server connections. Without it, one scenario's leak can change the next one's
     /// result.
     pub reset: Reset,
+    /// Run scenarios whose server-connection requirement the probes say is unmet, e.g.
+    /// for Postgres standing in for its own pooler, where every client has its own
+    /// backend.
+    pub ignore_server_requirements: bool,
 }
 
 /// A target's `reset`. The runner turns `Auto` and `All` into statements.
@@ -153,6 +157,10 @@ struct TargetFile {
     config: Option<String>,
     #[serde(default)]
     reset: Option<ResetFile>,
+    /// Run scenarios that need one (or several) server connections even when the
+    /// probes say the pooler has otherwise. For Postgres used as its own pooler.
+    #[serde(default)]
+    ignore_server_requirements: bool,
 }
 
 impl Targets {
@@ -184,6 +192,7 @@ impl Targets {
                 version: None,
                 config: None,
                 reset,
+                ignore_server_requirements: false,
             }],
         })
     }
@@ -232,6 +241,7 @@ impl Target {
             product: t.product,
             version: t.version,
             config: t.config,
+            ignore_server_requirements: t.ignore_server_requirements,
         })
     }
 }

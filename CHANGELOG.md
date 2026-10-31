@@ -56,6 +56,13 @@ First release.
   `--pooler` checks each finding against what that pooler version did in poolproof's
   own runs.
 - `poolproof report`: renders saved JSON runs as markdown or one self-contained HTML page.
+- Target probes before the first scenario: what a second client gets while the first is
+  idle and while it is inside a transaction. A probe that contradicts the declared mode
+  makes the target ERROR. Scenarios can require `one_server_connection` or
+  `several_server_connections`, and session pools of one skip scenarios that need two
+  connections at once. `doctor` shows the second probe as "server connections".
+- Scenario steps can be a `precondition`: a boolean query that decides whether a run
+  through the pooler counts.
 - Documented limitations (`limitations/<product>.toml`): a FAIL that exactly matches a
   limitation in the pooler's own docs is marked expected, with the doc link and quote.
   It stays a FAIL. Entries that no longer match are reported as stale.

@@ -76,6 +76,14 @@ pub struct TargetInfo {
     /// reports from before it was recorded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reset: Option<String>,
+    /// What a second client got while the first was connected and idle. Missing when
+    /// the target wasn't probed, and in older reports.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idle_probe: Option<crate::runner::probe::Probe>,
+    /// The same inside the first client's open transaction: whether the pooler has
+    /// one server connection or several.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub busy_probe: Option<crate::runner::probe::Probe>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -113,6 +121,10 @@ pub struct ResultRow {
     /// whose steps are kept here. Missing in older reports, and then unknown.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub varied: Option<bool>,
+    /// For a scenario with a precondition: runs where it wasn't met. They aren't in
+    /// `runs` or `failures`, so runs + unmet is how many ran.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub precondition_unmet: Option<u32>,
     /// Set on a FAIL the pooler's own documentation describes. It is still a FAIL.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected: Option<crate::limitations::Expected>,
