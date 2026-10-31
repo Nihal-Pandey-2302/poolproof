@@ -433,12 +433,14 @@ pub async fn server_version(endpoint: &Endpoint, t: &Timeouts) -> Result<String>
 /// The statement `reset = "all"` runs: end every other session on the database that
 /// this user may end, and wait up to 5 s for each to exit. Without superuser, that is
 /// sessions of roles whose privileges it has, and with pg_signal_backend those of other
-/// roles that aren't superusers; resolve_reset checks the pooler's are among them. The
-/// filter keeps another role's session from making the reset fail.
+/// roles, but never a superuser's: only a superuser may end those, even for a user that
+/// has a superuser role's privileges. resolve_reset checks the pooler's sessions are
+/// among them. The filter keeps another role's session from making the reset fail.
 const RESET_ALL: &str = "SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity \
     WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend' \
-    AND (pg_has_role(usesysid, 'USAGE') OR (pg_has_role('pg_signal_backend', 'USAGE') \
-    AND NOT (SELECT rolsuper FROM pg_roles WHERE oid = usesysid)))";
+    AND (NOT (SELECT rolsuper FROM pg_roles WHERE oid = usesysid) \
+    OR (SELECT rolsuper FROM pg_roles WHERE rolname = current_user)) \
+    AND (pg_has_role(usesysid, 'USAGE') OR pg_has_role('pg_signal_backend', 'USAGE'))";
 
 /// `reset = "auto"`: the same, for the sessions from one address and user only.
 /// Both values come from the system under test, so neither may steer the statement:
@@ -1143,6 +1145,68 @@ pub(crate) mod tests {
             line.contains("ends every other session that this user may end on database app"),
             "{line}"
         );
+    }
+
+    #[tokio::test]
+    #[ignore = "needs POOLPROOF_TEST_PG"]
+    async fn reset_all_leaves_a_superusers_session_to_an_heir() {
+        let url = std::env::var("POOLPROOF_TEST_PG").expect("set POOLPROOF_TEST_PG to a Postgres URL");
+        let t = Timeouts::default();
+        let root = Endpoint::parse(&url).unwrap();
+        let (admin, _admin_driver, _) = connect(&root, &t).await.unwrap();
+        let superuser = admin.simple_query("SELECT current_user").await.unwrap();
+        let superuser = superuser
+            .iter()
+            .find_map(|m| match m {
+                SimpleQueryMessage::Row(row) => row.get(0).map(str::to_string),
+                _ => None,
+            })
+            .unwrap();
+        // Has the superuser role's privileges, without being a superuser itself.
+        admin
+            .batch_execute(&format!(
+                "DROP ROLE IF EXISTS pp_reset_heir; CREATE ROLE pp_reset_heir LOGIN PASSWORD 'pp'; \
+                 GRANT {} TO pp_reset_heir",
+                ident(&superuser)
+            ))
+            .await
+            .unwrap();
+        // A superuser's session that is busy when the reset runs.
+        let (sleeper, _sleeper_driver, _) = connect(&root, &t).await.unwrap();
+        let pid = sleeper.simple_query("SELECT pg_backend_pid()").await.unwrap();
+        let pid = pid
+            .iter()
+            .find_map(|m| match m {
+                SimpleQueryMessage::Row(row) => row.get(0).map(str::to_string),
+                _ => None,
+            })
+            .unwrap();
+        let sleeping = tokio::spawn(async move { sleeper.simple_query("SELECT pg_sleep(30)").await });
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        let rest = url.split_once('@').expect("a URL with user@host").1;
+        let heir = Endpoint::parse(&format!("postgres://pp_reset_heir:pp@{rest}")).unwrap();
+        let (me, _me_driver, _) = connect(&heir, &t).await.unwrap();
+        me.batch_execute(RESET_ALL).await.unwrap();
+        let alive = admin
+            .simple_query(&format!("SELECT 1 FROM pg_stat_activity WHERE pid = {pid}"))
+            .await
+            .unwrap();
+        assert!(
+            alive.iter().any(|m| matches!(m, SimpleQueryMessage::Row(_))),
+            "the superuser's session was ended"
+        );
+
+        drop(me);
+        admin
+            .batch_execute(&format!(
+                "SELECT pg_terminate_backend({pid}, 5000); \
+                 SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity WHERE usename = 'pp_reset_heir'; \
+                 DROP ROLE pp_reset_heir"
+            ))
+            .await
+            .unwrap();
+        let _ = sleeping.await;
     }
 
     #[tokio::test]
