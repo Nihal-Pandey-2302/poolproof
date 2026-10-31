@@ -14,7 +14,8 @@
         {
           "enum": [
             "auto",
-            "all"
+            "all",
+            "exact"
           ],
           "type": "string"
         },
@@ -25,7 +26,7 @@
           "type": "array"
         }
       ],
-      "description": "`reset` as written: \"auto\", \"all\", or a list of statements."
+      "description": "`reset` as written: \"auto\", \"all\", \"exact\", or a list of statements."
     },
     "TargetFile": {
       "additionalProperties": false,
@@ -50,6 +51,17 @@
         },
         "name": {
           "type": "string"
+        },
+        "pool_size": {
+          "default": null,
+          "description": "The pooler's pool size for this database and user (1 to 16), as configured\nthere. Needed by reset = \"exact\".",
+          "format": "uint32",
+          "maximum": 16,
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "pooler": {
           "type": "string"

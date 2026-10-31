@@ -76,6 +76,9 @@ pub struct TargetInfo {
     /// reports from before it was recorded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reset: Option<String>,
+    /// The pooler's pool size the target declares, if it does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pool_size: Option<u32>,
     /// What a second client got while the first was connected and idle. Missing when
     /// the target wasn't probed, and in older reports.
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -709,6 +709,15 @@
         "name": {
           "type": "string"
         },
+        "pool_size": {
+          "description": "The pooler's pool size the target declares, if it does.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "postgres": {
           "description": "Version of the Postgres server behind the pooler, if it could be read.",
           "type": [

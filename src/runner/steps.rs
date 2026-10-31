@@ -409,7 +409,14 @@ mod tests {
         let scenario: Scenario =
             toml::from_str("name = 'r'\ndescription = ''\n[[step]]\nclient = 'a'\nsimple = 'SELECT 1'\n").unwrap();
         let server = refusing_server("53300").await;
-        let checked = crate::runner::check(&scenario, &server, &server, &[], &Timeouts::default()).await;
+        let checked = crate::runner::check(
+            &scenario,
+            &server,
+            &server,
+            &crate::runner::Isolation::None,
+            &Timeouts::default(),
+        )
+        .await;
         assert!(
             matches!(&checked.verdict, crate::runner::Verdict::Error { reason } if reason.contains("53300")),
             "{:?}",

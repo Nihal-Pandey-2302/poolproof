@@ -8,11 +8,11 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use super::Timeouts;
-use super::check::run_direct;
+use super::check::Isolation;
 use super::pg::{connect, wait_ready};
 use crate::doctor::{Connected, Observed, probe};
 use crate::scenario::{PoolMode, Requirement, Scenario};
-use crate::targets::{Endpoint, Statement};
+use crate::targets::Endpoint;
 
 /// How long a probe's second client waits before the first one closes. On a pool of
 /// one it always waits this long, twice (a wait is probed again, to rule out a pool
@@ -86,14 +86,15 @@ pub struct Probes {
 pub async fn probe_target(
     pooled: &Endpoint,
     direct: &Endpoint,
-    reset: &[Statement],
+    reset: &Isolation,
     mode: PoolMode,
     t: &Timeouts,
 ) -> Result<Probes, String> {
-    run_direct(direct, reset, t)
+    reset
+        .run(direct, t)
         .await
         .map_err(|e| format!("reset (probe): {e:#}"))?;
-    if !reset.is_empty() {
+    if reset.needs_wait() {
         wait_ready(pooled, t).await.map_err(|e| format!("{e:#}"))?;
     }
     let connect = || async {

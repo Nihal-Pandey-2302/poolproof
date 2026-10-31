@@ -1,9 +1,12 @@
 //! The loop over targets and scenarios behind `poolproof run`.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Result, bail};
 
+use super::check::Isolation;
+use super::exact::Exact;
 use super::probe::{ProbeResult, Probes, probe_target};
 use super::{
     DIRECT_UNREACHABLE, FailKind, Privileges, Timeouts, Verdict, check, deterministic, preflight, privileges,
@@ -13,11 +16,11 @@ use crate::limitations::Limitations;
 use crate::output::text::{Style, print_progress, print_result};
 use crate::report::{ResultRow, StepOutcomes, TargetInfo};
 use crate::scenario::{PoolMode, Scenario};
-use crate::targets::{Endpoint, Reset, Statement, Target};
+use crate::targets::{Endpoint, Reset, Target};
 
 /// A --check-scenarios verdict, by scenario, direct endpoint (compared in full: options
 /// and password too) and resolved reset.
-type Determinism<'a> = (&'a str, &'a Endpoint, Vec<Statement>, Result<(), String>);
+type Determinism<'a> = (&'a str, &'a Endpoint, Isolation, Result<(), String>);
 
 /// How `run` goes about it.
 #[derive(Default)]
@@ -64,6 +67,7 @@ pub async fn run(
             mode: target.mode,
             postgres: server_version(&target.direct, &timeouts).await.ok(),
             reset: Some(target.reset.kind().to_string()),
+            pool_size: target.pool_size,
             idle_probe: None,
             busy_probe: None,
         });
@@ -102,6 +106,12 @@ pub async fn run(
                     (vec![], Some(reason.to_string()))
                 }
             },
+        };
+        let reset = match (&target.reset, target.pool_size) {
+            (Reset::Exact, Some(n)) if unreachable.is_none() => {
+                Isolation::Exact(Arc::new(Exact::new(target.pooler.clone(), target.direct.clone(), n)))
+            }
+            _ => Isolation::statements(reset),
         };
         // Same gate as preflight: no connection when nothing will run.
         let privs = match unreachable {
@@ -162,6 +172,18 @@ pub async fn run(
             if let Some(reason) = probes.mode_error(target.mode) {
                 eprintln!("error: target '{}': {reason}", target.name);
                 unreachable = Some(reason);
+            }
+            // The exact reset only sees every server connection if the pool is as big
+            // as the target says.
+            if let (Isolation::Exact(exact), None) = (&reset, &unreachable) {
+                match exact.check_start(&timeouts).await {
+                    Ok(line) => eprintln!("reset: '{}': {line}", target.name),
+                    Err(e) => {
+                        let reason = format!("{e:#}");
+                        eprintln!("error: target '{}': {reason}", target.name);
+                        unreachable = Some(reason);
+                    }
+                }
             }
             if let Some(info) = target_infos.last_mut() {
                 info.idle_probe = Some(probes.idle.clone());
@@ -459,7 +481,7 @@ mod tests {
         third[0].name = "c".into();
         targets.append(&mut third);
         // Same direct as a, but a reset: also checked again.
-        let reset = Reset::Statements(vec![Statement::plain("SELECT 1")]);
+        let reset = Reset::Statements(vec![crate::targets::Statement::plain("SELECT 1")]);
         let mut fourth = Targets::single(&url, &url, PoolMode::Transaction, reset)
             .unwrap()
             .targets;

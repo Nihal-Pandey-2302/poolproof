@@ -13,6 +13,7 @@ use tokio_postgres::config::Host;
 
 use super::Timeouts;
 use super::check::{DIRECT_UNREACHABLE, POOLER_UNREACHABLE};
+use super::exact::Exact;
 use super::pg::{Privileges, ResetRefusal, connect, privileges, resolve_reset, tcp_connect};
 use super::tls::SslMode;
 use crate::doctor::{
@@ -242,6 +243,27 @@ fn requirements(target: &Target, scenarios: &[Scenario], have: Privileges) -> Ch
     Check::new("privileges", Status::Warn, detail)
 }
 
+/// The exact reset's check before a run: this user may end the pooler's sessions, the
+/// pool holds `pool_size` transactions and one client more waits. Holds and closes
+/// transactions through the pooler, ends nothing.
+async fn exact_reset(target: &Target, yes: bool, t: &Timeouts) -> Check {
+    let fail = |detail: String| Check::new("reset", Status::Fail, detail);
+    match resolve_reset(target, yes, t).await {
+        Ok(_) => {}
+        Err(ResetRefusal::CantEnd { text, public }) => {
+            return fail(format!("exact: {text}")).public(format!("exact: {public}"));
+        }
+        Err(reason) => return fail(format!("exact: {reason}")).public("exact: refused"),
+    }
+    let n = target.pool_size.unwrap_or_default();
+    let exact = Exact::new(target.pooler.clone(), target.direct.clone(), n);
+    match exact.check_start(t).await {
+        Ok(detail) => Check::new("reset", Status::Ok, format!("exact: {detail}"))
+            .public(format!("exact: held {n} transactions, client {} waited", n + 1)),
+        Err(e) => fail(format!("exact: {e:#}")).public("exact: the pool check failed"),
+    }
+}
+
 /// What reset would do. resolve_reset refuses one that can't end the pooler's
 /// sessions (a FAIL here). For `all`, other sessions this user can't end are a WARN:
 /// the reset leaves them, with whatever they hold.
@@ -270,6 +292,7 @@ async fn reset(
                 format!("custom: {} statements, not previewed", s.len()),
             );
         }
+        Reset::Exact => return exact_reset(target, yes, t).await,
         Reset::All | Reset::Auto => resolve_reset(target, yes, t).await,
     };
     if let Reset::All = target.reset {
