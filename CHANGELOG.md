@@ -219,6 +219,8 @@ First release.
 - `scan --pooler` checks session state (temp tables, `SET`, `set_config`, advisory locks,
   `WITH HOLD` cursors, SQL `PREPARE`) against the scenarios where its own client loses it
   too, not only those where other clients see it.
+- `scan --pooler` also checks `SET ROLE` and `SET SESSION AUTHORIZATION` against
+  `set-role-reset-after-temp-table-disconnect`.
 
 ### Changed
 
