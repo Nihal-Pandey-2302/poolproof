@@ -2,10 +2,11 @@
 
 Each scenario runs against plain Postgres, then through the pooler. FAIL means the
 pooler gave a different result than Postgres: **silent** means a wrong result with no
-error (the dangerous kind), error means the pooler refused, hang means no reply. Not
-every FAIL is a bug: some are documented limits of the pooling mode. Links point to the
-report each scenario came from. A fraction like 2/5 means the scenario is timing-sensitive
-and failed in 2 of 5 runs.
+error (the dangerous kind), error means the pooler refused, hang means no reply. A FAIL
+marked (expected) is a limitation the pooler's own documentation describes: not a bug, but
+it still breaks apps that rely on the feature, and it fails the run unless
+--ignore-expected is given. Links point to the report each scenario came from. A
+fraction like 2/5 means the scenario is timing-sensitive and failed in 2 of 5 runs.
 
 | Scenario | pgbouncer-1.24.1 (pg 17.11) | pgbouncer-1.25.2 (pg 17.11) | pgbouncer-1.26.1 (pg 17.11) | pgdog-0.1.50 (pg 17.11) | pgdog-0.1.56 (pg 17.11) | pgdog-0.1.62 (pg 17.11) | pgdog-0.1.62-pubsub (pg 17.11) | pgcat-1.2.0 (pg 17.11) | odyssey-1.5.2 (pg 17.11) | supavisor-2.9.13 (pg 17.11) | supavisor-2.10.0-rc.1 (pg 17.11) | supavisor-2.10.0-rc.1-strict (pg 17.11) | pgbouncer-1.26.1-tls (pg 17.11) | pgbouncer-1.24.1 (pg 18.4) | pgbouncer-1.25.2 (pg 18.4) | pgbouncer-1.26.1 (pg 18.4) | pgdog-0.1.50 (pg 18.4) | pgdog-0.1.56 (pg 18.4) | pgdog-0.1.62 (pg 18.4) | pgdog-0.1.62-pubsub (pg 18.4) | pgcat-1.2.0 (pg 18.4) | odyssey-1.5.2 (pg 18.4) | supavisor-2.9.13 (pg 18.4) | supavisor-2.10.0-rc.1 (pg 18.4) | supavisor-2.10.0-rc.1-strict (pg 18.4) | pgbouncer-1.26.1-tls (pg 18.4) |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -39,13 +40,15 @@ and failed in 2 of 5 runs.
 | `protocol-unnamed-statement-survives-other-clients` | FAIL error | FAIL error | FAIL error | pass | pass | pass | pass | FAIL error | pass | FAIL error | FAIL error | FAIL error | FAIL error | FAIL error | FAIL error | FAIL error | pass | pass | pass | pass | FAIL error | pass | FAIL error | FAIL error | FAIL error | FAIL error |
 | `search-path-isolated-between-clients` | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | pass | pass | pass | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | FAIL error | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | pass | pass | pass | pass | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | FAIL error | pass |
 | `set-does-not-leak-after-disconnect` | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | pass | pass | pass | pass | pass | **FAIL** silent | **FAIL** silent | FAIL error | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | pass | pass | pass | pass | pass | **FAIL** silent | **FAIL** silent | FAIL error | **FAIL** silent |
-| `set-isolated-between-clients` | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | pass | pass | pass | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | FAIL error | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | pass | pass | pass | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | FAIL error | **FAIL** silent |
+| `set-isolated-between-clients` | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | pass | pass | pass | pass | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | FAIL error | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | pass | pass | pass | pass | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | FAIL error | FAIL silent (expected) |
 | `set-local-reverts-after-commit` | pass | pass | pass | pass | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | pass | FAIL error | pass | pass | pass | pass | pass | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | pass | FAIL error | pass |
 | `set-role-isolated-between-clients` | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | pass | pass | pass | pass | pass | **FAIL** silent | **FAIL** silent | FAIL error | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | pass | pass | pass | pass | pass | **FAIL** silent | **FAIL** silent | FAIL error | **FAIL** silent |
 | `set-role-reset-after-pinned-disconnect` | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | pass | pass | pass | pass | pass | **FAIL** silent | **FAIL** silent | FAIL error | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | pass | pass | pass | pass | pass | **FAIL** silent | **FAIL** silent | FAIL error | **FAIL** silent |
 | `sql-prepare-isolated-between-clients` | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | FAIL error | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | FAIL error | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent |
 | `temp-table-isolated-between-clients` | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | **FAIL** silent | **FAIL** silent | FAIL error | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | **FAIL** silent | **FAIL** silent | FAIL error | **FAIL** silent |
 | `temp-table-survives-own-transactions` | pass | pass | pass | pass | pass | pass | pass | pass | FAIL error | pass | pass | FAIL error | pass | pass | pass | pass | pass | pass | pass | pass | pass | FAIL error | pass | pass | FAIL error | pass |
+
+Documented limitations: built-in from poolproof 0.1.0.
 
 ## Differences
 
@@ -2067,33 +2070,6 @@ Settings from a client that disconnected must not show up for the next client.
 - pooler: `ok rows=[(7MB)] tags=[0]`
 - from https://github.com/pgdogdev/pgdog/issues/1850
 
-### pgbouncer-1.24.1 (pg 17.11) / set-isolated-between-clients (silent)
-
-A plain SET from one client must not change the setting another client sees.
-
-- step 3: `[a] simple: SHOW work_mem`
-- postgres: `ok rows=[(7MB)] tags=[0]`
-- pooler: `ok rows=[(9MB)] tags=[0]`
-- from https://github.com/pgdogdev/pgdog/issues/1850
-
-### pgbouncer-1.25.2 (pg 17.11) / set-isolated-between-clients (silent)
-
-A plain SET from one client must not change the setting another client sees.
-
-- step 3: `[a] simple: SHOW work_mem`
-- postgres: `ok rows=[(7MB)] tags=[0]`
-- pooler: `ok rows=[(9MB)] tags=[0]`
-- from https://github.com/pgdogdev/pgdog/issues/1850
-
-### pgbouncer-1.26.1 (pg 17.11) / set-isolated-between-clients (silent)
-
-A plain SET from one client must not change the setting another client sees.
-
-- step 3: `[a] simple: SHOW work_mem`
-- postgres: `ok rows=[(7MB)] tags=[0]`
-- pooler: `ok rows=[(9MB)] tags=[0]`
-- from https://github.com/pgdogdev/pgdog/issues/1850
-
 ### pgcat-1.2.0 (pg 17.11) / set-isolated-between-clients (silent)
 
 A plain SET from one client must not change the setting another client sees.
@@ -2139,42 +2115,6 @@ A plain SET from one client must not change the setting another client sees.
 - pooler: `error XX000: (ESESSIONLEAK) session-level SET statement is not allowed in transaction mode`
 - from https://github.com/pgdogdev/pgdog/issues/1850
 
-### pgbouncer-1.26.1-tls (pg 17.11) / set-isolated-between-clients (silent)
-
-A plain SET from one client must not change the setting another client sees.
-
-- step 3: `[a] simple: SHOW work_mem`
-- postgres: `ok rows=[(7MB)] tags=[0]`
-- pooler: `ok rows=[(9MB)] tags=[0]`
-- from https://github.com/pgdogdev/pgdog/issues/1850
-
-### pgbouncer-1.24.1 (pg 18.4) / set-isolated-between-clients (silent)
-
-A plain SET from one client must not change the setting another client sees.
-
-- step 3: `[a] simple: SHOW work_mem`
-- postgres: `ok rows=[(7MB)] tags=[0]`
-- pooler: `ok rows=[(9MB)] tags=[0]`
-- from https://github.com/pgdogdev/pgdog/issues/1850
-
-### pgbouncer-1.25.2 (pg 18.4) / set-isolated-between-clients (silent)
-
-A plain SET from one client must not change the setting another client sees.
-
-- step 3: `[a] simple: SHOW work_mem`
-- postgres: `ok rows=[(7MB)] tags=[0]`
-- pooler: `ok rows=[(9MB)] tags=[0]`
-- from https://github.com/pgdogdev/pgdog/issues/1850
-
-### pgbouncer-1.26.1 (pg 18.4) / set-isolated-between-clients (silent)
-
-A plain SET from one client must not change the setting another client sees.
-
-- step 3: `[a] simple: SHOW work_mem`
-- postgres: `ok rows=[(7MB)] tags=[0]`
-- pooler: `ok rows=[(9MB)] tags=[0]`
-- from https://github.com/pgdogdev/pgdog/issues/1850
-
 ### pgcat-1.2.0 (pg 18.4) / set-isolated-between-clients (silent)
 
 A plain SET from one client must not change the setting another client sees.
@@ -2218,15 +2158,6 @@ A plain SET from one client must not change the setting another client sees.
 - step 1: `[a] simple: SET work_mem = '7MB'`
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error XX000: (ESESSIONLEAK) session-level SET statement is not allowed in transaction mode`
-- from https://github.com/pgdogdev/pgdog/issues/1850
-
-### pgbouncer-1.26.1-tls (pg 18.4) / set-isolated-between-clients (silent)
-
-A plain SET from one client must not change the setting another client sees.
-
-- step 3: `[a] simple: SHOW work_mem`
-- postgres: `ok rows=[(7MB)] tags=[0]`
-- pooler: `ok rows=[(9MB)] tags=[0]`
 - from https://github.com/pgdogdev/pgdog/issues/1850
 
 ### pgdog-0.1.56 (pg 17.11) / set-local-reverts-after-commit (silent)
@@ -3030,3 +2961,93 @@ A temp table must stay usable by the client that created it, across its later tr
 - step 1: `[a] simple: CREATE TEMP TABLE pp_own_tmp (x int)`
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error XX000: (ESESSIONLEAK) temporary table creation is not allowed in transaction mode`
+
+## Expected differences (documented limitations)
+
+### pgbouncer-1.24.1 (pg 17.11) / set-isolated-between-clients (silent)
+
+A plain SET from one client must not change the setting another client sees.
+
+- documented: "SET/RESET | Yes | Never", https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes
+- note: Row of the table "SQL feature map for pooling modes" (columns: Feature, Session pooling, Transaction pooling).
+- step 3: `[a] simple: SHOW work_mem`
+- postgres: `ok rows=[(7MB)] tags=[0]`
+- pooler: `ok rows=[(9MB)] tags=[0]`
+- from https://github.com/pgdogdev/pgdog/issues/1850
+
+### pgbouncer-1.25.2 (pg 17.11) / set-isolated-between-clients (silent)
+
+A plain SET from one client must not change the setting another client sees.
+
+- documented: "SET/RESET | Yes | Never", https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes
+- note: Row of the table "SQL feature map for pooling modes" (columns: Feature, Session pooling, Transaction pooling).
+- step 3: `[a] simple: SHOW work_mem`
+- postgres: `ok rows=[(7MB)] tags=[0]`
+- pooler: `ok rows=[(9MB)] tags=[0]`
+- from https://github.com/pgdogdev/pgdog/issues/1850
+
+### pgbouncer-1.26.1 (pg 17.11) / set-isolated-between-clients (silent)
+
+A plain SET from one client must not change the setting another client sees.
+
+- documented: "SET/RESET | Yes | Never", https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes
+- note: Row of the table "SQL feature map for pooling modes" (columns: Feature, Session pooling, Transaction pooling).
+- step 3: `[a] simple: SHOW work_mem`
+- postgres: `ok rows=[(7MB)] tags=[0]`
+- pooler: `ok rows=[(9MB)] tags=[0]`
+- from https://github.com/pgdogdev/pgdog/issues/1850
+
+### pgbouncer-1.26.1-tls (pg 17.11) / set-isolated-between-clients (silent)
+
+A plain SET from one client must not change the setting another client sees.
+
+- documented: "SET/RESET | Yes | Never", https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes
+- note: Row of the table "SQL feature map for pooling modes" (columns: Feature, Session pooling, Transaction pooling).
+- step 3: `[a] simple: SHOW work_mem`
+- postgres: `ok rows=[(7MB)] tags=[0]`
+- pooler: `ok rows=[(9MB)] tags=[0]`
+- from https://github.com/pgdogdev/pgdog/issues/1850
+
+### pgbouncer-1.24.1 (pg 18.4) / set-isolated-between-clients (silent)
+
+A plain SET from one client must not change the setting another client sees.
+
+- documented: "SET/RESET | Yes | Never", https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes
+- note: Row of the table "SQL feature map for pooling modes" (columns: Feature, Session pooling, Transaction pooling).
+- step 3: `[a] simple: SHOW work_mem`
+- postgres: `ok rows=[(7MB)] tags=[0]`
+- pooler: `ok rows=[(9MB)] tags=[0]`
+- from https://github.com/pgdogdev/pgdog/issues/1850
+
+### pgbouncer-1.25.2 (pg 18.4) / set-isolated-between-clients (silent)
+
+A plain SET from one client must not change the setting another client sees.
+
+- documented: "SET/RESET | Yes | Never", https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes
+- note: Row of the table "SQL feature map for pooling modes" (columns: Feature, Session pooling, Transaction pooling).
+- step 3: `[a] simple: SHOW work_mem`
+- postgres: `ok rows=[(7MB)] tags=[0]`
+- pooler: `ok rows=[(9MB)] tags=[0]`
+- from https://github.com/pgdogdev/pgdog/issues/1850
+
+### pgbouncer-1.26.1 (pg 18.4) / set-isolated-between-clients (silent)
+
+A plain SET from one client must not change the setting another client sees.
+
+- documented: "SET/RESET | Yes | Never", https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes
+- note: Row of the table "SQL feature map for pooling modes" (columns: Feature, Session pooling, Transaction pooling).
+- step 3: `[a] simple: SHOW work_mem`
+- postgres: `ok rows=[(7MB)] tags=[0]`
+- pooler: `ok rows=[(9MB)] tags=[0]`
+- from https://github.com/pgdogdev/pgdog/issues/1850
+
+### pgbouncer-1.26.1-tls (pg 18.4) / set-isolated-between-clients (silent)
+
+A plain SET from one client must not change the setting another client sees.
+
+- documented: "SET/RESET | Yes | Never", https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes
+- note: Row of the table "SQL feature map for pooling modes" (columns: Feature, Session pooling, Transaction pooling).
+- step 3: `[a] simple: SHOW work_mem`
+- postgres: `ok rows=[(7MB)] tags=[0]`
+- pooler: `ok rows=[(9MB)] tags=[0]`
+- from https://github.com/pgdogdev/pgdog/issues/1850
