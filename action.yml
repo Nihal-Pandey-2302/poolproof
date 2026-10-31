@@ -66,6 +66,10 @@ runs:
         release='^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'
         version=$INPUT_VERSION
         if [ -z "$version" ]; then
+          if [[ "$ACTION_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::The action is pinned by commit, so it can't tell which release to download: set version: vX.Y.Z"
+            exit 1
+          fi
           if [[ "$ACTION_REF" =~ $release ]]; then version=$ACTION_REF; else version=latest; fi
         fi
         if [ "$version" = latest ]; then
@@ -93,7 +97,8 @@ runs:
         rm -rf "$dir" && mkdir -p "$dir"
         gh release download "$tag" --repo "$repo" --dir "$dir" --pattern "$archive" --pattern SHA256SUMS
         cd "$dir"
-        grep "  $archive\$" SHA256SUMS > archive.sha256
+        awk -v a="$archive" '$2 == a' SHA256SUMS > archive.sha256
+        if [ ! -s archive.sha256 ]; then echo "::error::$archive is not in the release's SHA256SUMS"; exit 1; fi
         if command -v sha256sum > /dev/null; then sha256sum -c archive.sha256; else shasum -a 256 -c archive.sha256; fi
         gh attestation verify "$archive" --repo "$repo" \
           --signer-workflow "$repo/.github/workflows/release.yml"

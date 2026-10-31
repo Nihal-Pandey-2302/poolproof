@@ -375,7 +375,8 @@ checked for words, with a count at the end.
 The repository is also an action. It downloads the release binary for the runner, checks
 it against the release's SHA256SUMS and its build attestation (`gh attestation verify`,
 signed by `release.yml`), then runs `scan` or `run`. Pin a release: the action uses the
-same version of poolproof as the tag in `uses:`.
+same version of poolproof as the tag in `uses:`. Pinned by commit SHA? Set `version:` too
+(e.g. `version: v0.1.0`); the action can't tell the release from a commit and stops.
 
 ```yaml
 permissions:
