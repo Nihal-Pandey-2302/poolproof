@@ -3,23 +3,30 @@
 # fix before it's released or to find the commit that changed a verdict.
 # Usage: scripts/pgdog-ref.sh REF [OFFSET] [-- poolproof run arguments...]
 #   REF     what to build: v0.1.62, main, a commit, or a branch of PGDOG_REPO
-#   OFFSET  the test bed to use (see scripts/testbed.sh); default 0
+#   OFFSET  the test bed to use (see scripts/testbed.sh); default 0. It must not be
+#           running: the script starts it and takes it down, volumes and all.
 # Environment:
 #   PGDOG_REPO      the repository to build from; default https://github.com/pgdogdev/pgdog.git.
-#                   A local path works too (e.g. your fork's checkout); it's only read.
+#                   A local path works too (e.g. your fork's checkout); it's only read,
+#                   so only committed refs are seen.
 #   PGDOG_PROFILE   release (default) or debug. A debug build is faster to make, but
 #                   compare it only with other debug builds: timing differs.
 #   POSTGRES_IMAGE  the Postgres image behind PgDog; default postgres:17.11
 # The source, the builds and the results stay under ${XDG_CACHE_HOME:-~/.cache}/poolproof/pgdog.
-# The first build takes several minutes; later ones reuse it. Results are labeled
-# git-<commit> and never go into results/. To compare two refs, run both and then
+# Building a ref runs its code (build scripts, proc macros, then PgDog itself), so build
+# only refs you trust, and read a fork's branch first. The first build takes several
+# minutes, and rustup may install PgDog's pinned toolchain; later builds reuse both.
+# Results are labeled git-<commit> and never go into results/. To compare two refs, run
+# both and then
 #   poolproof report A.json B.json --format html > compare.html
 # Only Postgres runs in Docker; PgDog runs on this machine. The pool has one server
 # connection, in transaction mode, like the test bed's PgDog targets. Linux and macOS.
 set -eu
-[ $# -ge 1 ] || { sed -n '4,6s/^# \{0,1\}//p' "$0" >&2; exit 2; }
+[ $# -ge 1 ] || { sed -n '4,7s/^# \{0,1\}//p' "$0" >&2; exit 2; }
 ref=$1
 shift
+# Never let a ref be read as a git option.
+case $ref in -*) echo "REF can't start with -" >&2; exit 2 ;; esac
 offset=0
 case ${1:-} in --) ;; "") ;; *) offset=$1; shift ;; esac
 [ "${1:-}" != -- ] || shift
@@ -35,11 +42,17 @@ cache=${XDG_CACHE_HOME:-$HOME/.cache}/poolproof/pgdog
 for tool in git cargo docker jq; do
   command -v $tool >/dev/null || { echo "pgdog-ref.sh needs $tool" >&2; exit 2; }
 done
+# The script takes its test bed down when it's done, so never borrow one that's running.
+eval "$(scripts/testbed.sh env "$offset")"
+if [ -n "$(docker compose -p "$COMPOSE_PROJECT_NAME" ps -a -q 2>/dev/null)" ]; then
+  echo "test bed $offset is in use; pick another offset" >&2
+  exit 2
+fi
 
 # Source: one clone, reused. Fetch every time, so branches move.
 mkdir -p "$cache"
 if [ ! -d "$cache/src/.git" ]; then
-  git clone --quiet "$repo" "$cache/src"
+  git clone --quiet --no-hardlinks "$repo" "$cache/src"
 else
   git -C "$cache/src" remote set-url origin "$repo"
   git -C "$cache/src" fetch --quiet --tags --force origin '+refs/heads/*:refs/remotes/origin/*'
@@ -61,7 +74,6 @@ fi
 cargo build --locked --release -q
 
 # Postgres from the test bed, PgDog next to it.
-eval "$(scripts/testbed.sh env "$offset")"
 pg_port=$((55432 + offset))
 port=$((56459 + offset))
 run=$cache/run-$offset
@@ -92,6 +104,7 @@ mode = "transaction"
 reset = "all"
 EOF
 pid=
+# shellcheck disable=SC2329 # called by the trap
 cleanup() {
   [ -z "$pid" ] || { kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true; }
   scripts/testbed.sh down "$offset" >/dev/null 2>&1 || true
