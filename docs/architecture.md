@@ -22,8 +22,10 @@ src/cli.rs               clap commands and flags; wires the modules together
 src/scenario.rs          scenario TOML format: Scenario, Step, Action, Compare, PoolMode
 src/targets.rs           targets TOML format, and the single target from --pooler/--direct
 src/runner/
-  mod.rs                 Outcome (what a client saw for one step), timeouts
-  suite.rs               the loop over targets and scenarios behind `run`
+  mod.rs                 Outcome (what a client saw for one step), Timeouts (every limit
+                         and its default in one struct)
+  suite.rs               the loop over targets and scenarios behind `run`: --target,
+                         preflight, --check-scenarios, --fail-on
   check.rs               one scenario on one target: reset, setup, baseline, pooler, compare
                          (run_direct runs reset, setup and teardown statements)
   steps.rs               runs a scenario's steps, one connection per client
@@ -59,19 +61,28 @@ selftest/expected.toml   the verdict each self-test target must get
 ```text
 cli ─ targets.toml or --pooler/--direct ─┐
     ─ scenarios (built in or --scenarios)┴─> runner::suite::run
-                                               for each target, for each scenario:
-                                               runner::check
-                                                 1. reset, setup        (direct)
-                                                 2. run_steps baseline  (every client direct)
-                                                 3. teardown            (direct)
-                                                 4. for each pooler run (repeat times):
-                                                    reset, wait for the pooler to answer
-                                                    (only with a reset), setup, run_steps
-                                                    through the pooler, teardown
-                                                 5. first step whose outcomes differ
-                                                    -> Verdict (first failing run kept)
+                                               for each target (--target picks some):
+                                                 preflight: both URLs must answer, else
+                                                 every scenario of the target is ERROR
+                                                 for each scenario:
+                                                   [--check-scenarios: baseline twice,
+                                                    once per scenario and direct URL]
+                                                   runner::check
+                                                     1. reset, setup        (direct)
+                                                     2. run_steps baseline  (all direct)
+                                                     3. teardown            (direct)
+                                                     4. for each pooler run (repeat
+                                                        times): reset, wait for the
+                                                        pooler to answer (only with a
+                                                        reset), setup, run_steps through
+                                                        the pooler, teardown
+                                                     5. first step whose outcomes differ
+                                                        -> Verdict (first failing run
+                                                        kept); anything that stops it
+                                                        -> ERROR
                                                -> text as it goes, or report::Report
-                                                  -> JSON, markdown or HTML
+                                                  -> JSON, markdown or HTML (progress
+                                                  on stderr)
 ```
 
 Details that matter when changing this:
@@ -89,11 +100,23 @@ Details that matter when changing this:
   pseudo-code: `TIMEOUT` (no reply in time), `CONNECT` (couldn't connect), `CLOSED` (the
   connection closed), `CLIENT` (any other driver error) and `NO_STATEMENT` (an `execute`
   whose `prepare` failed). A raw `send` client records these as a final reply line
-  (`TIMEOUT`, `CLOSED`) instead of an error outcome.
+  (`TIMEOUT`, `CLOSED`) instead of an error outcome. If a baseline step ends in
+  `CONNECT`, `TIMEOUT`, `CLIENT` or `CLOSED`, Postgres gave no real answer, so the
+  scenario is ERROR rather than compared.
+- Anything that stops a comparison is `Verdict::Error` for that scenario only, and the
+  run goes on: a failing reset, setup or teardown, a pooler that doesn't answer after a
+  reset, a client that mixes direct and pooled steps, or a direct step on the pooler run
+  that can't connect (unless the pooler already went wrong at an earlier step).
+  Teardown always runs. On the pooler run a failing teardown only turns a PASS into
+  ERROR, so a FAIL caused by, say, a leaked lock on the scenario's table is kept.
+  Setup, teardown and reset run with `lock_timeout` and `statement_timeout` so they
+  can't hang the run.
 - `compare.rs` decides whether two outcomes match, per the step's `compare` setting.
   Error messages never count, only codes, since wording differs between versions. The
   first mismatch becomes a `Fail` with a kind: `silent` (a different result), `error`
-  (an error Postgres didn't give) or `hang` (timeout).
+  (an error Postgres didn't give) or `hang` (a timeout, or replies that stop short of
+  Postgres's). ParameterStatus lines, recorded only with `compare_parameter_status`, are
+  compared as a set; the other reply lines in order.
 - `reset` exists because poolers keep server connections. Without it, state one
   scenario leaked can change the next scenario's verdict.
 - Closing a direct connection returns before Postgres has ended the backend, so the
@@ -118,10 +141,10 @@ report given with `--results`.
 | To add or change | Edit |
 |---|---|
 | A scenario | `scenarios/<name>.toml`, then `scripts/update-results.sh` (see CONTRIBUTING.md) |
-| A step action or option | `scenario.rs` (format and validation), `runner/steps.rs`, README's step list |
+| A step action or option | `scenario.rs` (format, and the checks when a file loads), `runner/steps.rs`, README's step list |
 | A protocol message for `send` | `runner/raw.rs` (parsing the `send` line, encoding, reply lines) |
 | How outcomes are compared or classified | `runner/compare.rs`, with unit tests there |
-| Reset, setup, repeat or timing behavior | `runner/check.rs`, `runner/pg.rs`, timeouts in `runner/mod.rs` |
+| Reset, setup, repeat or timing behavior | `runner/check.rs`, `runner/pg.rs`, `Timeouts` in `runner/mod.rs`; the step timeout is also set by `--step-timeout` in `cli.rs` and `timeout_ms` in `scenario.rs` |
 | A targets file field | `targets.rs`, README's targets example |
 | A field in the JSON report | `report/mod.rs`; it's a stable format, see the versioning policy in CHANGELOG.md |
 | The results table or page | `report/markdown.rs`, `report/html.rs` and `report/report.html` |
