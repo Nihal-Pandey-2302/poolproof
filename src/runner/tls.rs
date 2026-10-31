@@ -3,7 +3,7 @@
 
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use anyhow::{Context, Result, bail};
 use rustls::client::WebPkiServerVerifier;
@@ -86,18 +86,19 @@ pub enum RootCerts {
     System,
 }
 
-/// How an endpoint uses TLS: the settings, and the rustls config built from them.
+/// How an endpoint uses TLS: the settings, and the rustls config built from them on
+/// first use.
 #[derive(Clone)]
 pub struct Tls {
     pub mode: SslMode,
     pub roots: Option<RootCerts>,
-    /// `None` exactly when `mode` is `Disable`.
-    pub config: Option<Arc<ClientConfig>>,
+    check: Check,
+    config: Arc<OnceLock<Arc<ClientConfig>>>,
 }
 
 impl PartialEq for Tls {
     fn eq(&self, other: &Self) -> bool {
-        // The config is built from the other two.
+        // The rest follows from these two.
         self.mode == other.mode && self.roots == other.roots
     }
 }
@@ -114,7 +115,7 @@ impl fmt::Debug for Tls {
 }
 
 impl Tls {
-    /// Builds the rustls config the way libpq checks certificates:
+    /// Checks the settings, and decides how certificates are checked, as libpq does:
     /// - prefer: no check.
     /// - require: no check, unless a root certificate is given or the default one
     ///   exists, in which case it acts as verify-ca.
@@ -128,15 +129,8 @@ impl Tls {
         if roots == Some(RootCerts::System) && mode != SslMode::VerifyFull {
             bail!("weak sslmode \"{mode}\" may not be used with sslrootcert=system (use \"verify-full\")");
         }
-        if mode == SslMode::Disable {
-            return Ok(Tls {
-                mode,
-                roots,
-                config: None,
-            });
-        }
-        let provider = Arc::new(rustls::crypto::ring::default_provider());
         let roots = roots.or_else(|| match mode {
+            SslMode::Disable => None,
             SslMode::Prefer => None,
             _ => default_root.filter(|p| p.is_file()).map(RootCerts::File),
         });
@@ -148,7 +142,33 @@ impl Tls {
                 bail!("sslmode={mode} needs a root certificate: set sslrootcert, or put one in ~/.postgresql/root.crt")
             }
         };
-        let verifier: Arc<dyn ServerCertVerifier> = match (check, &roots) {
+        Ok(Tls {
+            mode,
+            roots,
+            check,
+            config: Arc::default(),
+        })
+    }
+
+    /// The rustls config, or `None` without TLS. The root certificates are read here,
+    /// on first use, so a missing or unreadable file is an error for this endpoint's
+    /// connections only, not for loading every target.
+    /// Errors carry the `TlsSetup` context: retrying won't help.
+    pub fn client_config(&self) -> Result<Option<Arc<ClientConfig>>> {
+        if self.mode == SslMode::Disable {
+            return Ok(None);
+        }
+        if let Some(config) = self.config.get() {
+            return Ok(Some(config.clone()));
+        }
+        let config = self.build().context(TlsSetup)?;
+        // Another connection may have built it meanwhile; either is the same.
+        Ok(Some(self.config.get_or_init(|| Arc::new(config)).clone()))
+    }
+
+    fn build(&self) -> Result<ClientConfig> {
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        let verifier: Arc<dyn ServerCertVerifier> = match (self.check, &self.roots) {
             (Check::None, _) | (_, None) => Arc::new(NoCheck(provider.clone())),
             (check, Some(roots)) => {
                 let store = Arc::new(root_store(roots)?);
@@ -167,15 +187,22 @@ impl Tls {
             .dangerous()
             .with_custom_certificate_verifier(verifier)
             .with_no_client_auth();
-        Ok(Tls {
-            mode,
-            roots,
-            config: Some(Arc::new(config)),
-        })
+        Ok(config)
     }
 }
 
-#[derive(Clone, Copy)]
+/// Marks an error building the TLS config, e.g. a missing CA file: the same on every
+/// try, so callers that retry connecting can stop at once.
+#[derive(Debug)]
+pub struct TlsSetup;
+
+impl fmt::Display for TlsSetup {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("TLS setup failed")
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
 enum Check {
     None,
     Chain,

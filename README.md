@@ -79,14 +79,17 @@ WARN     session-set                 calls=1022     SET search_path TO app
 ## Try it locally
 
 ```sh
-docker compose -f docker/compose.yml up -d --wait   # Postgres + 10 pooler configurations
+docker compose -f docker/compose.yml up -d --wait   # Postgres + 11 pooler configurations
 cargo run -- run
 ```
 
 Each pooler in the test bed has a pool of one server connection, so leaks between clients
 happen every time instead of by luck. `POSTGRES_IMAGE=postgres:18.4` picks the server
-version. `scripts/update-results.sh` rebuilds `results/` and `RESULTS.md` for Postgres 17
-and 18 from a fresh test bed.
+version. One PgBouncer accepts clients over TLS only (its connections to Postgres stay
+plain); its certificate comes from a CA the test bed makes when it starts
+(`docker/tls/out/<compose project>/ca.pem`; the target names it relative to the
+repository root, so run poolproof from there). `scripts/update-results.sh` rebuilds
+`results/` and `RESULTS.md` for Postgres 17 and 18 from a fresh test bed.
 
 The test bed listens on 127.0.0.1 only. To run more than one at a time, give each its own
 port offset:
@@ -117,11 +120,12 @@ offers it, else plaintext without a word), `require`, `verify-ca` or `verify-ful
 the URL or `PGSSLMODE`. `prefer` never checks certificates, even with a root certificate
 present, so it is encrypted but not authenticated: use `verify-full` for anything not on
 localhost. `sslrootcert` (or `PGSSLROOTCERT`) names the CA file, or `system` for the
-operating system's store (which needs `verify-full`, and makes it the default); without it, `~/.postgresql/root.crt` is used when it exists, and
-`require` then checks the chain like `verify-ca`. `send` steps and cancel requests use the
-same settings. Not supported yet: client certificates and `sslnegotiation=direct`.
-A URL names one host: several hosts or ports, `hostaddr`, `target_session_attrs` and
-`load_balance_hosts` are refused, since poolproof would otherwise pick a host on its own.
+operating system's store (which needs `verify-full`, and makes it the default); without
+it, `~/.postgresql/root.crt` is used when it exists, and `require` then checks the chain
+like `verify-ca`. `send` steps and cancel requests use the same settings. Not supported
+yet: client certificates and `sslnegotiation=direct`. A URL names one host: several hosts
+or ports, `hostaddr`, `target_session_attrs` and `load_balance_hosts` are refused, since
+poolproof would otherwise pick a host on its own.
 
 For several poolers, or to reset state between scenarios, use a targets file
 (`--targets`, default `targets.toml`):
@@ -334,9 +338,8 @@ the workflow.
 
 ## Status
 
-Not covered yet: RDS Proxy and PgCat in the test bed, session-mode targets, a TLS pooler
-in the test bed, and COPY TO STDOUT (`send` steps record its replies, but no scenario
-uses it yet).
+Not covered yet: RDS Proxy and PgCat in the test bed, session-mode targets, and COPY TO
+STDOUT (`send` steps record its replies, but no scenario uses it yet).
 
 ## License
 

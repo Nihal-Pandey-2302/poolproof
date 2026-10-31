@@ -59,6 +59,19 @@ x-supavisor-tenants: &supavisor-tenants
     retries: 180
 
 services:
+  # One-shot: the test CA and server certificate for the TLS pooler.
+  tls-certs:
+    image: ${POSTGRES_IMAGE:-postgres:17.11}
+    entrypoint: ["/make-certs.sh"]
+    user: root
+    environment:
+      # Each test bed writes its own ca.pem, so beds side by side don't overwrite it.
+      PROJECT: ${COMPOSE_PROJECT_NAME:-poolproof}
+    volumes:
+      - ./tls/make-certs.sh:/make-certs.sh:ro
+      - tls:/certs
+      - ./tls/out:/out
+
   postgres:
     image: ${POSTGRES_IMAGE:-postgres:17.11}
     environment:
@@ -84,6 +97,20 @@ services:
     <<: *pgbouncer
     image: edoburu/pgbouncer:v1.26.1-p0
     ports: ["127.0.0.1:${PP_PORT_56443:-56443}:6432"]
+  # Clients must connect with TLS; to Postgres it stays plain, so the shared Postgres
+  # (and every other pooler's server connections) are unchanged.
+  pgbouncer-1.26.1-tls:
+    image: edoburu/pgbouncer:v1.26.1-p0
+    ports: ["127.0.0.1:${PP_PORT_56444:-56444}:6432"]
+    volumes:
+      - ./pgbouncer/pgbouncer-tls.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+      - tls:/tls:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      tls-certs:
+        condition: service_completed_successfully
 
   pgdog-0.1.50:
     <<: *pgdog
@@ -168,3 +195,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+
+volumes:
+  # The test CA and server keys (see tls/make-certs.sh).
+  tls:
