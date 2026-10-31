@@ -12,7 +12,7 @@ pub mod raw;
 mod steps;
 pub mod suite;
 
-pub use check::{Checked, DIRECT_UNREACHABLE, POOLER_UNREACHABLE, check, preflight};
+pub use check::{Checked, DIRECT_UNREACHABLE, POOLER_UNREACHABLE, check, deterministic, preflight};
 pub use compare::{FailKind, Mismatch, Verdict};
 pub use pg::{Privileges, privileges, server_version};
 
@@ -22,8 +22,14 @@ pub use pg::{Privileges, privileges, server_version};
 pub struct Timeouts {
     /// Connecting: TCP connect, startup and authentication together, one deadline.
     pub connect: Duration,
-    /// The reply to one step.
+    /// The reply to one step: the step timeout that `--step-timeout` and a scenario's
+    /// `timeout_ms` set. Only waits for replies the scenario asked for use it.
     pub step: Duration,
+    /// The harness's own waits: a backend's pid, a disconnected backend going away,
+    /// a driver finishing, probes and `SHOW server_version`. Never shortened per
+    /// scenario: if a disconnect wait gave up early, a baseline client's lock or temp
+    /// table could still be visible to the next step.
+    pub housekeeping: Duration,
     /// For `send` steps without a Sync: how long the server must be quiet before the
     /// replies are considered complete.
     pub quiet: Duration,
@@ -31,6 +37,15 @@ pub struct Timeouts {
     pub notify: Duration,
     /// How long to wait for the pooler to answer again after a reset.
     pub ready: Duration,
+    /// `lock_timeout` for setup, teardown and reset statements. A pooler can leak a
+    /// lock (some scenarios test exactly that), and a teardown blocked on it must fail,
+    /// not hang the run.
+    pub direct_lock: Duration,
+    /// `statement_timeout` for the same statements. Stays well above reset's 5 s wait
+    /// per terminated backend.
+    pub direct_statement: Duration,
+    /// Extra time on top of `direct_statement` before giving up on the server itself.
+    pub direct_grace: Duration,
 }
 
 impl Default for Timeouts {
@@ -38,9 +53,13 @@ impl Default for Timeouts {
         Timeouts {
             connect: Duration::from_secs(10),
             step: Duration::from_secs(10),
+            housekeeping: Duration::from_secs(10),
             quiet: Duration::from_millis(500),
             notify: Duration::from_secs(1),
             ready: Duration::from_secs(10),
+            direct_lock: Duration::from_secs(5),
+            direct_statement: Duration::from_secs(30),
+            direct_grace: Duration::from_secs(5),
         }
     }
 }

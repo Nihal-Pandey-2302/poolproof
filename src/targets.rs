@@ -54,6 +54,15 @@ impl Statement {
         sqls.iter().map(|sql| Self::plain(sql)).collect()
     }
 
+    /// A statement as if `written` had been expanded to `sql`.
+    #[cfg(test)]
+    pub(crate) fn substituted(sql: &str, written: &str) -> Self {
+        Statement {
+            sql: sql.to_string(),
+            written: written.to_string(),
+        }
+    }
+
     pub fn sql(&self) -> &str {
         &self.sql
     }

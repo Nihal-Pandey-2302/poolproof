@@ -1,0 +1,39 @@
+name: Wrong result
+description: poolproof gave a PASS, FAIL or ERROR it shouldn't have.
+labels: [wrong-result]
+body:
+  - type: input
+    id: scenario
+    attributes:
+      label: Scenario
+      placeholder: set-isolated-between-clients
+    validations:
+      required: true
+  - type: input
+    id: target
+    attributes:
+      label: Pooler, version and pooling mode
+      placeholder: pgdog 0.1.62, transaction mode
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: poolproof and Postgres versions
+      placeholder: poolproof 0.1.0, Postgres 17.11
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected and why
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Output of `poolproof run -v --filter <scenario>`
+      description: Remove passwords from any URLs first.
+      render: text
+    validations:
+      required: true
