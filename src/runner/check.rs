@@ -183,9 +183,11 @@ async fn run_once(
         return failed(format!("{e:#}"));
     }
     let outcomes = match run_direct(direct, &Statement::plain_all(&scenario.setup), t).await {
-        Ok(()) => run_steps(scenario, pooled, direct, t)
-            .await
-            .map_err(|e| format!("steps ({side}): {e:#}")),
+        Ok(()) => match &scenario.program {
+            Some(program) => program.run(pooled, t).await,
+            None => run_steps(scenario, pooled, direct, t).await,
+        }
+        .map_err(|e| format!("steps ({side}): {e:#}")),
         Err(e) => Err(format!("setup ({side}): {e:#}")),
     };
     let teardown = run_direct(direct, &Statement::plain_all(&scenario.teardown), t)

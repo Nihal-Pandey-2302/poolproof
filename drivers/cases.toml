@@ -1,0 +1,101 @@
+# What every driver program runs, through `poolproof drivers`. Each case runs once
+# against plain Postgres and once through the pooler, like a scenario.
+#
+# A step is one query on one of the program's two connections (clients "a" and "b"),
+# sent with the driver's normal query API, so its own prepare and caching rules apply.
+# `params` are integers, written as $1, $2 in `sql`. `times` runs the step that many
+# times in a row; `rounds` runs the whole step list that many times. Both expand into
+# separate steps, so each execution is compared. SQL has no tabs or newlines, and no
+# `%` or `?` (some drivers use them as placeholders).
+
+[[case]]
+name = "auto-prepare"
+description = "The same parameterized query run more times than the driver's auto-prepare threshold, then the same on another connection."
+
+[[case.step]]
+client = "a"
+sql = "SELECT ($1::int * 2)::text AS doubled"
+params = [21]
+times = 8
+
+[[case.step]]
+client = "b"
+sql = "SELECT ($1::int * 2)::text AS doubled"
+params = [21]
+times = 8
+
+[[case]]
+name = "same-names-different-sql"
+description = "Two connections take turns with different queries, so drivers that number statements per connection give both the same name."
+rounds = 8
+
+[[case.step]]
+client = "a"
+sql = "SELECT 'from a ' || $1::int AS who"
+params = [1]
+
+[[case.step]]
+client = "b"
+sql = "SELECT 'from b ' || $1::int AS who"
+params = [2]
+
+[[case]]
+name = "same-sql-both-connections"
+description = "Two connections take turns with the same query, so drivers that name statements by their text prepare the same name twice."
+rounds = 8
+
+[[case.step]]
+client = "a"
+sql = "SELECT ($1::int + 100)::text AS shared"
+params = [1]
+
+[[case.step]]
+client = "b"
+sql = "SELECT ($1::int + 100)::text AS shared"
+params = [2]
+
+[[case]]
+name = "transaction"
+description = "Queries that cross the auto-prepare threshold inside a transaction, then another connection reads what it committed."
+setup = ["DROP TABLE IF EXISTS pp_driver_txn", "CREATE TABLE pp_driver_txn (x int)"]
+teardown = ["DROP TABLE IF EXISTS pp_driver_txn"]
+
+[[case.step]]
+client = "a"
+sql = "BEGIN"
+
+[[case.step]]
+client = "a"
+sql = "INSERT INTO pp_driver_txn VALUES ($1::int)"
+params = [1]
+times = 6
+
+[[case.step]]
+client = "a"
+sql = "SELECT count(*)::text AS in_transaction FROM pp_driver_txn"
+
+[[case.step]]
+client = "a"
+sql = "COMMIT"
+
+[[case.step]]
+client = "b"
+sql = "SELECT count(*)::text AS committed FROM pp_driver_txn WHERE x = $1::int"
+params = [1]
+times = 6
+
+[[case]]
+name = "set-leak"
+description = "A session SET on one connection must not change what another connection sees."
+
+[[case.step]]
+client = "a"
+sql = "SET statement_timeout = '5s'"
+
+[[case.step]]
+client = "b"
+sql = "SHOW statement_timeout"
+
+[[case.step]]
+client = "a"
+sql = "SHOW statement_timeout"

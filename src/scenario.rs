@@ -91,6 +91,10 @@ pub struct Scenario {
     pub teardown: Vec<String>,
     #[serde(rename = "step")]
     pub steps: Vec<Step>,
+    /// Set for `poolproof drivers` scenarios, never from a file: the steps run in a
+    /// driver's own program instead of poolproof's clients.
+    #[serde(skip)]
+    pub program: Option<crate::drivers::Program>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -139,6 +143,10 @@ pub struct Step {
     pub delay_ms: Option<u64>,
     #[serde(default)]
     pub compare: Compare,
+    /// How a driver step describes itself. Never from a file: driver steps have no
+    /// action of poolproof's own.
+    #[serde(skip)]
+    pub label: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -168,6 +176,29 @@ pub enum Action<'a> {
 }
 
 impl Step {
+    /// A step that a driver program runs (see `crate::drivers`).
+    pub(crate) fn labeled(client: &str, label: String, compare: Compare) -> Self {
+        Step {
+            client: client.to_string(),
+            direct: false,
+            simple: None,
+            abandon_after_ms: None,
+            prepare: None,
+            name: None,
+            execute: None,
+            disconnect: false,
+            background: false,
+            wait: false,
+            cancel: false,
+            notifications: false,
+            send: None,
+            compare_parameter_status: false,
+            delay_ms: None,
+            compare,
+            label: Some(label),
+        }
+    }
+
     pub fn action(&self) -> Result<Action<'_>> {
         let set = [
             self.simple.is_some(),
@@ -239,6 +270,9 @@ impl Step {
     }
 
     pub fn describe(&self) -> String {
+        if let Some(label) = &self.label {
+            return format!("[{}] {label}", self.client);
+        }
         let via = if self.direct { " (direct)" } else { "" };
         let what = match self.action() {
             Ok(Action::Simple(sql)) => format!("simple: {sql}"),

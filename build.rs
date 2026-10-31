@@ -15,7 +15,12 @@ fn main() {
         "json",
         &out.join("bundled_results.rs"),
     );
-    embed(&root.join("limitations"), "", "toml", &out.join("bundled_limitations.rs"));
+    embed(
+        &root.join("limitations"),
+        "",
+        "toml",
+        &out.join("bundled_limitations.rs"),
+    );
 }
 
 /// Writes `&[(file name, include_str!(path)), ...]` for the files in `dir` whose names
