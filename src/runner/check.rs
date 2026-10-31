@@ -1,10 +1,10 @@
 use std::time::Duration;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use tokio::time::{Instant, timeout};
 
 use super::compare::{FailKind, Mismatch, Verdict, baseline_failure};
-use super::pg::{connect, wait_ready};
+use super::pg::{connect, connect_with, wait_ready};
 use super::steps::run_steps;
 use super::{Outcome, Timeouts};
 use crate::scenario::Scenario;
@@ -20,7 +20,9 @@ async fn run_direct(direct: &Endpoint, statements: &[Statement], t: &Timeouts) -
     if statements.is_empty() {
         return Ok(());
     }
-    let (client, driver, _) = connect(direct, t).await?;
+    // Waits for the backend to exit on close, so a setup that ends holding a lock or a
+    // temp table is fully gone before the steps start.
+    let (client, driver, _) = connect_with(direct, t, true).await?;
     let limits = Statement::plain(&format!(
         "SET lock_timeout = '{}ms'; SET statement_timeout = '{}ms'",
         t.direct_lock.as_millis(),
@@ -34,10 +36,14 @@ async fn run_direct(direct: &Endpoint, statements: &[Statement], t: &Timeouts) -
         res = execute(&client, s, t).await;
     }
     // Close the session even after an error, so it's gone before the next phase
-    // (e.g. a failed setup's session while teardown runs).
+    // (e.g. a failed setup's session while teardown runs). The first error wins.
     drop(client);
-    let _ = timeout(t.housekeeping, driver).await;
-    res
+    let exited = timeout(t.housekeeping, driver).await.is_ok();
+    res?;
+    if !exited {
+        bail!("the backend did not exit within {:?} of the disconnect", t.housekeeping);
+    }
+    Ok(())
 }
 
 /// Errors show the statement as written. The server's message can quote the executed

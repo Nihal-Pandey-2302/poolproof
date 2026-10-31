@@ -281,6 +281,7 @@ impl Endpoint {
         let (url, sslmode, sslrootcert) = take_tls_params(url)?;
         // The parse error never includes the URL, so it can't leak a password.
         let mut config = Config::from_str(&url).context("invalid connection URL")?;
+        check_supported(&config)?;
         // libpq's default is prefer: TLS when the server offers it, without checks.
         let roots = sslrootcert.or_else(|| env("PGSSLROOTCERT")).map(|r| match r.as_str() {
             "system" => RootCerts::System,
@@ -312,6 +313,30 @@ impl Endpoint {
     pub(crate) fn tls(&self) -> &Tls {
         &self.tls
     }
+}
+
+/// poolproof opens the socket itself (to see when Postgres closes it), so it connects to
+/// one host and can't pick among several. Options that would make it pick are refused
+/// rather than ignored: `h1,h2?target_session_attrs=read-write` would otherwise test
+/// whichever host comes first, maybe a standby.
+fn check_supported(config: &Config) -> Result<()> {
+    use tokio_postgres::config::{LoadBalanceHosts, TargetSessionAttrs};
+    if config.get_hosts().len() > 1 {
+        bail!("not supported: more than one host");
+    }
+    if config.get_ports().len() > 1 {
+        bail!("not supported: more than one port");
+    }
+    if !config.get_hostaddrs().is_empty() {
+        bail!("not supported: hostaddr");
+    }
+    if config.get_target_session_attrs() != TargetSessionAttrs::Any {
+        bail!("not supported: target_session_attrs");
+    }
+    if config.get_load_balance_hosts() != LoadBalanceHosts::Disable {
+        bail!("not supported: load_balance_hosts");
+    }
+    Ok(())
 }
 
 /// Takes `sslmode` and `sslrootcert` out of a connection string, from either form.
@@ -761,14 +786,22 @@ mod tests {
     }
 
     #[test]
+    fn refuses_options_that_pick_a_host() {
+        let err = |url: &str| format!("{:#}", Endpoint::resolve(url, &env_of(&[])).unwrap_err());
+        assert!(err("postgres://u@h1,h2/db").contains("not supported: more than one host"));
+        assert!(err("postgres://u@h/db?hostaddr=10.0.0.1").contains("not supported: hostaddr"));
+        assert!(err("host=h port=5432,6432 user=u").contains("not supported: more than one port"));
+        assert!(err("postgres://u@h/db?target_session_attrs=read-write").contains("target_session_attrs"));
+        assert!(err("postgres://u@h/db?load_balance_hosts=random").contains("load_balance_hosts"));
+        assert!(Endpoint::resolve("postgres://u@h/db?target_session_attrs=any", &env_of(&[])).is_ok());
+    }
+
+    #[test]
     fn redacts_passwords() {
         let shown = |url: &str| Endpoint::resolve(url, &env_of(&[])).unwrap().to_string();
         assert_eq!(shown("postgres://u:s3cret@h:5433/db"), "postgres://u@h:5433/db");
         assert_eq!(shown("host=h user=u password='s3 cret' dbname=db"), "postgres://u@h/db");
-        assert_eq!(
-            shown("postgres://u:pw@[::1]:5432,h2:5433/db"),
-            "postgres://u@[::1]:5432,h2:5433/db"
-        );
+        assert_eq!(shown("postgres://u:pw@[::1]:5432/db"), "postgres://u@[::1]:5432/db");
         let e = Endpoint::resolve("postgres://u:s3cret@h/db", &env_of(&[])).unwrap();
         assert!(!format!("{e:?}").contains("s3cret"));
         let err = Endpoint::resolve("postgres://u:s3cret@h:notaport/db", &env_of(&[])).unwrap_err();
