@@ -114,8 +114,9 @@ jobs:
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
             --title "$GITHUB_REF_NAME" --generate-notes poolproof-*.tar.gz poolproof-*.zip SHA256SUMS
 
-  # crates.io through trusted publishing (OIDC), no stored token. Off until the owner sets
-  # the repository variable CRATES_IO_TRUSTED_PUBLISHING to true; see docs/releasing.md.
+  # crates.io through trusted publishing (OIDC), no stored token. Off until a repository
+  # admin sets the repository variable CRATES_IO_TRUSTED_PUBLISHING to true; see
+  # docs/releasing.md.
   publish:
     if: startsWith(github.ref, 'refs/tags/') && vars.CRATES_IO_TRUSTED_PUBLISHING == 'true'
     needs: release

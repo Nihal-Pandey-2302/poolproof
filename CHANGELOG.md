@@ -53,7 +53,7 @@ First release.
   messages (statement names, Flush vs Sync, pipelines, COPY FROM STDIN and TO STDOUT)
   with raw `send` steps.
 - `poolproof scan`: flags transaction-pooling-unsafe queries in pg_stat_statements CSV,
-  Postgres stderr and jsonlog logs, and `.sql` files. Text, JSON and SARIF output.
+  Postgres stderr, csvlog and jsonlog logs, and `.sql` files. Text, JSON and SARIF output.
   `--pooler` checks each finding against what that pooler version did in poolproof's
   own runs.
 - `poolproof report`: renders saved JSON runs as markdown or one self-contained HTML page.
