@@ -50,7 +50,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
         with:
           toolchain: stable
+          components: clippy
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      # Code behind #[cfg(unix)] or #[cfg(windows)] only warns on the other platform.
+      - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo build --locked
 
       # Commands that need no server, and the error paths, each with its exact exit code.
