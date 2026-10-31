@@ -42,3 +42,31 @@ supavisor-2.10.0-rc.1-strict driver/pgx-default/transaction verdict
 supavisor-2.10.0-rc.1-strict driver/pgx-default/same-names-different-sql verdict
 supavisor-2.10.0-rc.1-strict driver/node-postgres-named/same-names-different-sql verdict
 supavisor-2.10.0-rc.1-strict driver/node-postgres-named/transaction verdict
+
+# The same mechanism the other way round: these fail with 42P05 because both clients'
+# drivers prepare the same statement name on Supavisor's one server connection. When it
+# gives the second client a server connection of its own, the names don't collide and the
+# case passes. Seen in CI on supavisor-2.10.0-rc.1-strict driver/pgx-default/auto-prepare
+# (FAIL error -> PASS); the others are exposed the same way. Committed FAIL error. Not
+# listed: pgjdbc on the strict target, which fails on its own SET application_name
+# before it prepares anything. Drop these with the ones above.
+supavisor-2.10.0-rc.1 driver/psycopg-default/auto-prepare verdict
+supavisor-2.10.0-rc.1 driver/psycopg-default/same-names-different-sql verdict
+supavisor-2.10.0-rc.1 driver/psycopg-default/same-sql-both-connections verdict
+supavisor-2.10.0-rc.1 driver/psycopg-default/transaction verdict
+supavisor-2.10.0-rc.1 driver/pgjdbc-default/auto-prepare verdict
+supavisor-2.10.0-rc.1 driver/pgjdbc-default/same-names-different-sql verdict
+supavisor-2.10.0-rc.1 driver/pgjdbc-default/same-sql-both-connections verdict
+supavisor-2.10.0-rc.1 driver/pgjdbc-default/transaction verdict
+supavisor-2.10.0-rc.1 driver/pgx-default/auto-prepare verdict
+supavisor-2.10.0-rc.1 driver/pgx-default/same-sql-both-connections verdict
+supavisor-2.10.0-rc.1 driver/node-postgres-named/auto-prepare verdict
+supavisor-2.10.0-rc.1 driver/node-postgres-named/same-sql-both-connections verdict
+supavisor-2.10.0-rc.1-strict driver/psycopg-default/auto-prepare verdict
+supavisor-2.10.0-rc.1-strict driver/psycopg-default/same-names-different-sql verdict
+supavisor-2.10.0-rc.1-strict driver/psycopg-default/same-sql-both-connections verdict
+supavisor-2.10.0-rc.1-strict driver/psycopg-default/transaction verdict
+supavisor-2.10.0-rc.1-strict driver/pgx-default/auto-prepare verdict
+supavisor-2.10.0-rc.1-strict driver/pgx-default/same-sql-both-connections verdict
+supavisor-2.10.0-rc.1-strict driver/node-postgres-named/auto-prepare verdict
+supavisor-2.10.0-rc.1-strict driver/node-postgres-named/same-sql-both-connections verdict
