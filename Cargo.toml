@@ -11,10 +11,20 @@ keywords = ["postgres", "pgbouncer", "connection-pool", "testing", "pooler"]
 categories = ["command-line-utilities", "database", "development-tools::testing"]
 # The test bed and CI files are for this repo, not for `cargo install`. results/ stays:
 # `scan --pooler` reads it.
-exclude = [".github/", "docker/", "scripts/", "RESULTS.md", "targets.toml"]
+exclude = [".github/", "docker/", "scripts/", "selftest/", "tools/", "RESULTS.md", "targets.toml"]
+
+# cargo binstall poolproof: download the release archive instead of compiling.
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }{ archive-suffix }"
+bin-dir = "{ name }-{ target }/{ bin }{ binary-ext }"
+pkg-fmt = "tgz"
+
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-fmt = "zip"
 
 [dependencies]
 anyhow = "1.0.104"
+base64 = "0.22.1"
 bytes = "1.12.1"
 clap = { version = "4.6.7", features = ["derive"] }
 csv = "1.4.0"
@@ -23,9 +33,17 @@ pg_query = "18.1.0"
 postgres-protocol = "0.6.12"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+sha2 = "0.11.1"
 tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "time", "net", "io-util"] }
 tokio-postgres = "0.7.18"
 toml = "1.1.8"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.191"
+
+# panic stays unwind: a panic in a spawned task must reach the runner as a JoinError and
+# become a recorded outcome, not abort the whole run.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

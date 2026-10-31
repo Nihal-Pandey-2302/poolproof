@@ -1,10 +1,11 @@
 //! The loop over targets and scenarios behind `poolproof run`.
 
+use std::collections::HashMap;
 use std::time::Duration;
 
 use anyhow::{Result, bail};
 
-use super::{FailKind, Timeouts, Verdict, check, preflight, server_version};
+use super::{FailKind, Timeouts, Verdict, check, deterministic, preflight, server_version};
 use crate::output::text::{Style, print_progress, print_result};
 use crate::report::{ResultRow, StepOutcomes, TargetInfo};
 use crate::scenario::Scenario;
@@ -22,6 +23,7 @@ pub struct RunOptions<'a> {
     pub text: bool,
     pub style: Style,
     /// Run each baseline twice and report a scenario whose results differ as ERROR.
+    /// Done once per scenario and Postgres server, not once per target.
     pub check_scenarios: bool,
     /// A scenario's `timeout_ms` overrides `step`.
     pub timeouts: Timeouts,
@@ -39,6 +41,8 @@ pub async fn run(
     let total = targets.len() * scenarios.iter().filter(wanted).count();
     let mut results = Vec::new();
     let mut target_infos = Vec::new();
+    // --check-scenarios verdicts by (scenario, direct URL).
+    let mut determinism: HashMap<(&str, &str), Result<(), String>> = HashMap::new();
     for target in targets {
         target_infos.push(TargetInfo {
             name: target.name.clone(),
@@ -71,16 +75,27 @@ pub async fn run(
             } else if let Some(reason) = &unreachable {
                 (Verdict::Error { reason: reason.clone() }, vec![], 0, 0)
             } else {
-                let checked = check(
-                    s,
-                    &target.pooler,
-                    &target.direct,
-                    &target.reset,
-                    &for_scenario(&timeouts, s),
-                    opts.check_scenarios,
-                )
-                .await;
-                (checked.verdict, checked.steps, checked.runs, checked.failures)
+                let key = (s.name.as_str(), target.direct.as_str());
+                if opts.check_scenarios && !determinism.contains_key(&key) {
+                    determinism.insert(
+                        key,
+                        deterministic(s, &target.direct, &target.reset, &for_scenario(&timeouts, s)).await,
+                    );
+                }
+                match determinism.get(&key) {
+                    Some(Err(reason)) => (Verdict::Error { reason: reason.clone() }, vec![], 0, 0),
+                    _ => {
+                        let checked = check(
+                            s,
+                            &target.pooler,
+                            &target.direct,
+                            &target.reset,
+                            &for_scenario(&timeouts, s),
+                        )
+                        .await;
+                        (checked.verdict, checked.steps, checked.runs, checked.failures)
+                    }
+                }
             };
             if opts.text {
                 print_result(&target.name, s, &verdict, &steps, runs, failures, opts.style);
@@ -112,11 +127,23 @@ pub enum FailOn {
     None,
     /// Silent failures only: wrong results with no error.
     Silent,
-    /// Silent failures and errors the pooler returned where Postgres didn't.
+    /// Silent FAILs and FAILs where the pooler returned an error Postgres didn't.
+    /// Not about ERROR verdicts, which count for every level but `none`.
     Error,
     /// Every failure, hangs included.
     #[default]
     Any,
+}
+
+impl std::fmt::Display for FailOn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            FailOn::None => "none",
+            FailOn::Silent => "silent",
+            FailOn::Error => "error",
+            FailOn::Any => "any",
+        })
+    }
 }
 
 impl FailOn {
@@ -190,6 +217,38 @@ mod tests {
         assert_eq!(exits(FailOn::Silent), [false, true, false, false, true]);
         assert_eq!(exits(FailOn::Error), [false, true, true, false, true]);
         assert_eq!(exits(FailOn::Any), [false, true, true, true, true]);
+    }
+
+    #[tokio::test]
+    #[ignore = "needs POOLPROOF_TEST_PG"]
+    async fn check_scenarios_runs_once_per_postgres_server() {
+        let url = std::env::var("POOLPROOF_TEST_PG").expect("set POOLPROOF_TEST_PG to a Postgres URL");
+        let (client, driver) = tokio_postgres::connect(&url, tokio_postgres::NoTls).await.unwrap();
+        tokio::spawn(driver);
+        client
+            .batch_execute("DROP TABLE IF EXISTS pp_runs; CREATE TABLE pp_runs ()")
+            .await
+            .unwrap();
+        // Setup runs once per baseline and once per target run.
+        let s: Scenario = toml::from_str(
+            "name = 't'\ndescription = 't'\nsetup = ['INSERT INTO pp_runs DEFAULT VALUES']\n\
+             [[step]]\nclient = 'a'\nsimple = 'SELECT 1'\n",
+        )
+        .unwrap();
+        let mut targets = Targets::single(url.clone(), url.clone(), PoolMode::Transaction).targets;
+        let mut second = Targets::single(url.clone(), url.clone(), PoolMode::Transaction).targets;
+        second[0].name = "b".into();
+        targets.append(&mut second);
+        let opts = RunOptions {
+            check_scenarios: true,
+            ..RunOptions::default()
+        };
+        let (_, results) = run(&targets, std::slice::from_ref(&s), &opts).await.unwrap();
+        assert!(results.iter().all(|r| matches!(r.verdict, Verdict::Pass)));
+        let rows = client.query_one("SELECT count(*) FROM pp_runs", &[]).await.unwrap();
+        // 2 for the shared check, then baseline + target run on each target.
+        assert_eq!(rows.get::<_, i64>(0), 2 + 2 * 2);
+        client.batch_execute("DROP TABLE pp_runs").await.unwrap();
     }
 
     #[test]
