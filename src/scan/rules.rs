@@ -77,8 +77,10 @@ pub fn scan(input: &Input) -> Report {
 
 /// A query string of several statements with BEGIN, COMMIT or ROLLBACK among them. The
 /// scenarios are the ones with the same shape: a transaction statement first, BEGIN
-/// first, or BEGIN after other statements. A string that only ends a transaction (or
-/// sets a savepoint) after other statements has no scenario of its shape.
+/// first, or BEGIN after other statements. A string that only ends a transaction after
+/// other statements has no scenario of its shape. Savepoints and two-phase COMMIT or
+/// ROLLBACK PREPARED don't count: they don't open or close the transaction, and Postgres
+/// rejects them in a string's implicit transaction anyway.
 fn multi_statement_transaction(stmts: &[pg_query::protobuf::RawStmt]) -> Option<Hit> {
     use pg_query::protobuf::TransactionStmtKind;
     let kinds: Vec<(usize, TransactionStmtKind)> = stmts
@@ -87,6 +89,16 @@ fn multi_statement_transaction(stmts: &[pg_query::protobuf::RawStmt]) -> Option<
         .filter_map(|(i, raw)| match raw.stmt.as_ref()?.node.as_ref()? {
             NodeEnum::TransactionStmt(t) => Some((i, t.kind())),
             _ => None,
+        })
+        .filter(|(_, kind)| {
+            !matches!(
+                kind,
+                TransactionStmtKind::TransStmtSavepoint
+                    | TransactionStmtKind::TransStmtRelease
+                    | TransactionStmtKind::TransStmtRollbackTo
+                    | TransactionStmtKind::TransStmtCommitPrepared
+                    | TransactionStmtKind::TransStmtRollbackPrepared
+            )
         })
         .collect();
     let begins = |kind: &TransactionStmtKind| {
@@ -125,9 +137,9 @@ fn multi_statement_transaction(stmts: &[pg_query::protobuf::RawStmt]) -> Option<
         )
     } else {
         (
-            "This one query string ends a transaction (COMMIT, ROLLBACK or a savepoint) after other \
-             statements. A pooler that decides about transactions from a string's first statement \
-             may not see it; no poolproof scenario tests this shape yet, so check yours. Send them \
+            "This one query string ends a transaction (COMMIT, ROLLBACK, END or PREPARE TRANSACTION) \
+             after other statements. A pooler that decides about transactions from a string's first \
+             statement may not see it; no poolproof scenario tests this shape yet. Send them \
              separately.",
             vec![],
         )
@@ -914,7 +926,8 @@ mod tests {
         for sql in [
             "INSERT INTO t VALUES (1); COMMIT",
             "INSERT INTO t VALUES (1); ROLLBACK",
-            "SELECT 1; SAVEPOINT s",
+            "INSERT INTO t VALUES (1); END",
+            "INSERT INTO t VALUES (1); PREPARE TRANSACTION 'x'",
         ] {
             let findings = scan(&[query(sql, 1)]).findings;
             assert_eq!(findings.len(), 1, "{sql}");
@@ -925,6 +938,17 @@ mod tests {
             scenarios("INSERT INTO t VALUES (1); COMMIT; BEGIN; INSERT INTO t VALUES (2)")[0],
             "multi-statement-begin-not-first"
         );
+        // Savepoints and two-phase COMMIT/ROLLBACK PREPARED don't open or close the
+        // transaction: no finding, wherever they are.
+        for sql in [
+            "SELECT 1; SAVEPOINT s",
+            "SAVEPOINT s; INSERT INTO t VALUES (1)",
+            "INSERT INTO t VALUES (1); RELEASE SAVEPOINT s",
+            "ROLLBACK TO SAVEPOINT s; SELECT 1",
+            "COMMIT PREPARED 'x'; SELECT 1",
+        ] {
+            assert!(rules(sql).is_empty(), "{sql}");
+        }
         // Every scenario a finding narrows its list to exists (the rule lists are checked
         // in findings_point_to_scenarios).
         let all: Vec<String> = crate::scenario::bundled()
