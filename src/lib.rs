@@ -24,3 +24,17 @@ pub mod scenario;
 pub mod targets;
 #[doc(hidden)]
 pub mod version;
+
+/// A file of the repository's own test bed, which the published crate leaves out. None,
+/// with a note, when running from the packaged crate (no `.git`), so its tests skip
+/// there; in a checkout a missing file still fails them.
+#[cfg(test)]
+pub(crate) fn repo_file(path: &str) -> Option<std::path::PathBuf> {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let file = root.join(path);
+    if !file.exists() && !root.join(".git").exists() {
+        eprintln!("skipped: {path} isn't in the packaged crate");
+        return None;
+    }
+    Some(file)
+}

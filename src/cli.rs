@@ -165,9 +165,8 @@ struct SuiteArgs {
     /// With --pooler: the pooler's mode.
     #[arg(long, value_enum, default_value_t = PoolMode::Transaction)]
     mode: PoolMode,
-    /// With --pooler: what to run on --direct before every run. `auto` ends only
-    /// the pooler's own sessions; `all` ends every other session on the database.
-    /// Without it, nothing is reset.
+    /// With --pooler: what to run on --direct before every run. Without it, nothing
+    /// is reset. A targets file's `reset` can also be a list of your own statements.
     #[arg(long, value_enum, requires = "pooler")]
     reset: Option<ResetArg>,
     /// With --pooler: the pooler's pool size for this database and user, as
@@ -257,7 +256,11 @@ enum DoctorFormat {
 /// `run --reset`.
 #[derive(Clone, Copy, clap::ValueEnum)]
 pub enum ResetArg {
+    /// End the sessions of the pooler's user from the pooler's address; refused when
+    /// the pooler connects from poolproof's own address.
     Auto,
+    /// End every other session on the database; needs --yes unless Postgres runs on
+    /// this machine.
     All,
     /// End only the pooler's own server connections; needs --pool-size.
     Exact,
@@ -690,6 +693,10 @@ fn load_targets(
             let mut targets = Targets::single(&pooler, &direct, mode, reset)?;
             targets.targets[0].pool_size = pool_size;
             Ok(targets)
+        }
+        // What a new user types first, outside the repository.
+        _ if file == std::path::Path::new("targets.toml") && !file.exists() => {
+            anyhow::bail!("no targets.toml here: pass --targets FILE, or --pooler URL --direct URL for one pooler")
         }
         _ => Targets::load(file),
     }

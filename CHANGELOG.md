@@ -253,6 +253,11 @@ First release.
 
 ### Fixed
 
+- `run`, `doctor` and `drivers` without a targets file in the current directory say what
+  to pass (`--targets FILE`, or `--pooler URL --direct URL`) instead of "No such file or
+  directory". `--help` describes each `--reset` value.
+- `cargo test` passes from the published crate: the two tests that read the repository's
+  own `targets.toml` skip there.
 - `run`: without superuser or `pg_read_all_stats`, Postgres hides other roles' session
   details, so `reset = "all"` and `"auto"` matched none of the pooler's sessions, reported
   success, and leaked state carried over between scenarios. A pooler connecting as a
