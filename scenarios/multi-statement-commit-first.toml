@@ -1,0 +1,51 @@
+name = "multi-statement-commit-first"
+description = "A simple query that starts with COMMIT, ROLLBACK or END must run the statements after it. Otherwise the app's later statements in the string silently don't run."
+refs = ["https://github.com/pgdogdev/pgdog/issues/1849"]
+setup = ["DROP TABLE IF EXISTS pp_multi", "CREATE TABLE pp_multi (x int)"]
+teardown = ["DROP TABLE IF EXISTS pp_multi"]
+# Inside a transaction and outside one: there, Postgres only warns about the COMMIT.
+
+[[step]]
+client = "app"
+simple = "BEGIN"
+
+[[step]]
+client = "app"
+simple = "INSERT INTO pp_multi VALUES (1)"
+
+[[step]]
+client = "app"
+simple = "COMMIT; INSERT INTO pp_multi VALUES (2)"
+
+[[step]]
+client = "app"
+simple = "BEGIN"
+
+[[step]]
+client = "app"
+simple = "INSERT INTO pp_multi VALUES (3)"
+
+[[step]]
+client = "app"
+simple = "ROLLBACK; INSERT INTO pp_multi VALUES (4)"
+
+[[step]]
+client = "app"
+simple = "COMMIT; INSERT INTO pp_multi VALUES (5)"
+
+[[step]]
+client = "app"
+simple = "ROLLBACK; INSERT INTO pp_multi VALUES (6)"
+
+[[step]]
+client = "app"
+simple = "END; INSERT INTO pp_multi VALUES (7)"
+
+[[step]]
+client = "app"
+disconnect = true
+
+[[step]]
+client = "check"
+direct = true
+simple = "SELECT coalesce(array_agg(x ORDER BY x)::text, '{}') FROM pp_multi"

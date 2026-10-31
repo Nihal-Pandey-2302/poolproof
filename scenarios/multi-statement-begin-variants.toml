@@ -1,0 +1,75 @@
+name = "multi-statement-begin-variants"
+description = "Every way to write BEGIN or START TRANSACTION at the start of a simple query must run every statement, with its options. Otherwise statements silently don't run, or run at the wrong isolation level."
+refs = ["https://github.com/pgdogdev/pgdog/issues/1849"]
+setup = ["DROP TABLE IF EXISTS pp_multi", "CREATE TABLE pp_multi (x int)"]
+teardown = ["DROP TABLE IF EXISTS pp_multi"]
+# The last two transactions send BEGIN with options as a query of its own.
+
+[[step]]
+client = "app"
+simple = "begin; insert into pp_multi values (1); commit"
+
+[[step]]
+client = "app"
+simple = "   BEGIN ;  INSERT INTO pp_multi VALUES (2) ; COMMIT ;"
+
+[[step]]
+client = "app"
+simple = "/* leading */ BEGIN; INSERT INTO pp_multi VALUES (3); COMMIT"
+
+[[step]]
+client = "app"
+simple = "-- leading\nBEGIN; INSERT INTO pp_multi VALUES (4); COMMIT"
+
+[[step]]
+client = "app"
+simple = "BEGIN WORK; INSERT INTO pp_multi VALUES (5); COMMIT WORK"
+
+[[step]]
+client = "app"
+simple = "BEGIN TRANSACTION; INSERT INTO pp_multi VALUES (6); END"
+
+[[step]]
+client = "app"
+simple = "START TRANSACTION; INSERT INTO pp_multi VALUES (7); COMMIT"
+
+[[step]]
+client = "app"
+simple = "BEGIN ISOLATION LEVEL REPEATABLE READ; SELECT current_setting('transaction_isolation'); COMMIT"
+
+[[step]]
+client = "app"
+simple = "START TRANSACTION ISOLATION LEVEL SERIALIZABLE, READ ONLY; SELECT current_setting('transaction_isolation'), current_setting('transaction_read_only'); COMMIT"
+
+[[step]]
+client = "app"
+simple = "BEGIN ISOLATION LEVEL REPEATABLE READ"
+
+[[step]]
+client = "app"
+simple = "SELECT current_setting('transaction_isolation')"
+
+[[step]]
+client = "app"
+simple = "COMMIT"
+
+[[step]]
+client = "app"
+simple = "START TRANSACTION READ ONLY"
+
+[[step]]
+client = "app"
+simple = "INSERT INTO pp_multi VALUES (8)"
+
+[[step]]
+client = "app"
+simple = "ROLLBACK"
+
+[[step]]
+client = "app"
+disconnect = true
+
+[[step]]
+client = "check"
+direct = true
+simple = "SELECT coalesce(array_agg(x ORDER BY x)::text, '{}') FROM pp_multi"

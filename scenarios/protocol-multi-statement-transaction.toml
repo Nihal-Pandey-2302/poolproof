@@ -1,0 +1,50 @@
+name = "protocol-multi-statement-transaction"
+description = "Transaction control over the extended protocol must behave as on Postgres: a multi-statement Parse fails, and BEGIN and COMMIT in a pipeline or in their own Sync run on the server."
+refs = ["https://github.com/pgdogdev/pgdog/issues/1849"]
+setup = ["DROP TABLE IF EXISTS pp_multi", "CREATE TABLE pp_multi (x int)"]
+teardown = ["DROP TABLE IF EXISTS pp_multi"]
+# Postgres rejects several statements in one Parse with 42601.
+
+[[step]]
+client = "app"
+send = ["parse - BEGIN; INSERT INTO pp_multi VALUES (1); COMMIT", "sync"]
+
+[[step]]
+client = "app"
+send = ["parse - BEGIN", "bind - -", "execute -", "parse - INSERT INTO pp_multi VALUES (2)", "bind - -", "execute -", "parse - COMMIT", "bind - -", "execute -", "sync"]
+
+[[step]]
+client = "app"
+send = ["parse - BEGIN", "bind - -", "execute -", "sync"]
+
+[[step]]
+client = "app"
+send = ["parse - INSERT INTO pp_multi VALUES (3)", "bind - -", "execute -", "sync"]
+
+[[step]]
+client = "check"
+direct = true
+simple = "SELECT coalesce(array_agg(x ORDER BY x)::text, '{}') FROM pp_multi"
+
+[[step]]
+client = "other"
+simple = "SELECT pg_current_xact_id_if_assigned() IS NULL AS own_transaction"
+background = true
+
+[[step]]
+client = "app"
+send = ["parse - COMMIT", "bind - -", "execute -", "sync"]
+delay_ms = 500
+
+[[step]]
+client = "other"
+wait = true
+
+[[step]]
+client = "app"
+disconnect = true
+
+[[step]]
+client = "check"
+direct = true
+simple = "SELECT coalesce(array_agg(x ORDER BY x)::text, '{}') FROM pp_multi"
