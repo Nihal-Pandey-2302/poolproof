@@ -31,7 +31,7 @@ releases page. The scenarios and the latest results are built into the binary.
 **[Results site](https://nihal-pandey-2302.github.io/poolproof/)**: every scenario against
 PgBouncer 1.24 to 1.26, PgDog 0.1.50 to 0.1.62 and Supavisor 2.9 and 2.10, on Postgres 17
 and 18, with the full step-by-step trace for each cell. It also marks the version where a
-behavior broke or got fixed. The site goes live with the first public release.
+behavior broke or got fixed.
 [RESULTS.md](RESULTS.md) has the same data as a table. Both are built from `results/`,
 which `scripts/update-results.sh` regenerates and CI checks.
 
@@ -57,6 +57,17 @@ that scenario; the run goes on.
 `error` (silent and error), `any` (the default, hangs too) or `none`. An ERROR verdict
 (nothing compared) counts for all but `none`. A pooler with known hangs can still gate CI
 on wrong results. Results it ignores are counted on stderr.
+
+`--compare-to last.json` compares the run with a saved `run --format json` report, so a
+pooler with known failures can gate CI on new ones. Results match by target and scenario.
+Only regressions fail the run: PASS to FAIL or ERROR, a FAIL getting worse (hang, then
+error, then silent), and FAIL to ERROR or back. `--fail-on` still decides which of those
+count. Fixed results, milder failures, and scenarios or targets only one side has are
+listed but never fail it. A repeated (timing-sensitive) scenario gates on PASS and FAIL
+only, so one failing run in five against a baseline that passed all five fails it. A
+target whose product, version, config or Postgres differs gets a warning; a different
+pool mode is an error. With `--format json` the comparison is in the report under
+`comparison`.
 
 ```text
 $ poolproof run --filter multi-statement
@@ -118,14 +129,22 @@ never shows passwords.
 TLS works as in psql: `sslmode` is `disable`, `prefer` (the default: TLS if the server
 offers it, else plaintext without a word), `require`, `verify-ca` or `verify-full`, from
 the URL or `PGSSLMODE`. `prefer` never checks certificates, even with a root certificate
-present, so it is encrypted but not authenticated: use `verify-full` for anything not on
-localhost. `sslrootcert` (or `PGSSLROOTCERT`) names the CA file, or `system` for the
-operating system's store (which needs `verify-full`, and makes it the default); without
-it, `~/.postgresql/root.crt` is used when it exists, and `require` then checks the chain
-like `verify-ca`. `send` steps and cancel requests use the same settings. Not supported
-yet: client certificates and `sslnegotiation=direct`. A URL names one host: several hosts
-or ports, `hostaddr`, `target_session_attrs` and `load_balance_hosts` are refused, since
-poolproof would otherwise pick a host on its own.
+present (psql checks the chain then, and falls back to plaintext if that fails), so it is
+encrypted but not authenticated: use `verify-full` for anything not on localhost.
+`sslrootcert` (or `PGSSLROOTCERT`) names the CA file, or `system` for the operating
+system's store (which needs `verify-full`, and makes it the default). Without it,
+`~/.postgresql/root.crt` (`%APPDATA%\postgresql\root.crt` on Windows) is used when it
+exists, and `require` then checks the chain like `verify-ca`; `verify-ca` and
+`verify-full` with no root certificate at all are an error. `send` steps, cancel requests
+and the reset and setup connections use the same settings. A Unix socket never uses TLS,
+as in psql. Not supported yet: client certificates and `sslnegotiation=direct`.
+
+A URL names one host and port: several hosts or ports, `hostaddr`,
+`target_session_attrs` and `load_balance_hosts` are refused, since poolproof would
+otherwise pick a host on its own. Socket options work as in psql: `connect_timeout`,
+`keepalives` (on unless `keepalives=0`) with `keepalives_idle`, `keepalives_interval` and
+`keepalives_retries`, and `tcp_user_timeout` in milliseconds. One the system can't set
+is an error rather than ignored.
 
 For several poolers, or to reset state between scenarios, use a targets file
 (`--targets`, default `targets.toml`):
@@ -163,6 +182,9 @@ reset = "auto"
 - Without `reset`, nothing is reset: leaks carry over between scenarios, and `run`
   warns. With `--pooler` and `--direct`, `--reset auto` or `--reset all` picks one.
 
+Ending other roles' sessions needs superuser or `pg_signal_backend` on the `direct` user;
+`run` warns when a reset terminates sessions without either.
+
 Before the first scenario, `run` prints what the reset will touch, e.g.
 `reset: 'prod-like-pgbouncer': ends every session of user app from 10.0.0.7 (not only the
 pooler's) on database db at postgres-host:5432 (auto)`. The JSON report records which
@@ -172,9 +194,11 @@ kind each target used.
 
 To share the outcome with your team, `--format html` writes one self-contained page with
 the grid and every step's trace. `--format json` saves the raw results;
-`poolproof report a.json b.json --format html` (or `markdown`) combines saved runs. In
-these formats, a progress line per result goes to stderr. Text output is colored on a
-terminal unless `NO_COLOR` is set; `FORCE_COLOR` or `CLICOLOR_FORCE` colors it anywhere.
+`poolproof report a.json b.json --format html` (or `markdown`) combines saved runs. The
+JSON carries `schema_version` and `generated_at`; poolproof refuses a report in a newer
+format than it reads. In these formats, a progress line per result goes to stderr. Text
+output is colored on a terminal unless `NO_COLOR` is set; `FORCE_COLOR` or
+`CLICOLOR_FORCE` colors it anywhere.
 
 Scenarios create and drop their own objects (prefixed `pp_`), so use a scratch database.
 That matters even more with `reset = "all"`, which kills every session on it.
@@ -281,7 +305,8 @@ Step actions:
 - `prepare` + `name`, then `execute`: extended protocol. Cast columns to `text`. An
   `execute` needs an earlier `prepare` of that name by the same client since its last
   `disconnect` or abandoned query, or the scenario fails to load.
-- `disconnect`: close the connection cleanly.
+- `disconnect`: close the connection cleanly. On Postgres it waits until the backend has
+  exited, so the next step no longer sees its locks or temp tables.
 - `wait`: collect the result of this client's `background` query.
 - `cancel`: send a CancelRequest with this client's key, through the same pooler.
 - `notifications`: the NOTIFY messages this client received since the last such step.
@@ -325,6 +350,7 @@ doesn't treat a change in those verdicts as a regression, because the worst case
 between machines.
 `requires` lists privileges the `direct` user needs (`createrole`, `superuser`,
 `pg_signal_backend`); on a target without them the scenario is skipped, with the reason.
+If the privileges can't be read, it is ERROR instead.
 
 `poolproof run -v --filter <name>` prints every step's result on Postgres and through the
 pooler. Use it on a new scenario: a PASS only means something if Postgres did what you
