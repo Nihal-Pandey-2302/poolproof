@@ -458,14 +458,15 @@ fn check_evidence(origin: &str, scenario: &Scenario) -> Result<()> {
             .iter()
             .any(|s| s.client == step.client && s.send.is_some());
         if raw && !before.evidence {
-            // A Sync, a simple Query or a CopyDone ends with ReadyForQuery: the exchange is
-            // complete, and the evidence Query starts a new one.
+            // After a Sync or a simple Query the server sends ReadyForQuery: the exchange is
+            // complete, and the evidence Query starts a new one. Not after a CopyDone: in an
+            // extended-protocol COPY, ReadyForQuery only follows the next Sync.
             let complete = before
                 .send
                 .as_ref()
                 .and_then(|m| m.last())
                 .and_then(|m| m.parse::<RawMessage>().ok())
-                .is_some_and(|m| m.ends_cycle());
+                .is_some_and(|m| matches!(m, RawMessage::Sync | RawMessage::Query(_)));
             if !complete {
                 bail!(
                     "{origin}: the evidence at step {n} must follow a send step of client '{}' that ends with sync \
@@ -636,6 +637,16 @@ mod tests {
         // A simple Query ends with ReadyForQuery too.
         let query = [step("r", "send = ['query SELECT 1']"), step("r", "evidence = true")].concat();
         assert_eq!(with(&query, ""), Ok(()));
+        // An extended-protocol COPY isn't over at CopyDone: refused.
+        let copy = [
+            step(
+                "r",
+                "send = ['parse - COPY t FROM STDIN', 'bind - -', 'execute -', 'copydata x', 'copydone']",
+            ),
+            step("r", "evidence = true"),
+        ]
+        .concat();
+        assert!(with(&copy, "").unwrap_err().contains("ends with sync"));
         // After a Parse with no Sync, the exchange isn't over: refused.
         let parsed = [
             step("r", "send = ['query SELECT 1', 'parse - SELECT 2']"),
