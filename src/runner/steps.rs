@@ -179,6 +179,9 @@ async fn run_until_done<'s>(
                 }
                 Action::Evidence => match raw.get_mut(step.client.as_str()) {
                     None => Outcome::error("CLIENT", format!("client '{}' is not connected", step.client)),
+                    // A Query now would be a protocol error: the scenario put the evidence
+                    // in the wrong place, which isn't the pooler's doing.
+                    Some(conn) if !conn.idle() => Outcome::error("CLIENT", MID_EXCHANGE),
                     Some(conn) => {
                         let ask = [super::RawMessage::Query("SELECT pg_backend_pid()".into())];
                         match conn.exchange(&ask, &exchange_opts).await {
@@ -393,6 +396,10 @@ async fn evidence(pid: &str, direct: &Endpoint, t: &Timeouts) -> Option<Outcome>
         tags: vec![1],
     })
 }
+
+/// The error of an evidence step on a raw connection that hasn't finished its last
+/// exchange (in a COPY, or waiting for a Sync).
+pub(super) const MID_EXCHANGE: &str = "connection mid-exchange: evidence can't be asked here";
 
 /// A precondition step's outcome that lets the run go on: one row, true.
 pub(super) fn precondition_met(outcome: &Outcome) -> bool {
