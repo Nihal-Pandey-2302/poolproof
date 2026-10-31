@@ -378,8 +378,9 @@ mod tests {
         );
     }
 
-    /// Plain Postgres (no TLS) as both sides: every check runs; prefer without TLS and
-    /// the missing reset warn.
+    /// Plain Postgres as both sides: every check runs, and the missing reset warns.
+    /// TLS depends on the server and the URL's sslmode, so only sslmode=disable has a
+    /// fixed answer.
     #[tokio::test]
     #[ignore = "needs POOLPROOF_TEST_PG"]
     async fn inspect_plain_postgres() {
@@ -395,14 +396,27 @@ mod tests {
             &Timeouts::default(),
         )
         .await;
-        let checks: Vec<(&str, Status)> = report.checks.iter().map(|c| (c.check, c.status)).collect();
+        let tls_checks: Vec<Status> = report
+            .checks
+            .iter()
+            .filter(|c| c.check.ends_with(" tls"))
+            .map(|c| c.status)
+            .collect();
+        assert_eq!(tls_checks.len(), 2, "{:#?}", report.checks);
+        if target.direct.tls().mode == SslMode::Disable {
+            assert_eq!(tls_checks, [Status::Ok, Status::Ok]);
+        }
+        let checks: Vec<(&str, Status)> = report
+            .checks
+            .iter()
+            .filter(|c| !c.check.ends_with(" tls"))
+            .map(|c| (c.check, c.status))
+            .collect();
         assert_eq!(
             checks,
             [
                 ("direct", Status::Ok),
-                ("direct tls", Status::Warn),
                 ("pooler", Status::Ok),
-                ("pooler tls", Status::Warn),
                 ("same server", Status::Ok),
                 ("privileges", Status::Ok),
                 ("reset", Status::Warn),
@@ -411,10 +425,7 @@ mod tests {
             "{:#?}",
             report.checks
         );
-        assert!(
-            report.checks[7].detail.starts_with("not determined"),
-            "{:?}",
-            report.checks[7]
-        );
+        let mode = report.checks.last().unwrap();
+        assert!(mode.detail.starts_with("not determined"), "{mode:?}");
     }
 }
