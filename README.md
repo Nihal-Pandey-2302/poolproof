@@ -182,8 +182,14 @@ reset = "auto"
 - Without `reset`, nothing is reset: leaks carry over between scenarios, and `run`
   warns. With `--pooler` and `--direct`, `--reset auto` or `--reset all` picks one.
 
-Ending other roles' sessions needs superuser or `pg_signal_backend` on the `direct` user;
-`run` warns when a reset terminates sessions without either.
+A user that isn't a superuser needs `pg_signal_backend` and `pg_read_all_stats` to end
+other roles' sessions, and can never end a superuser's. Without `pg_read_all_stats`,
+Postgres hides the details of other roles' sessions from it, so a reset would match
+nothing. Unless the `direct` user is a superuser, `"auto"` and `"all"` therefore check the
+role the pooler connects as, and refuse to run when the reset couldn't end its sessions,
+naming what is missing and the `GRANT` that adds it. `"all"` then leaves alone the
+sessions it may not end. For your own statements, `run` warns when they terminate sessions
+without those privileges.
 
 Before the first scenario, `run` prints what the reset will touch, e.g.
 `reset: 'prod-like-pgbouncer': ends every session of user app from 10.0.0.7 (not only the

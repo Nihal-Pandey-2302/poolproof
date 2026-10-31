@@ -105,18 +105,28 @@ pub async fn run(
                 .await
                 .map_err(|e| format!("{DIRECT_UNREACHABLE} privilege check: {e:#}")),
         };
+        // "all" and "auto" check this exactly in resolve_reset; own statements can't be.
         if let Ok(p) = &privs
+            && let Reset::Statements(statements) = &target.reset
             && !p.superuser
-            && !p.pg_signal_backend
-            && reset
+            && !(p.pg_signal_backend && p.pg_read_all_stats)
+            && statements
                 .iter()
                 .any(|s| s.sql().to_lowercase().contains("pg_terminate_backend"))
         {
+            let missing: Vec<&str> = [
+                (!p.pg_signal_backend).then_some("pg_signal_backend"),
+                (!p.pg_read_all_stats).then_some("pg_read_all_stats"),
+            ]
+            .into_iter()
+            .flatten()
+            .collect();
             eprintln!(
-                "warning: target '{}': reset terminates sessions, but the direct user has neither superuser \
-                 nor pg_signal_backend, so it can only end sessions of its own role (and only a superuser \
-                 can end a superuser's)",
-                target.name
+                "warning: target '{}': reset terminates sessions, but the direct user isn't a superuser and \
+                 lacks {}, so it can only see and end sessions of roles whose privileges it has (and only a \
+                 superuser can end a superuser's)",
+                target.name,
+                missing.join(" and ")
             );
         }
         for s in scenarios.iter().filter(wanted) {
@@ -282,6 +292,7 @@ mod tests {
             superuser: false,
             createrole: false,
             pg_signal_backend: false,
+            pg_read_all_stats: false,
         };
         let creator = Privileges {
             createrole: true,
