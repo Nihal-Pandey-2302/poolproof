@@ -268,6 +268,7 @@ async fn reset(
         // Not the pooler's (resolve_reset checked those), but whatever they hold stays.
         let superusers = match left.superusers.as_str() {
             "0" => String::new(),
+            "1" => " (1 superuser's)".to_string(),
             n => format!(" ({n} superusers')"),
         };
         let stays = format!(
@@ -586,7 +587,7 @@ mod tests {
         let check =
             all_reset_with(|sql| pooler_reachable(sql).unwrap_or_else(|| vec![Some("3"), Some("2"), Some("1")])).await;
         assert_eq!(check.status, Status::Warn, "{}", check.detail);
-        let stays = "but 2 of the 3 other sessions belong to roles this user can't end (1 superusers'); reset leaves \
+        let stays = "but 2 of the 3 other sessions belong to roles this user can't end (1 superuser's); reset leaves \
                      them, and anything they hold (locks, pp_* objects) can change results";
         assert!(check.detail.ends_with(stays), "{}", check.detail);
         let public = check.public.unwrap();
