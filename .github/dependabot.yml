@@ -107,14 +107,17 @@ updates:
       driver-pgjdbc:
         patterns: ["*"]
 
-  # The drivers' base images: language runtimes, not the drivers.
+  # The drivers' base images. The language runtime is part of what is tested too, so only
+  # a new digest or patch release of the same tag comes in (python 3.13 stays 3.13, and
+  # the JDK that compiles pgjdbc's program stays the JRE's version); a new minor or major
+  # is a change by hand, with regenerated results.
   - package-ecosystem: docker
     directories: ["/drivers/*"]
     schedule:
       interval: monthly
     ignore:
       - dependency-name: "*"
-        update-types: ["version-update:semver-major"]
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
     groups:
       driver-images:
         patterns: ["*"]

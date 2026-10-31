@@ -4,8 +4,9 @@
 # the ports in targets.toml).
 # Usage: scripts/testbed.sh up|down|targets|env OFFSET
 #   up       start it (extra arguments go to `docker compose up`); retries once on a busy port
+#            COMPOSE_PROFILES=variants also starts the variant targets
 #   down     stop it and remove its volumes
-#   targets  print targets.toml with the ports shifted: scripts/testbed.sh targets 100 > t.toml
+#   targets  print targets.toml (or the file after OFFSET) with the ports shifted: scripts/testbed.sh targets 100 > t.toml
 #   env      print the variables, to use docker compose directly: eval "$(scripts/testbed.sh env 100)"
 #
 # When several people share a machine, give each a fixed offset (100, 200, ...) and
@@ -13,7 +14,7 @@
 # their test bed. Offset 0 is the default bed.
 set -eu
 cd "$(dirname "$0")/.."
-[ $# -ge 2 ] || { sed -n '5,9s/^# \{0,1\}//p' "$0" >&2; exit 2; }
+[ $# -ge 2 ] || { sed -n '5,10s/^# \{0,1\}//p' "$0" >&2; exit 2; }
 cmd=$1 offset=$2
 shift 2
 case $offset in *[!0-9]*) echo "OFFSET must be a number" >&2; exit 2 ;; esac
@@ -69,7 +70,7 @@ case $cmd in
     for p in $ports; do script="$script s/@\\([^@:/]*\\):$p\\//@\\1:$((p + offset))\\//g;"; done
     # Each test bed writes its own CA for the TLS target.
     script="$script s#docker/tls/out/poolproof/#docker/tls/out/$project/#g;"
-    sed "$script" targets.toml
+    sed "$script" "${1:-targets.toml}"
     ;;
   env) env_lines ;;
   *) echo "unknown command: $cmd (up, down, targets, env)" >&2; exit 2 ;;

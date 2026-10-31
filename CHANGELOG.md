@@ -64,6 +64,12 @@ First release.
   `ignore_server_requirements = true` on a target (`run --ignore-server-requirements`
   with `--pooler`) runs those scenarios anyway, for Postgres standing in for its own
   pooler.
+- `reset = "exact"` (with `pool_size`, 1 to 16): ends only the pooler's own server
+  connections, found through the pooler before each run, and leaves neighbours with the
+  same user and address alone. Before the first scenario it checks that the pool really
+  is that size; when it isn't, or a reset can't account for every server connection,
+  the target is an ERROR. `doctor` runs the same check and ends nothing. With `--pooler`:
+  `--reset exact --pool-size N`. The report records each target's `pool_size`.
 - Scenario steps can be a `precondition`: a boolean query that decides whether a run
   through the pooler counts. Reports say in how many runs it held ("pass (precondition
   1/5)"), and the HTML trace marks steps that never ran and why. The HTML report shows

@@ -458,7 +458,7 @@ fn reset_auto_sql(addr: std::net::IpAddr, user: &str) -> String {
 }
 
 /// A string as an E'' literal, backslashes and quotes doubled.
-fn literal(text: &str) -> String {
+pub(super) fn literal(text: &str) -> String {
     format!("E'{}'", text.replace('\\', "\\\\").replace('\'', "''"))
 }
 
@@ -650,6 +650,22 @@ pub async fn resolve_reset(
             Ok((
                 vec![TargetStatement::plain(RESET_ALL)],
                 format!("reset: '{name}': ends every other session{which} on database {db} at {host} (all)"),
+            ))
+        }
+        Reset::Exact => {
+            let n = target
+                .pool_size
+                .expect("check_exact refuses reset = \"exact\" without pool_size");
+            // The same rules as auto for whose sessions this user may end; the pooler's
+            // user is asked through the pooler.
+            check_reach(target, "exact", None, t).await?;
+            let s = if n == 1 { "" } else { "s" };
+            Ok((
+                vec![],
+                format!(
+                    "reset: '{name}': ends only the pooler's {n} server connection{s}, found by holding {n} \
+                     transaction{s} through it before each run, on database {db} at {host} (exact)"
+                ),
             ))
         }
         Reset::Auto => {

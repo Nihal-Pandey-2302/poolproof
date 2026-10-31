@@ -45,7 +45,7 @@ x-supavisor-env: &supavisor-env
   REGION: local
   ERL_AFLAGS: -proto_dist inet_tcp
 
-# One-shot: creates tenants (pool size 1, transaction mode) through the API.
+# One-shot: creates tenants (pool size 1, the mode their file names) through the API.
 # Clients connect as `postgres.<tenant>`.
 x-supavisor-tenants: &supavisor-tenants
   image: curlimages/curl:8.22.0
@@ -112,6 +112,18 @@ services:
       tls-certs:
         condition: service_completed_successfully
 
+  # Variant targets (targets-variants.toml): only with --profile variants.
+  pgbouncer-1.26.1-session:
+    profiles: [variants]
+    image: edoburu/pgbouncer:v1.26.1-p0
+    volumes:
+      - ./pgbouncer/pgbouncer-session.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports: ["127.0.0.1:${PP_PORT_56445:-56445}:6432"]
+
   pgdog-0.1.50:
     <<: *pgdog
     image: ghcr.io/pgdogdev/pgdog:v0.1.50
@@ -131,6 +143,14 @@ services:
       - ./pgdog/pgdog-pubsub.toml:/pgdog/pgdog.toml:ro
       - ./pgdog/users.toml:/pgdog/users.toml:ro
     ports: ["127.0.0.1:${PP_PORT_56454:-56454}:6432"]
+  pgdog-0.1.62-session:
+    <<: *pgdog
+    profiles: [variants]
+    image: ghcr.io/pgdogdev/pgdog:v0.1.62
+    volumes:
+      - ./pgdog/pgdog-session.toml:/pgdog/pgdog.toml:ro
+      - ./pgdog/users.toml:/pgdog/users.toml:ro
+    ports: ["127.0.0.1:${PP_PORT_56455:-56455}:6432"]
 
   pgcat-1.2.0:
     image: ghcr.io/postgresml/pgcat:v1.2.0
@@ -183,12 +203,15 @@ services:
     environment:
       <<: *supavisor-env
       DATABASE_URL: ecto://postgres:postgres@supavisor-meta:5432/supavisor_2_10
-    ports: ["127.0.0.1:${PP_PORT_56462:-56462}:6543"]
+    # 5452 is the session port; the variant target uses it with tenant ppsession.
+    ports:
+      - "127.0.0.1:${PP_PORT_56462:-56462}:6543"
+      - "127.0.0.1:${PP_PORT_56463:-56463}:5452"
   supavisor-2.10.0-rc.1-tenants:
     <<: *supavisor-tenants
     environment:
       SUPAVISOR: supavisor-2.10.0-rc.1:4000
-      TENANTS: pp:default.json ppstrict:strict.json
+      TENANTS: pp:default.json ppstrict:strict.json ppsession:session.json
     depends_on: [supavisor-2.10.0-rc.1]
 
   # Self-test targets (selftest/targets.toml, selftest/expected.toml): one port per

@@ -4,6 +4,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use tokio::time::{Instant, timeout};
 
 use super::compare::{FailKind, Mismatch, Verdict, baseline_failure, same_failure};
+use super::exact::Exact;
 use super::pg::{connect, connect_with, wait_ready};
 use super::steps::{precondition_met, run_steps_on};
 use super::tls::TlsSetup;
@@ -167,13 +168,59 @@ impl Run {
     }
 }
 
+/// What runs before each run so the last one's leaked state is gone: statements on
+/// direct, or the exact reset, which finds the pooler's server connections first.
+#[derive(Clone, Default)]
+pub enum Isolation {
+    #[default]
+    None,
+    Statements(Vec<Statement>),
+    Exact(std::sync::Arc<Exact>),
+}
+
+impl PartialEq for Isolation {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Isolation::None, Isolation::None) => true,
+            (Isolation::Statements(a), Isolation::Statements(b)) => a == b,
+            (Isolation::Exact(a), Isolation::Exact(b)) => std::sync::Arc::ptr_eq(a, b),
+            _ => false,
+        }
+    }
+}
+
+impl Isolation {
+    pub fn statements(statements: Vec<Statement>) -> Self {
+        if statements.is_empty() {
+            Isolation::None
+        } else {
+            Isolation::Statements(statements)
+        }
+    }
+
+    /// Runs it. The exact reset also waits for the pooler itself.
+    pub(super) async fn run(&self, direct: &Endpoint, t: &Timeouts) -> Result<()> {
+        match self {
+            Isolation::None => Ok(()),
+            Isolation::Statements(statements) => run_direct(direct, statements, t).await,
+            Isolation::Exact(exact) => exact.reset(t).await,
+        }
+    }
+
+    /// Whether the pooler needs waiting for afterwards: a reset kills its server
+    /// connections, and it needs a moment to open new ones.
+    pub(super) fn needs_wait(&self) -> bool {
+        matches!(self, Isolation::Statements(_))
+    }
+}
+
 /// One run of a scenario's steps with reset, setup and teardown around it. Teardown
 /// runs even when setup or a step fails.
 async fn run_once(
     scenario: &Scenario,
     pooled: &Endpoint,
     direct: &Endpoint,
-    reset: &[Statement],
+    reset: &Isolation,
     side: Side,
     t: &Timeouts,
 ) -> Run {
@@ -182,13 +229,13 @@ async fn run_once(
         teardown: Ok(()),
         broken: None,
     };
-    if let Err(e) = run_direct(direct, reset, t).await {
+    if let Err(e) = reset.run(direct, t).await {
         return failed(format!("reset ({side}): {e:#}"));
     }
     // A reset kills the pooler's server connections, and it needs a moment to open new
     // ones. Without a reset there's nothing to wait for.
     if side == Side::Target
-        && !reset.is_empty()
+        && reset.needs_wait()
         && let Err(e) = wait_ready(pooled, t).await
     {
         return failed(format!("{e:#}"));
@@ -223,7 +270,7 @@ pub async fn check(
     scenario: &Scenario,
     pooled: &Endpoint,
     direct: &Endpoint,
-    reset: &[Statement],
+    reset: &Isolation,
     t: &Timeouts,
 ) -> Checked {
     let expected = match run_once(scenario, direct, direct, reset, Side::Baseline, t).await.all() {
@@ -314,7 +361,7 @@ fn baseline_diff(scenario: &Scenario, first: &[Outcome], second: &[Outcome]) -> 
 pub async fn deterministic(
     scenario: &Scenario,
     direct: &Endpoint,
-    reset: &[Statement],
+    reset: &Isolation,
     t: &Timeouts,
 ) -> Result<(), String> {
     let first = run_once(scenario, direct, direct, reset, Side::Baseline, t)
@@ -465,7 +512,14 @@ mod tests {
     #[tokio::test]
     async fn unreachable_postgres_is_an_error_not_a_pass() {
         let s = scenario("name = 't'\ndescription = 't'\n[[step]]\nclient = 'a'\nsimple = 'SELECT 1'\n");
-        let checked = check(&s, &closed_port(), &closed_port(), &[], &Timeouts::default()).await;
+        let checked = check(
+            &s,
+            &closed_port(),
+            &closed_port(),
+            &Isolation::None,
+            &Timeouts::default(),
+        )
+        .await;
         let reason = reason(&checked);
         assert!(
             reason.starts_with("baseline failed at step 1: error CONNECT"),
@@ -478,7 +532,14 @@ mod tests {
         let s = scenario(
             "name = 't'\ndescription = 't'\nsetup = ['SELECT 1']\n[[step]]\nclient = 'a'\nsimple = 'SELECT 1'\n",
         );
-        let checked = check(&s, &closed_port(), &closed_port(), &[], &Timeouts::default()).await;
+        let checked = check(
+            &s,
+            &closed_port(),
+            &closed_port(),
+            &Isolation::None,
+            &Timeouts::default(),
+        )
+        .await;
         let reason = reason(&checked);
         assert!(reason.starts_with("setup (baseline): "), "{reason}");
     }
@@ -489,7 +550,14 @@ mod tests {
         let mut s = scenario("name = 't'\ndescription = 't'\nrepeat = 3\nstep = []\n");
         s.steps.clear();
         let started = Instant::now();
-        let checked = check(&s, &closed_port(), &closed_port(), &[], &Timeouts::default()).await;
+        let checked = check(
+            &s,
+            &closed_port(),
+            &closed_port(),
+            &Isolation::None,
+            &Timeouts::default(),
+        )
+        .await;
         assert!(matches!(checked.verdict, Verdict::Pass));
         assert!(
             started.elapsed() < Duration::from_secs(2),
@@ -706,7 +774,7 @@ mod tests {
         let started = Instant::now();
         let checked = timeout(
             Duration::from_secs(30),
-            check(&s, &url, &url, &[], &Timeouts::default()),
+            check(&s, &url, &url, &Isolation::None, &Timeouts::default()),
         )
         .await
         .expect("teardown hung");
@@ -756,11 +824,11 @@ mod tests {
                 "name = 't'\ndescription = 't'\n[[step]]\nclient = 'a'\nsimple = 'SELECT random()'\ncompare = '{compare}'\n"
             ))
         };
-        let reason = deterministic(&toml("full"), &url, &[], &Timeouts::default())
+        let reason = deterministic(&toml("full"), &url, &Isolation::None, &Timeouts::default())
             .await
             .unwrap_err();
         assert!(reason.starts_with("nondeterministic scenario: step 1"), "{reason}");
-        deterministic(&toml("status"), &url, &[], &Timeouts::default())
+        deterministic(&toml("status"), &url, &Isolation::None, &Timeouts::default())
             .await
             .unwrap();
     }
@@ -854,18 +922,18 @@ mod tests {
             ))
         };
         let t = Timeouts::default();
-        let met = check(&with("SELECT true", 3), &pooled, &direct, &[], &t).await;
+        let met = check(&with("SELECT true", 3), &pooled, &direct, &Isolation::None, &t).await;
         assert!(matches!(met.verdict, Verdict::Pass));
         assert_eq!((met.runs, met.unmet), (3, 0));
         // Postgres never runs it: there this would fail with 22012.
-        let error = check(&with("SELECT 1/0 = 1", 1), &pooled, &direct, &[], &t).await;
+        let error = check(&with("SELECT 1/0 = 1", 1), &pooled, &direct, &Isolation::None, &t).await;
         assert_eq!(error.steps[1].0, Outcome::NotRun);
         match error.verdict {
             Verdict::Fail { mismatch } => assert_eq!((mismatch.step, mismatch.kind), (2, FailKind::Error)),
             _ => panic!("not a fail"),
         }
         assert_eq!(error.steps[2].1, Outcome::NotRun);
-        let never = check(&with("SELECT false", 3), &pooled, &direct, &[], &t).await;
+        let never = check(&with("SELECT false", 3), &pooled, &direct, &Isolation::None, &t).await;
         assert_eq!((never.runs, never.failures, never.unmet), (0, 0, 3));
         match never.verdict {
             Verdict::Skip { reason } => assert!(reason.ends_with("(in all 3 runs)"), "{reason}"),
@@ -874,7 +942,7 @@ mod tests {
         assert_eq!(never.steps[2].1, Outcome::NotRun);
         // Postgres standing in for its own pooler, at the very same URL: the pooler
         // side still runs the precondition.
-        let passthrough = check(&with("SELECT false", 1), &direct, &direct, &[], &t).await;
+        let passthrough = check(&with("SELECT false", 1), &direct, &direct, &Isolation::None, &t).await;
         assert!(matches!(passthrough.verdict, Verdict::Skip { .. }));
     }
 
@@ -887,13 +955,13 @@ mod tests {
             step: Duration::from_secs(1),
             ..Timeouts::default()
         };
-        let checked = check(&s, &url, &url, &[], &short).await;
+        let checked = check(&s, &url, &url, &Isolation::None, &short).await;
         let reason = reason(&checked);
         assert!(
             reason.starts_with("baseline failed at step 1: error TIMEOUT"),
             "{reason}"
         );
-        let checked = check(&s, &url, &url, &[], &Timeouts::default()).await;
+        let checked = check(&s, &url, &url, &Isolation::None, &Timeouts::default()).await;
         assert!(matches!(checked.verdict, Verdict::Pass));
     }
 
@@ -905,7 +973,7 @@ mod tests {
             "name = 't'\ndescription = 't'\n[[step]]\nclient = 'a'\n\
              send = [\"query SET application_name = 'pp_c10'\"]\ncompare_parameter_status = true\n",
         );
-        let checked = check(&s, &url, &url, &[], &Timeouts::default()).await;
+        let checked = check(&s, &url, &url, &Isolation::None, &Timeouts::default()).await;
         assert!(matches!(checked.verdict, Verdict::Pass));
         let Outcome::Messages { messages } = &checked.steps[0].0 else {
             panic!("expected send replies")
