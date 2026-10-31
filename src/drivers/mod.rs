@@ -287,9 +287,9 @@ fn connection_env(endpoint: &Endpoint) -> Result<Vec<(&'static str, String)>> {
 static RUNS: AtomicU32 = AtomicU32::new(0);
 
 impl Program {
-    /// Runs the program with both of its connections on `endpoint` and returns one
-    /// outcome per step.
-    pub(crate) async fn run(&self, endpoint: &Endpoint, t: &Timeouts) -> Result<Vec<Outcome>> {
+    /// Runs the program with both of its connections on `endpoint`: one outcome per step,
+    /// and what went wrong with the program itself, if anything.
+    pub(crate) async fn run(&self, endpoint: &Endpoint, t: &Timeouts) -> Result<(Vec<Outcome>, Option<Broken>)> {
         let env = connection_env(endpoint)?;
         let program = self.clone();
         let t = *t;
@@ -306,7 +306,7 @@ impl Program {
         t.step.saturating_mul(waits) + STARTUP_MARGIN
     }
 
-    fn run_blocking(&self, env: Vec<(&'static str, String)>, t: &Timeouts) -> Result<Vec<Outcome>> {
+    fn run_blocking(&self, env: Vec<(&'static str, String)>, t: &Timeouts) -> Result<(Vec<Outcome>, Option<Broken>)> {
         let name = format!(
             "poolproof-driver-{}-{}",
             std::process::id(),
@@ -386,7 +386,7 @@ impl Program {
         }
         let status = child.wait().context("waiting for docker")?;
         let stderr = stderr.join().unwrap_or_default();
-        let (outcomes, broken) = self.parse(&lines, status.success()).with_context(|| {
+        let (outcomes, mut broken) = self.parse(&lines, status.success()).with_context(|| {
             format!(
                 "the {} program exited with {status} after printing {}: {}",
                 self.driver,
@@ -394,14 +394,13 @@ impl Program {
                 tail(&stderr)
             )
         })?;
-        if let Some(what) = broken {
-            eprintln!(
-                "warning: the {} program {what} (exit {status}): {}",
-                self.driver,
-                tail(&stderr)
-            );
+        if let Some(b) = &mut broken {
+            if !status.success() {
+                b.what.push_str(&format!(" ({status})"));
+            }
+            eprintln!("warning: the {} program {}: {}", self.driver, b.what, tail(&stderr));
         }
-        Ok(outcomes)
+        Ok((outcomes, broken))
     }
 
     /// The program's output: a header with the driver and version it loaded, one line
@@ -410,11 +409,9 @@ impl Program {
     /// Output that can't be read, or that comes from another driver version, is the
     /// harness's problem: an error, so the scenario is ERROR. A program that stops early,
     /// exits with an error or opens more connections than it has clients was broken by
-    /// what it talked to. Then every step it didn't report is `DRIVER:Stopped` (the last
-    /// step, if it reported them all), or the last step is `DRIVER:Reconnected`, and the
-    /// second value says what happened. A driver code on Postgres makes the scenario
-    /// ERROR; through the pooler it is a FAIL.
-    fn parse(&self, lines: &[String], exited_ok: bool) -> Result<(Vec<Outcome>, Option<String>)> {
+    /// what it talked to: every step it reported keeps its outcome, every step it didn't
+    /// is `DRIVER:Stopped`, and the second value says what happened, for the comparison.
+    fn parse(&self, lines: &[String], exited_ok: bool) -> Result<(Vec<Outcome>, Option<Broken>)> {
         let mut lines = lines
             .iter()
             .map(|l| serde_json::from_str::<Line>(l).with_context(|| format!("bad line: {l}")));
@@ -456,27 +453,40 @@ impl Program {
                 Line::Header(_) => bail!("a second header"),
             }
         }
-        if exited_ok && connections.is_some() && outcomes.len() == self.steps {
+        let reported = outcomes.len();
+        if exited_ok && connections.is_some() && reported == self.steps {
             return Ok(match connections {
                 Some(n) if n < self.clients => bail!("the program opened {n} connections for {} clients", self.clients),
                 // A driver that reconnected behind the program's back could hide a dropped
-                // connection. Where it happened is unknown, so the last step carries it.
-                Some(n) if n > self.clients => {
-                    outcomes.pop();
-                    outcomes.push(driver_error(RECONNECTED));
-                    let what = format!("opened {n} connections for {} clients", self.clients);
-                    (outcomes, Some(what))
-                }
+                // connection. Where it happened is unknown, so no step is marked.
+                Some(n) if n > self.clients => (
+                    outcomes,
+                    Some(Broken {
+                        code: RECONNECTED,
+                        what: format!("opened {n} connections for {} clients", self.clients),
+                    }),
+                ),
                 _ => (outcomes, None),
             });
         }
-        let what = format!("stopped after {} of {} steps", outcomes.len(), self.steps);
-        if outcomes.len() == self.steps {
-            outcomes.pop();
-        }
         outcomes.resize(self.steps, driver_error(STOPPED));
-        Ok((outcomes, Some(what)))
+        let broken = Broken {
+            code: STOPPED,
+            what: format!("stopped after {reported} of {} steps", self.steps),
+        };
+        Ok((outcomes, Some(broken)))
     }
+}
+
+/// What went wrong with a driver program that its step outcomes don't show. The
+/// comparison turns it into a FAIL when the steps alone would pass (see
+/// `runner::check`), and on Postgres it makes the scenario ERROR.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Broken {
+    /// `DRIVER:Stopped` or `DRIVER:Reconnected`, for the FAIL's pooler outcome.
+    pub code: &'static str,
+    /// E.g. `stopped after 3 of 16 steps (exit status: 1)`.
+    pub what: String,
 }
 
 /// A program that stopped before it reported every step and said it was done.
@@ -484,7 +494,7 @@ const STOPPED: &str = "DRIVER:Stopped";
 /// A program that opened more connections than it has clients.
 const RECONNECTED: &str = "DRIVER:Reconnected";
 
-fn driver_error(code: &str) -> Outcome {
+pub(crate) fn driver_error(code: &str) -> Outcome {
     Outcome::Error {
         code: code.to_string(),
         message: String::new(),
@@ -703,46 +713,52 @@ mod tests {
     }
 
     #[test]
-    fn a_program_the_pooler_broke_fails_the_steps_it_missed() {
+    fn a_program_the_pooler_broke_keeps_what_it_reported() {
         use crate::runner::{FailKind, from_harness};
         let header = r#"{"driver":"psycopg","version":"3.3.6"}"#;
         let step1 = r#"{"step":1,"rows":[]}"#;
-        let codes = |text: &str, exited_ok| {
+        let run = |text: &str, exited_ok| {
             let (out, broken) = program(3).parse(&lines(text), exited_ok).unwrap();
-            assert!(broken.is_some(), "{text}");
-            out.iter()
+            let codes: Vec<String> = out
+                .iter()
                 .map(|o| match o {
                     Outcome::Error { code, .. } => code.clone(),
                     _ => "ok".to_string(),
                 })
-                .collect::<Vec<_>>()
+                .collect();
+            (codes, broken.unwrap())
         };
-        // Stopped after one step, with or without an error exit.
-        let stopped = ["ok", STOPPED, STOPPED];
-        assert_eq!(codes(&format!("{header}\n{step1}"), true), stopped);
-        assert_eq!(codes(&format!("{header}\n{step1}"), false), stopped);
-        // Every step reported, but it failed on the way out: the last step carries it.
+        // Stopped after one step, with or without an error exit: only the steps it
+        // didn't report are marked.
+        for exited_ok in [true, false] {
+            let (codes, broken) = run(&format!("{header}\n{step1}"), exited_ok);
+            assert_eq!(codes, ["ok", STOPPED, STOPPED]);
+            assert_eq!(
+                (broken.code, broken.what.as_str()),
+                (STOPPED, "stopped after 1 of 3 steps")
+            );
+        }
+        // Every step reported, then it failed on the way out or reconnected: every
+        // outcome stays as reported, and only the note says so.
         let all = format!("{header}\n{step1}\n{{\"step\":2,\"rows\":[]}}\n{{\"step\":3,\"rows\":[]}}");
+        let (codes, broken) = run(&format!("{all}\n{{\"connections\":2}}"), false);
+        assert_eq!((codes, broken.code), (vec!["ok".to_string(); 3], STOPPED));
+        let (codes, broken) = run(&all, true);
+        assert_eq!((codes, broken.code), (vec!["ok".to_string(); 3], STOPPED));
+        let (codes, broken) = run(&format!("{all}\n{{\"connections\":3}}"), true);
+        assert_eq!(codes, vec!["ok".to_string(); 3]);
         assert_eq!(
-            codes(&format!("{all}\n{{\"connections\":2}}"), false),
-            ["ok", "ok", STOPPED]
-        );
-        assert_eq!(codes(&all, true), ["ok", "ok", STOPPED]);
-        // Reconnected.
-        assert_eq!(
-            codes(&format!("{all}\n{{\"connections\":3}}"), true),
-            ["ok", "ok", RECONNECTED]
+            (broken.code, broken.what.as_str()),
+            (RECONNECTED, "opened 3 connections for 2 clients")
         );
 
-        // On Postgres these make the scenario ERROR; through the pooler they are a FAIL.
+        // An unreported step: ERROR on Postgres, a FAIL through the pooler.
         let ok = Outcome::Ok {
             rows: vec![],
             tags: vec![],
         };
-        for code in [STOPPED, RECONNECTED] {
-            assert!(from_harness(&driver_error(code)));
-            assert_eq!(FailKind::of(&ok, &driver_error(code)), FailKind::Error);
-        }
+        assert!(from_harness(&driver_error(STOPPED)));
+        assert_eq!(FailKind::of(&ok, &driver_error(STOPPED)), FailKind::Error);
     }
 
     #[test]

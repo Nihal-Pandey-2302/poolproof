@@ -70,10 +70,12 @@ poolproof never lets a broken program pass. Output it can't trust is the harness
 problem, and the case is ERROR: lines it can't read, a version that isn't the one in
 `drivers.toml`, steps out of order, or a program that runs past every step's timeout
 plus 30 s (then the container is removed). A program that stops early, exits with an
-error or opens more connections than it has clients was broken by what it talked to:
-every step it didn't report becomes `DRIVER:Stopped` (its last step, if it reported
-them all), or its last step `DRIVER:Reconnected`. On Postgres that makes the case ERROR;
-through the pooler it is a FAIL.
+error or opens more connections than it has clients was broken by what it talked to.
+Every step it reported keeps its outcome, and every step it didn't is `DRIVER:Stopped`.
+On Postgres that makes the case ERROR. Through the pooler it is a FAIL: a difference
+the steps show keeps its step and kind (a silent one stays silent) and adds what the
+program did; if the steps alone would pass, the FAIL is an error at the last step whose
+action says what happened, e.g. `program: opened 3 connections for 2 clients`.
 
 ## Changing a driver version
 

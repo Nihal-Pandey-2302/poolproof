@@ -8,6 +8,7 @@ use super::pg::{connect, connect_with, wait_ready};
 use super::steps::run_steps;
 use super::tls::TlsSetup;
 use super::{Outcome, Timeouts};
+use crate::drivers::Broken;
 use crate::scenario::{Compare, Scenario};
 use crate::targets::{Endpoint, Statement};
 
@@ -146,13 +147,19 @@ impl std::fmt::Display for Side {
 struct Run {
     outcomes: Result<Vec<Outcome>, String>,
     teardown: Result<(), String>,
+    /// For a driver scenario: what went wrong with the program beyond its outcomes.
+    broken: Option<Broken>,
 }
 
 impl Run {
-    /// The outcomes, or the first error of the run, teardown included.
+    /// The outcomes, or the first error of the run, teardown included. For the
+    /// baseline: a broken driver program there means the driver failed, not Postgres.
     fn all(self) -> Result<Vec<Outcome>, String> {
         let outcomes = self.outcomes?;
         self.teardown?;
+        if let Some(broken) = self.broken {
+            return Err(format!("steps (baseline): the driver program {}", broken.what));
+        }
         Ok(outcomes)
     }
 }
@@ -170,6 +177,7 @@ async fn run_once(
     let failed = |reason| Run {
         outcomes: Err(reason),
         teardown: Ok(()),
+        broken: None,
     };
     if let Err(e) = run_direct(direct, reset, t).await {
         return failed(format!("reset ({side}): {e:#}"));
@@ -182,9 +190,13 @@ async fn run_once(
     {
         return failed(format!("{e:#}"));
     }
+    let mut broken = None;
     let outcomes = match run_direct(direct, &Statement::plain_all(&scenario.setup), t).await {
         Ok(()) => match &scenario.program {
-            Some(program) => program.run(pooled, t).await,
+            Some(program) => program.run(pooled, t).await.map(|(outcomes, b)| {
+                broken = b;
+                outcomes
+            }),
             None => run_steps(scenario, pooled, direct, t).await,
         }
         .map_err(|e| format!("steps ({side}): {e:#}")),
@@ -193,7 +205,11 @@ async fn run_once(
     let teardown = run_direct(direct, &Statement::plain_all(&scenario.teardown), t)
         .await
         .map_err(|e| format!("teardown ({side}): {e:#}"));
-    Run { outcomes, teardown }
+    Run {
+        outcomes,
+        teardown,
+        broken,
+    }
 }
 
 /// Run a scenario against plain Postgres, then through the pooler, and compare.
@@ -221,7 +237,7 @@ pub async fn check(
     for _ in 0..scenario.repeat {
         let run = run_once(scenario, pooled, direct, reset, Side::Target, t).await;
         let checked = match run.outcomes {
-            Ok(actual) => after_teardown(compare(scenario, &expected, actual), run.teardown),
+            Ok(actual) => after_teardown(compare(scenario, &expected, actual, run.broken), run.teardown),
             Err(reason) => Checked::error(reason),
         };
         let failed = !matches!(checked.verdict, Verdict::Pass);
@@ -292,8 +308,11 @@ pub async fn deterministic(
     problem.map_or(Ok(()), Err)
 }
 
-/// Compare one pooler-side run with the baseline outcomes.
-fn compare(scenario: &Scenario, expected: &[Outcome], actual: Vec<Outcome>) -> Checked {
+/// Compare one pooler-side run with the baseline outcomes. `broken` is what went wrong
+/// with a driver program beyond its outcomes: a FAIL the steps found keeps its step and
+/// kind and says it too; steps that would pass become a FAIL (error) at the last step,
+/// with the program's state as the pooler outcome, while `steps` keeps what it reported.
+fn compare(scenario: &Scenario, expected: &[Outcome], actual: Vec<Outcome>, broken: Option<Broken>) -> Checked {
     let mismatch = scenario.steps.iter().enumerate().find_map(|(i, step)| {
         (!expected[i].matches(&actual[i], step.compare)).then(|| Mismatch {
             step: i + 1,
@@ -323,9 +342,27 @@ fn compare(scenario: &Scenario, expected: &[Outcome], actual: Vec<Outcome>) -> C
             varied: false,
         };
     }
-    let verdict = match mismatch {
-        Some(mismatch) => Verdict::Fail { mismatch },
-        None => Verdict::Pass,
+    let verdict = match (mismatch, broken) {
+        (Some(mut mismatch), Some(broken)) => {
+            mismatch.action = format!("{}; the program then {}", mismatch.action, broken.what);
+            Verdict::Fail { mismatch }
+        }
+        (Some(mismatch), None) => Verdict::Fail { mismatch },
+        (None, Some(broken)) => match expected.len().checked_sub(1) {
+            Some(last) => Verdict::Fail {
+                mismatch: Mismatch {
+                    step: last + 1,
+                    action: format!("program: {}", broken.what),
+                    kind: FailKind::Error,
+                    expected: expected[last].clone(),
+                    actual: crate::drivers::driver_error(broken.code),
+                },
+            },
+            None => Verdict::Error {
+                reason: format!("the driver program {}", broken.what),
+            },
+        },
+        (None, None) => Verdict::Pass,
     };
     Checked {
         verdict,
@@ -399,7 +436,7 @@ mod tests {
             scenario("name = 't'\ndescription = 't'\n[[step]]\nclient = 'pg'\ndirect = true\nsimple = 'SELECT 1'\n");
         let expected = [Outcome::empty()];
         for code in ["CONNECT", "CLIENT"] {
-            let checked = compare(&s, &expected, vec![Outcome::error(code, "refused")]);
+            let checked = compare(&s, &expected, vec![Outcome::error(code, "refused")], None);
             let reason = reason(&checked);
             assert!(
                 reason.starts_with("postgres side failed at step 1 (target run)"),
@@ -419,20 +456,21 @@ mod tests {
             &s2,
             &[one.clone(), one.clone()],
             vec![Outcome::empty(), Outcome::error("CONNECT", "refused")],
+            None,
         );
         assert!(matches!(&checked.verdict, Verdict::Fail { mismatch } if mismatch.step == 1));
         // An ignored direct step that can't connect is still no result.
         let s3 = scenario(
             "name = 't'\ndescription = 't'\n[[step]]\nclient = 'pg'\ndirect = true\nsimple = 'SELECT 1'\ncompare = 'ignore'\n",
         );
-        let checked = compare(&s3, &expected, vec![Outcome::error("CLIENT", "reset")]);
+        let checked = compare(&s3, &expected, vec![Outcome::error("CLIENT", "reset")], None);
         assert!(
             reason(&checked).starts_with("postgres side failed at step 1 (target run)"),
             "{}",
             reason(&checked)
         );
         // A direct observer blocked by a lock the pooler leaked is the pooler's fault.
-        let checked = compare(&s, &expected, vec![Outcome::error("TIMEOUT", "no reply")]);
+        let checked = compare(&s, &expected, vec![Outcome::error("TIMEOUT", "no reply")], None);
         assert!(matches!(checked.verdict, Verdict::Fail { .. }));
     }
 
@@ -632,13 +670,69 @@ mod tests {
         };
         let expected = [one.clone()];
         let teardown = || Err("teardown (target): lock timeout".to_string());
-        let failed = after_teardown(compare(&s, &expected, vec![Outcome::empty()]), teardown());
+        let failed = after_teardown(compare(&s, &expected, vec![Outcome::empty()], None), teardown());
         assert!(matches!(failed.verdict, Verdict::Fail { .. }));
-        let passed = after_teardown(compare(&s, &expected, vec![one.clone()]), teardown());
+        let passed = after_teardown(compare(&s, &expected, vec![one.clone()], None), teardown());
         assert_eq!(reason(&passed), "teardown (target): lock timeout");
         assert_eq!(passed.steps.len(), 1);
-        let clean = after_teardown(compare(&s, &expected, vec![one]), Ok(()));
+        let clean = after_teardown(compare(&s, &expected, vec![one], None), Ok(()));
         assert!(matches!(clean.verdict, Verdict::Pass));
+    }
+
+    #[test]
+    fn a_broken_driver_program_never_hides_or_rewrites_a_result() {
+        let s = scenario(
+            "name = 't'\ndescription = 't'\n[[step]]\nclient = 'a'\nsimple = 'SELECT 1'\n\
+             [[step]]\nclient = 'a'\nsimple = 'SHOW x'\n",
+        );
+        let row = |v: &str| Outcome::Ok {
+            rows: vec![vec![Some(v.into())]],
+            tags: vec![],
+        };
+        let expected = [row("1"), row("0")];
+        let stopped = || {
+            Some(Broken {
+                code: "DRIVER:Stopped",
+                what: "stopped after 2 of 2 steps (exit status: 1)".into(),
+            })
+        };
+
+        // A silent difference at the last step stays silent, and says what else happened.
+        let leak = compare(&s, &expected, vec![row("1"), row("5s")], stopped());
+        let Verdict::Fail { mismatch } = &leak.verdict else {
+            panic!("{:?}", leak.verdict)
+        };
+        assert_eq!((mismatch.step, mismatch.kind), (2, FailKind::Silent));
+        assert!(
+            mismatch
+                .action
+                .ends_with("; the program then stopped after 2 of 2 steps (exit status: 1)")
+        );
+        assert_eq!(mismatch.actual, row("5s"));
+
+        // Steps that would pass: a FAIL (error) at the last step, with the program's state
+        // as the pooler outcome. The trace keeps what the program reported.
+        let clean = compare(&s, &expected, vec![row("1"), row("0")], stopped());
+        let Verdict::Fail { mismatch } = &clean.verdict else {
+            panic!("{:?}", clean.verdict)
+        };
+        assert_eq!((mismatch.step, mismatch.kind), (2, FailKind::Error));
+        assert_eq!(mismatch.action, "program: stopped after 2 of 2 steps (exit status: 1)");
+        assert_eq!(mismatch.expected, row("0"));
+        assert!(matches!(&mismatch.actual, Outcome::Error { code, .. } if code == "DRIVER:Stopped"));
+        assert_eq!(clean.steps[1].1, row("0"));
+        assert!(matches!(
+            compare(&s, &expected, vec![row("1"), row("0")], None).verdict,
+            Verdict::Pass
+        ));
+
+        // On Postgres, a broken program means the driver failed: ERROR.
+        let baseline = Run {
+            outcomes: Ok(expected.to_vec()),
+            teardown: Ok(()),
+            broken: stopped(),
+        };
+        assert!(baseline.all().unwrap_err().contains("stopped after 2 of 2 steps"));
     }
 
     #[tokio::test]

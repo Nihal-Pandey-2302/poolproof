@@ -148,9 +148,10 @@ Details that matter when changing this:
   `run_steps`, once with both of its connections on Postgres and once on the pooler.
   Everything around it (reset, setup, teardown, the comparison) is the same. The
   program's output must name the version `drivers.toml` pins and report its steps in
-  order, or the scenario is ERROR. A program that stops early or reconnects gets
-  `DRIVER:Stopped` or `DRIVER:Reconnected` on its steps instead, so through the pooler
-  that is a FAIL and on Postgres an ERROR.
+  order, or the scenario is ERROR. A program that stops early, fails on the way out or
+  reconnects keeps the outcomes it reported (the rest are `DRIVER:Stopped`) and returns
+  a `Broken` note: on Postgres it makes the scenario ERROR, and through the pooler
+  `compare` adds it to the FAIL the steps found, or makes one at the last step.
 - Anything that stops a comparison is `Verdict::Error` for that scenario only, and the
   run goes on: a failing reset, setup or teardown, a pooler that doesn't answer after a
   reset, or a direct step on the pooler run that can't connect (unless the pooler
