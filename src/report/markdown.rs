@@ -38,12 +38,15 @@ fn scenarios(reports: &[Report]) -> Vec<&ScenarioInfo> {
     all
 }
 
-/// Text from the command line, made inert in Markdown: no emphasis, links, code or
-/// HTML.
+/// Text from the command line, made inert in Markdown at the start of a line: no
+/// emphasis, links, code, HTML, headings, quotes or list items.
 fn escape(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
-    for ch in text.chars() {
-        if "\\`*_[]<>|#!~".contains(ch) {
+    // A leading `-` or `+`, or digits and `.` or `)`, would start a list.
+    let digits = text.chars().take_while(char::is_ascii_digit).count();
+    for (i, ch) in text.chars().enumerate() {
+        let list = (i == 0 && matches!(ch, '-' | '+')) || (i == digits && digits > 0 && matches!(ch, '.' | ')'));
+        if list || "\\`*_[]<>|#!~".contains(ch) {
             out.push('\\');
         }
         out.push(ch);
@@ -222,4 +225,21 @@ pub fn markdown(reports: &[Report]) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn escaped_labels_start_no_list_or_markup() {
+        assert_eq!(escape("- nightly"), "\\- nightly");
+        assert_eq!(escape("+ nightly"), "\\+ nightly");
+        assert_eq!(escape("12. nightly"), "12\\. nightly");
+        assert_eq!(escape("3) nightly"), "3\\) nightly");
+        assert_eq!(escape("# <b>x</b>"), "\\# \\<b\\>x\\</b\\>");
+        // Only at the start: elsewhere these are plain text.
+        assert_eq!(escape("v1.2 - 18.4 (nightly)"), "v1.2 - 18.4 (nightly)");
+        assert_eq!(escape("2026 nightly"), "2026 nightly");
+    }
 }
