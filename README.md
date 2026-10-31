@@ -688,7 +688,11 @@ Not covered yet:
   recipes in [docs/managed-poolers.md](docs/managed-poolers.md).
 - The variant targets (`targets-variants.toml`: session mode, pool_size 4 and four
   non-default pooler settings) run nightly on Postgres 18.4 only; their results are
-  published on the site under their own heading.
+  published on the site under their own heading. PgDog pins a client that ran CREATE
+  TEMP to its server connection (CHANGELOG v0.1.57; it needs the query parser, so only
+  the `full` config does it). With a pool of one, the other client can't get a server
+  and PgDog answers 58000 "all replicas down"; with a bigger pool it gets Postgres's
+  own 42P01.
 - `scripts/pgdog-ref.sh` has not been checked with release builds, its default.
 
 ## License

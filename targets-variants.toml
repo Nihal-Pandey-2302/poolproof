@@ -81,7 +81,11 @@ reset = "all"
 # - full: prepared_statements = "full", PgDog also rewrites SQL PREPARE and EXECUTE.
 #   It turns PgDog's query parser on, so this column also stands for parser-on setups
 #   (sharding, read/write split): with the parser on and default prepared statements,
-#   all 49 scenarios gave the same verdicts on PgDog 0.1.62.
+#   all 49 scenarios gave the same verdicts on PgDog 0.1.62. PgDog pins a client that
+#   ran CREATE TEMP to its server connection (CHANGELOG v0.1.57; it needs the query
+#   parser, so only this config does it). With a pool of one, the other client can't get
+#   a server and PgDog answers 58000 "all replicas down"; with a bigger pool it gets
+#   Postgres's own 42P01.
 # - prepcache: prepared_statements_cache_size = 500, PgCat caches protocol statements
 
 [[target]]
