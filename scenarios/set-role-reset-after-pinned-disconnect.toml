@@ -7,6 +7,8 @@ requires = ["createrole"]
 # (createrole_self_grant is empty by default), so grant it explicitly.
 setup = ["DROP ROLE IF EXISTS pp_role", "CREATE ROLE pp_role", "GRANT pp_role TO CURRENT_USER"]
 teardown = ["DROP ROLE IF EXISTS pp_role"]
+# Counts when b got a's server connection, or when the pooler closed it instead.
+same_backend_or_closed = [[3, 6]]
 
 # The advisory lock pins the server connection, so the pooler cleans it up on disconnect.
 # RESET ALL does not reset the role.
@@ -20,8 +22,16 @@ simple = "SET ROLE pp_role"
 
 [[step]]
 client = "a"
+evidence = true
+
+[[step]]
+client = "a"
 disconnect = true
 
 [[step]]
 client = "b"
 simple = "SELECT current_user::text"
+
+[[step]]
+client = "b"
+evidence = true
