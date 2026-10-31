@@ -45,11 +45,11 @@ First release.
 - `poolproof run`: replays scenarios against Postgres and through each pooler, and reports
   every step where the results differ (silent, error or hang). Text, JSON, markdown and
   HTML output; `--pooler`/`--direct` for a single target, `--filter`, `--reverse`, `-v`.
-- 49 scenarios: session state leaks (SET, SET ROLE, search_path, temp tables, advisory
+- 50 scenarios: session state leaks (SET, SET ROLE, search_path, temp tables, advisory
   locks, cursors, prepared statements, LISTEN/NOTIFY, DEALLOCATE ALL, LOAD), session
   state that must survive the client's own transactions and a move to another server
-  connection, multi-statement transactions,
-  cancel requests, abandoned queries, ParameterStatus after SET, and protocol-level
+  connection, multi-statement transactions, cancel requests, abandoned queries,
+  ParameterStatus after SET, and protocol-level
   messages (statement names, Flush vs Sync, pipelines, COPY FROM STDIN and TO STDOUT)
   with raw `send` steps.
 - `poolproof scan`: flags transaction-pooling-unsafe queries in pg_stat_statements CSV,
@@ -57,6 +57,7 @@ First release.
   `--pooler` checks each finding against what that pooler version did in poolproof's
   own runs.
 - `poolproof report`: renders saved JSON runs as markdown or one self-contained HTML page.
+  `--label 'NAME=FILE'` shows one file's targets under a heading of their own.
 - Target probes before the first scenario: what a second client gets while the first is
   idle and while it is inside a transaction. A probe that contradicts the declared mode
   makes the target ERROR. Scenarios can require `one_server_connection` or
@@ -78,7 +79,9 @@ First release.
   use them, so a PASS means the clients really shared a server connection, or, after a
   disconnect, that the pooler closed it. A raw client's evidence may follow any step
   that ends with ReadyForQuery (a Sync, or a simple query other than one starting COPY
-  FROM STDIN).
+  FROM STDIN). The step that matters and its evidence share a transaction where the
+  state survives COMMIT, or have evidence right before and after it, so a client that
+  moved to another server connection in between can't make a PASS.
 - Scenario steps can be a `precondition`: a boolean query that decides whether a run
   through the pooler counts. Reports say in how many runs it held ("pass (precondition
   1/5)"), and the HTML trace marks steps that never ran and why. The HTML report shows
@@ -103,10 +106,15 @@ First release.
   pooler), PgDog 0.1.50, 0.1.56, 0.1.62 (also with pub/sub), Supavisor 2.9.13,
   2.10.0-rc.1 (also in strict mode), PgCat 1.2.0 and Odyssey 1.5.2 on Postgres 17.11 and
   18.4, built into the binary.
-- Session-mode targets for PgBouncer 1.26.1, PgDog 0.1.62 and Supavisor 2.10.0-rc.1 in
-  `targets-variants.toml`, started with the test bed's `variants` profile
-  (`COMPOSE_PROFILES=variants`). Their results are not published yet.
-  `scripts/testbed.sh targets OFFSET FILE` shifts the ports in any targets file.
+- Variant targets in `targets-variants.toml`, started with the test bed's `variants`
+  profile (`COMPOSE_PROFILES=variants`): session mode and a pool of four for PgBouncer
+  1.26.1, PgDog 0.1.62 and Supavisor 2.10.0-rc.1, and one changed setting each for
+  PgBouncer (`max_prepared_statements = 0`, `server_reset_query_always = 1`), PgDog
+  (`prepared_statements = "full"`) and PgCat (`prepared_statements_cache_size = 500`).
+  Their results (Postgres 18.4, 15s step timeout) are on the results site under a
+  heading of their own, not in RESULTS.md; `scripts/update-results.sh --variants`
+  regenerates them, and CI checks them nightly. `scripts/testbed.sh targets OFFSET FILE`
+  shifts the ports in any targets file.
 - The test bed keeps Postgres data in tmpfs, capped, with small WAL, so it leaves no
   Docker volumes behind.
 - `run --compare-to BASE.json`: compares the run with a saved JSON report and fails only
