@@ -14,7 +14,8 @@ These are the stable interfaces. Breaking one is a breaking change:
 - **CLI**: command names, flags and exit codes. The text and markdown output is for
   people and can change in any release. Exit codes:
   - `run`: 1 when a result matches `--fail-on` (default `any`: any FAIL or ERROR), else
-    0. `--fail-on none` gives 0.
+    0. `--fail-on none` gives 0. `--ignore-expected` leaves out FAILs that a
+    documented limitation explains.
   - `scan`: 1 on a BREAKS finding, with `--strict` also on WARN, else 0. With
     `--pooler`: 1 on a finding that pooler's results show as BREAKS or REJECTED;
     findings those results don't cover (no related scenario, or only SKIP or ERROR
@@ -55,6 +56,10 @@ First release.
   `--pooler` checks each finding against what that pooler version did in poolproof's
   own runs.
 - `poolproof report`: renders saved JSON runs as markdown or one self-contained HTML page.
+- Documented limitations (`limitations/<product>.toml`): a FAIL that exactly matches a
+  limitation in the pooler's own docs is marked expected, with the doc link and quote.
+  It stays a FAIL. Entries that no longer match are reported as stale.
+  `run --ignore-expected` leaves those FAILs out of the exit code.
 - Results for PgBouncer 1.24.1, 1.25.2, 1.26.1 (also with TLS between client and
   pooler), PgDog 0.1.50, 0.1.56, 0.1.62 (also with pub/sub), Supavisor 2.9.13,
   2.10.0-rc.1 (also in strict mode), PgCat 1.2.0 and Odyssey 1.5.2 on Postgres 17.11 and

@@ -4,7 +4,7 @@ use super::Outcome;
 use crate::scenario::Compare;
 
 impl Outcome {
-    pub(super) fn matches(&self, other: &Outcome, compare: Compare) -> bool {
+    pub(crate) fn matches(&self, other: &Outcome, compare: Compare) -> bool {
         match compare {
             Compare::Ignore => true,
             Compare::Status => match (self, other) {
@@ -25,6 +25,35 @@ impl Outcome {
                 _ => self == other,
             },
         }
+    }
+}
+
+/// The steps (from 0) whose (postgres, pooler) outcomes differ, each compared the way
+/// its step says. Direct steps count: a leak often shows only there.
+pub fn differing<'a>(compare: &[Compare], steps: impl IntoIterator<Item = (&'a Outcome, &'a Outcome)>) -> Vec<usize> {
+    steps
+        .into_iter()
+        .zip(compare)
+        .enumerate()
+        .filter(|(_, ((expected, actual), compare))| !expected.matches(actual, **compare))
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// Whether two pooler runs of a scenario failed the same way: the same steps differ,
+/// and at each one the pooler's outcomes match the way the step compares them.
+pub fn same_failure(compare: &[Compare], a: &[(Outcome, Outcome)], b: &[(Outcome, Outcome)]) -> bool {
+    let pairs = |steps: &'_ [(Outcome, Outcome)]| differing(compare, steps.iter().map(|(e, a)| (e, a)));
+    let steps = pairs(a);
+    !steps.is_empty() && steps == pairs(b) && steps.iter().all(|&i| a[i].1.matches(&b[i].1, compare[i]))
+}
+
+/// An outcome the harness made up because the step never got a real answer.
+pub fn from_harness(outcome: &Outcome) -> bool {
+    match outcome {
+        Outcome::Error { code, connect, .. } => *connect || HARNESS_CODES.contains(&code.as_str()),
+        Outcome::Messages { messages } => messages.iter().any(|l| l == "TIMEOUT" || l == "CLOSED"),
+        Outcome::Ok { .. } | Outcome::Abandoned => false,
     }
 }
 
@@ -79,19 +108,14 @@ const HARNESS_CODES: &[&str] = &["CONNECT", "TIMEOUT", "CLIENT", "CLOSED"];
 /// is the oracle, so a baseline like that can't be compared: an unreachable server
 /// would otherwise "match" an unreachable pooler.
 pub(super) fn baseline_failure(expected: &[Outcome]) -> Option<String> {
-    let failed = |o: &Outcome| match o {
-        // A connect Postgres refused (53300 when it's out of connections) would give the
-        // same code on both sides and pass without testing anything.
-        Outcome::Error { code, connect, .. } => *connect || HARNESS_CODES.contains(&code.as_str()),
-        Outcome::Messages { messages } => messages.iter().any(|l| l == "TIMEOUT" || l == "CLOSED"),
-        Outcome::Ok { .. } | Outcome::Abandoned => false,
-    };
-    let (i, outcome) = expected.iter().enumerate().find(|(_, o)| failed(o))?;
+    // Includes a connect Postgres refused (53300 when it's out of connections): it would
+    // give the same code on both sides and pass without testing anything.
+    let (i, outcome) = expected.iter().enumerate().find(|(_, o)| from_harness(o))?;
     Some(format!("baseline failed at step {}: {outcome}", i + 1))
 }
 
 impl FailKind {
-    pub(super) fn of(expected: &Outcome, actual: &Outcome) -> Self {
+    pub fn of(expected: &Outcome, actual: &Outcome) -> Self {
         match actual {
             Outcome::Error { code, .. } if code == "TIMEOUT" => FailKind::Hang,
             Outcome::Error { .. } => FailKind::Error,
@@ -273,6 +297,28 @@ mod tests {
         assert!(!pg.matches(&reordered, Compare::Full));
         // `status` only looks at failures.
         assert!(pg.matches(&dropped, Compare::Status));
+    }
+
+    #[test]
+    fn runs_fail_the_same_way_only_with_the_same_steps_and_outcomes() {
+        let row = |v: &str| Outcome::Ok {
+            rows: vec![vec![Some(v.into())]],
+            tags: vec![1],
+        };
+        let modes = [Compare::Full, Compare::Status];
+        let run = |first: &str, second: Outcome| vec![(row("pg"), row(first)), (Outcome::empty(), second)];
+        let leak = run("x", Outcome::empty());
+        assert_eq!(differing(&modes, leak.iter().map(|(e, a)| (e, a))), [0]);
+        assert!(same_failure(&modes, &leak, &run("x", Outcome::empty())));
+        // Another value at the same step, or another step differing too.
+        assert!(!same_failure(&modes, &leak, &run("y", Outcome::empty())));
+        assert!(!same_failure(&modes, &leak, &run("x", Outcome::error("42P05", "x"))));
+        // A `status` step only compares the status: other rows are the same failure.
+        let other_rows = vec![(row("pg"), row("x")), (Outcome::empty(), row("z"))];
+        assert!(same_failure(&modes, &leak, &other_rows));
+        // Runs that both pass didn't fail at all.
+        let pass = run("pg", Outcome::empty());
+        assert!(!same_failure(&modes, &pass, &pass));
     }
 
     #[test]

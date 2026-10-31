@@ -15,7 +15,11 @@ pub fn pooler_summary(check: &scan::PoolerCheck) -> String {
             format!("{scenario} {what}")
         })
         .collect();
-    format!("on {}: {}", check.target, parts.join(", "))
+    let documented = match check.documented.as_slice() {
+        [] => String::new(),
+        docs => format!(" (documented: {})", docs.join(", ")),
+    };
+    format!("on {}: {}{documented}", check.target, parts.join(", "))
 }
 
 pub fn print_scan(report: &scan::Report) {

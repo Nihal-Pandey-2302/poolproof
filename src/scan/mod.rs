@@ -42,6 +42,10 @@ pub struct PoolerCheck {
     pub status: PoolerStatus,
     /// Each related scenario and its result there: pass, silent, error, hang.
     pub scenarios: Vec<(String, String)>,
+    /// When every related FAIL is one the pooler's own docs describe: those docs. The
+    /// status doesn't change: it still breaks the app.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub documented: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

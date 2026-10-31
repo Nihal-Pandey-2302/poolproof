@@ -3,12 +3,12 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow, bail};
 use tokio::time::{Instant, timeout};
 
-use super::compare::{FailKind, Mismatch, Verdict, baseline_failure};
+use super::compare::{FailKind, Mismatch, Verdict, baseline_failure, same_failure};
 use super::pg::{connect, connect_with, wait_ready};
 use super::steps::run_steps;
 use super::tls::TlsSetup;
 use super::{Outcome, Timeouts};
-use crate::scenario::Scenario;
+use crate::scenario::{Compare, Scenario};
 use crate::targets::{Endpoint, Statement};
 
 /// Start of the ERROR reason when a target's pooler URL doesn't answer before the run.
@@ -107,6 +107,9 @@ pub struct Checked {
     pub steps: Vec<(Outcome, Outcome)>,
     pub runs: u32,
     pub failures: u32,
+    /// With `repeat`: a failing run failed differently from the kept one (other steps,
+    /// other outcomes, or no comparison at all), so the kept steps don't speak for it.
+    pub varied: bool,
 }
 
 impl Checked {
@@ -117,6 +120,7 @@ impl Checked {
             steps: vec![],
             runs: 0,
             failures: 0,
+            varied: false,
         }
     }
 }
@@ -208,8 +212,10 @@ pub async fn check(
     if let Some(reason) = baseline_failure(&expected) {
         return Checked::error(reason);
     }
+    let modes: Vec<Compare> = scenario.steps.iter().map(|s| s.compare).collect();
     let mut kept: Option<Checked> = None;
     let mut failures = 0;
+    let mut varied = false;
     for _ in 0..scenario.repeat {
         let run = run_once(scenario, pooled, direct, reset, Side::Target, t).await;
         let checked = match run.outcomes {
@@ -218,6 +224,13 @@ pub async fn check(
         };
         let failed = !matches!(checked.verdict, Verdict::Pass);
         failures += u32::from(failed);
+        if failed && let Some(first) = kept.as_ref().filter(|k| !matches!(k.verdict, Verdict::Pass)) {
+            let both_fail = matches!(
+                (&first.verdict, &checked.verdict),
+                (Verdict::Fail { .. }, Verdict::Fail { .. })
+            );
+            varied |= !(both_fail && same_failure(&modes, &first.steps, &checked.steps));
+        }
         // Keep the first failure; otherwise the latest pass.
         if kept.as_ref().is_none_or(|k| matches!(k.verdict, Verdict::Pass)) {
             kept = Some(checked);
@@ -227,6 +240,7 @@ pub async fn check(
     let mut checked = kept.unwrap_or_else(|| Checked::error("repeat is 0".into()));
     checked.runs = scenario.repeat;
     checked.failures = failures;
+    checked.varied = varied;
     checked
 }
 
@@ -304,6 +318,7 @@ fn compare(scenario: &Scenario, expected: &[Outcome], actual: Vec<Outcome>) -> C
             steps: expected.iter().cloned().zip(actual).collect(),
             runs: 1,
             failures: 0,
+            varied: false,
         };
     }
     let verdict = match mismatch {
@@ -315,6 +330,7 @@ fn compare(scenario: &Scenario, expected: &[Outcome], actual: Vec<Outcome>) -> C
         steps: expected.iter().cloned().zip(actual).collect(),
         runs: 1,
         failures: 0,
+        varied: false,
     }
 }
 

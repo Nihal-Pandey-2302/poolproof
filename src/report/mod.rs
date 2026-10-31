@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::runner::{Outcome, Verdict};
-use crate::scenario::PoolMode;
+use crate::scenario::{Compare, PoolMode};
 
 pub mod compare;
 mod html;
@@ -51,9 +51,18 @@ pub struct Report {
     /// With `run --compare-to`: what changed since that report.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub comparison: Option<compare::Comparison>,
+    /// Which documented limitations marked FAILs as expected: `built-in from poolproof
+    /// X.Y.Z` or `custom` (from `--limitations`). Missing when none were applied.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limitations: Option<String>,
+    /// Documented limitations that applied to a target here but didn't match its
+    /// result: the scenario passes now, or fails some other way. Those rows are plain
+    /// FAILs.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stale_expectations: Vec<crate::limitations::Stale>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 pub struct TargetInfo {
     pub name: String,
@@ -79,6 +88,10 @@ pub struct ScenarioInfo {
     /// More than 1 for timing-sensitive scenarios, whose worst case can vary by machine.
     #[serde(default = "one")]
     pub repeat: u32,
+    /// How each step is compared, in step order. Missing in reports from before it was
+    /// recorded.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub compare: Vec<Compare>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -96,6 +109,13 @@ pub struct ResultRow {
     pub runs: u32,
     #[serde(default)]
     pub failures: u32,
+    /// With more than one run: whether a failing run failed differently from the one
+    /// whose steps are kept here. Missing in older reports, and then unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub varied: Option<bool>,
+    /// Set on a FAIL the pooler's own documentation describes. It is still a FAIL.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected: Option<crate::limitations::Expected>,
 }
 
 fn one() -> u32 {
@@ -186,16 +206,6 @@ impl Report {
     }
 }
 
-/// Compares version strings like `17.11` or `2.10.0-rc.1` part by part.
-fn cmp_version(a: &str, b: &str) -> std::cmp::Ordering {
-    let parts = |v: &str| {
-        v.split(['.', '-'])
-            .map(|p| p.parse::<u64>().map_err(|_| p.to_string()))
-            .collect::<Vec<_>>()
-    };
-    parts(a).cmp(&parts(b))
-}
-
 /// The report and target for `--pooler NAME [--postgres VERSION]`; the newest
 /// Postgres version when none is given.
 pub fn find_target<'a>(
@@ -209,7 +219,7 @@ pub fn find_target<'a>(
         .filter(|(_, t)| t.name == name && postgres.is_none_or(|pg| t.postgres.as_deref() == Some(pg)))
         .collect();
     found.sort_by(|a, b| {
-        cmp_version(
+        crate::version::cmp(
             a.1.postgres.as_deref().unwrap_or(""),
             b.1.postgres.as_deref().unwrap_or(""),
         )
@@ -230,10 +240,20 @@ pub fn find_target<'a>(
 /// What `target` did on the given scenarios, or None if none of them ran there.
 pub fn check_finding(report: &Report, target: &TargetInfo, scenarios: &[&str]) -> Option<crate::scan::PoolerCheck> {
     use crate::scan::PoolerStatus;
+    let mut documented: Vec<String> = Vec::new();
+    let mut undocumented = false;
     let results: Vec<(String, String)> = scenarios
         .iter()
         .filter_map(|s| {
-            let verdict = report.verdict(&target.name, s)?;
+            let row = report.row(&target.name, s)?;
+            if let Verdict::Fail { .. } = row.verdict {
+                match &row.expected {
+                    Some(e) if !documented.contains(&e.doc) => documented.push(e.doc.clone()),
+                    Some(_) => {}
+                    None => undocumented = true,
+                }
+            }
+            let verdict = &row.verdict;
             let result = match verdict {
                 Verdict::Pass => "pass".to_string(),
                 Verdict::Fail { mismatch } => mismatch.kind.to_string(),
@@ -256,6 +276,7 @@ pub fn check_finding(report: &Report, target: &TargetInfo, scenarios: &[&str]) -
         postgres: target.postgres.clone(),
         status,
         scenarios: results,
+        documented: if undocumented { vec![] } else { documented },
     })
 }
 
@@ -299,6 +320,37 @@ mod tests {
         let target = &report.targets[0];
         assert_eq!(check_finding(&report, target, &["s"]).unwrap().status, PoolerStatus::Ok);
         assert!(check_finding(&report, target, &["not-run"]).is_none());
+    }
+
+    #[test]
+    fn findings_backed_only_by_documented_fails_still_break() {
+        use crate::scan::PoolerStatus;
+        let fail = |expected: bool| {
+            let doc = expected.then(|| r#","expected":{"doc":"https://d/","quote":"q"}"#.to_string());
+            format!(
+                r#"{{"target":"p","scenario":"{}","result":"fail","mismatch":{{"step":1,"action":"x","kind":"silent",
+                "expected":{{"status":"ok","rows":[],"tags":[]}},"actual":{{"status":"ok","rows":[],"tags":[]}}}},
+                "steps":[]{}}}"#,
+                if expected { "a" } else { "b" },
+                doc.unwrap_or_default()
+            )
+        };
+        let report: Report = serde_json::from_str(&format!(
+            r#"{{"poolproof":"0","targets":[{{"name":"p","product":"p","version":"1","config":null,
+            "mode":"transaction","postgres":"17"}}],"scenarios":[],"results":[{},{}]}}"#,
+            fail(true),
+            fail(false)
+        ))
+        .unwrap();
+        let target = &report.targets[0];
+        let only_documented = check_finding(&report, target, &["a"]).unwrap();
+        assert_eq!(only_documented.status, PoolerStatus::Breaks);
+        assert_eq!(only_documented.documented, ["https://d/"]);
+        let mixed = check_finding(&report, target, &["a", "b"]).unwrap();
+        assert_eq!(mixed.status, PoolerStatus::Breaks);
+        assert!(mixed.documented.is_empty());
+        let line = crate::output::scan::pooler_summary(&only_documented);
+        assert_eq!(line, "on p: a fails silently (documented: https://d/)");
     }
 
     #[test]

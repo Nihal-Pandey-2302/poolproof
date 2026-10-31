@@ -7,7 +7,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 use super::{Report, ResultRow};
-use crate::runner::suite::FailOn;
+use crate::runner::suite::Gate;
 use crate::runner::{FailKind, Verdict};
 use crate::scenario::PoolMode;
 
@@ -80,6 +80,9 @@ pub struct State {
     /// For repeated scenarios: how many runs failed, of how many.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failed_runs: Option<(u32, u32)>,
+    /// A FAIL the pooler's own docs describe.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub expected: bool,
 }
 
 impl State {
@@ -95,6 +98,7 @@ impl State {
             kind,
             reason,
             failed_runs: (row.runs > 1).then_some((row.failures, row.runs)),
+            expected: row.expected.is_some(),
         }
     }
 
@@ -103,6 +107,9 @@ impl State {
         let mut s = self.result.to_uppercase();
         if let Some(kind) = self.kind {
             write!(s, " {kind}").unwrap();
+        }
+        if self.expected {
+            s.push_str(" (documented)");
         }
         if let (Some(reason), "error") = (&self.reason, self.result.as_str()) {
             write!(s, " ({})", short(reason)).unwrap();
@@ -160,7 +167,8 @@ fn classify(before: &Verdict, after: &Verdict, repeated: bool) -> Change {
 
 /// Compares `current` with `baseline`. A target whose pool mode differs is an error:
 /// its results would be about a different setup.
-pub fn compare(baseline: &Report, current: &Report, fail_on: FailOn) -> Result<Comparison> {
+pub fn compare(baseline: &Report, current: &Report, gate: impl Into<Gate>) -> Result<Comparison> {
+    let gate = gate.into();
     check_modes(baseline, current.targets.iter().map(|t| (t.name.as_str(), t.mode)))?;
     let mut warnings = Vec::new();
     for t in &current.targets {
@@ -228,7 +236,15 @@ pub fn compare(baseline: &Report, current: &Report, fail_on: FailOn) -> Result<C
             cmp.new.push(key(after));
             continue;
         };
-        let list = match classify(&before.verdict, &after.verdict, before.runs > 1 || after.runs > 1) {
+        // An expected FAIL that no longer matches its documented outcome is a new bug,
+        // even with the same kind.
+        let lost_expected =
+            before.expected.is_some() && after.expected.is_none() && matches!(after.verdict, Verdict::Fail { .. });
+        let change = match classify(&before.verdict, &after.verdict, before.runs > 1 || after.runs > 1) {
+            Change::Same | Change::Changed if lost_expected => Change::Regressed,
+            change => change,
+        };
+        let list = match change {
             Change::Same => continue,
             Change::Regressed => &mut cmp.regressed,
             Change::Fixed => &mut cmp.fixed,
@@ -240,7 +256,7 @@ pub fn compare(baseline: &Report, current: &Report, fail_on: FailOn) -> Result<C
             scenario: after.scenario.clone(),
             before: State::of(before),
             after: State::of(after),
-            counted: fail_on.fails(&after.verdict),
+            counted: gate.fails(after),
             scenario_changed: changed_scenarios.contains(&after.scenario.as_str()),
         });
     }
@@ -388,6 +404,7 @@ impl Comparison {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runner::suite::{FailOn, Gate};
 
     /// A report with one target `p` and the given (scenario, result) rows. A result is
     /// pass, skip, error (the ERROR verdict), silent, hang or fail:error (a FAIL of
@@ -481,6 +498,37 @@ mod tests {
             ["gone"]
         );
         assert!(cmp.fails());
+    }
+
+    #[test]
+    fn an_expected_fail_that_stops_matching_is_a_regression() {
+        let doc = crate::limitations::Expected {
+            doc: "https://example.org/".into(),
+            doc_version: Some("1".into()),
+            quote: "q".into(),
+            note: None,
+        };
+        let mut before = report(&[("a", "silent"), ("b", "silent")]);
+        before.results[0].expected = Some(doc.clone());
+        let mut after = report(&[("a", "silent"), ("b", "silent")]);
+        // b's outcome now matches its entry: not a change of behavior.
+        after.results[1].expected = Some(doc.clone());
+        let ignore = Gate {
+            fail_on: FailOn::Any,
+            ignore_expected: true,
+        };
+        let cmp = compare(&before, &after, ignore).unwrap();
+        let regressed: Vec<&str> = cmp.regressed.iter().map(|e| e.scenario.as_str()).collect();
+        assert_eq!(regressed, ["a"]);
+        assert!(cmp.regressed[0].counted && cmp.fails());
+        assert!(cmp.regressed[0].before.label().contains("(documented)"));
+        assert!(cmp.changed.is_empty());
+        // A new expected FAIL is a regression, counted unless expected FAILs are ignored.
+        let mut after = report(&[("a", "silent"), ("b", "pass")]);
+        after.results[0].expected = Some(doc.clone());
+        let before = report(&[("a", "pass"), ("b", "pass")]);
+        assert!(!compare(&before, &after, ignore).unwrap().fails());
+        assert!(compare(&before, &after, FailOn::Any).unwrap().fails());
     }
 
     #[test]

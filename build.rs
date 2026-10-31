@@ -1,4 +1,4 @@
-//! Embeds scenarios/*.toml and results/*.json so an installed binary has them
+//! Embeds scenarios/*.toml, limitations/*.toml and results/*.json so an installed binary has them
 //! without the repo.
 
 use std::path::Path;
@@ -8,6 +8,7 @@ fn main() {
     let out = Path::new(&std::env::var("OUT_DIR").unwrap()).to_path_buf();
     embed(&root.join("scenarios"), "toml", &out.join("bundled.rs"));
     embed(&root.join("results"), "json", &out.join("bundled_results.rs"));
+    embed(&root.join("limitations"), "toml", &out.join("bundled_limitations.rs"));
 }
 
 /// Writes `&[(file name, include_str!(path)), ...]` for the files in `dir`. A missing

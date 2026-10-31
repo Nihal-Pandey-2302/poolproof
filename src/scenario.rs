@@ -141,7 +141,7 @@ pub struct Step {
     pub compare: Compare,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum Compare {
