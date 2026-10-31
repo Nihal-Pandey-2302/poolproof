@@ -40,9 +40,9 @@ run counts.
 | `prepare-in-aborted-transaction` | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass |
 | `prepared-statement-survives-other-clients` | pass | pass | pass | pass | pass | pass | pass | FAIL error | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | FAIL error | pass | pass | pass | pass | pass |
 | `protocol-error-after-flush` | pass | pass | pass | pass | pass | pass | pass | FAIL hang | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | FAIL hang | pass | pass | pass | pass | pass |
-| `protocol-four-pipelined-requests` | pass | pass | pass | pass | pass | pass | pass | pass | pass | FAIL hang 5/5 | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | FAIL hang 3/5 | pass | pass | pass |
+| `protocol-four-pipelined-requests` | pass | pass | pass | pass | pass | pass | pass | pass | pass | FAIL hang 5/5 | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | FAIL hang 4/5 | pass | pass | pass |
 | `protocol-multi-statement-transaction` | pass | pass | pass | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | pass | pass | pass | pass | pass | pass | pass | pass | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | pass | pass | pass | pass | pass |
-| `protocol-pipeline-recovers-after-error` | pass | pass | pass | pass | pass | pass | pass | pass | pass | FAIL hang 5/5 | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | FAIL hang 4/5 | pass | pass | pass |
+| `protocol-pipeline-recovers-after-error` | pass | pass | pass | pass | pass | pass | pass | pass | pass | FAIL hang 5/5 | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | FAIL hang 5/5 | pass | pass | pass |
 | `protocol-pipelined-statements` | pass | pass | pass | pass | pass | pass | pass | FAIL error 5/5 | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | FAIL error 5/5 | pass | pass | pass | pass | pass |
 | `protocol-prepare-survives-server-change` | skip | skip | skip | skip | skip | skip | skip | skip | skip | FAIL error 5/5 (precondition 5/5) | FAIL error 5/5 (precondition 5/5) | FAIL error 5/5 (precondition 5/5) | skip | skip | skip | skip | skip | skip | skip | skip | skip | skip | FAIL error 5/5 (precondition 5/5) | FAIL error 5/5 (precondition 5/5) | FAIL error 5/5 (precondition 5/5) | skip |
 | `protocol-statement-names-isolated` | pass | pass | pass | pass | pass | pass | pass | FAIL error | pass | FAIL error | FAIL error | FAIL error | pass | pass | pass | pass | pass | pass | pass | pass | FAIL error | pass | FAIL error | FAIL error | FAIL error | pass |
@@ -55,6 +55,7 @@ run counts.
 | `set-local-reverts-after-commit` | pass | pass | pass | pass | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | pass | FAIL error | pass | pass | pass | pass | pass | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | pass | FAIL error | pass |
 | `set-role-isolated-between-clients` | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | pass | pass | pass | pass | pass | **FAIL** silent | **FAIL** silent | FAIL error | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | pass | pass | pass | pass | pass | **FAIL** silent | **FAIL** silent | FAIL error | **FAIL** silent |
 | `set-role-reset-after-pinned-disconnect` | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | pass | pass | pass | pass | pass | **FAIL** silent | **FAIL** silent | FAIL error | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | pass | pass | pass | pass | pass | **FAIL** silent | **FAIL** silent | FAIL error | **FAIL** silent |
+| `set-role-reset-after-temp-table-disconnect` | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | pass | pass | pass | pass | pass | **FAIL** silent | **FAIL** silent | FAIL error | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | pass | pass | pass | pass | pass | **FAIL** silent | **FAIL** silent | FAIL error | **FAIL** silent |
 | `set-survives-server-change` | skip | skip | skip | skip | skip | skip | skip | skip | skip | **FAIL** silent 5/5 (precondition 5/5) | **FAIL** silent 5/5 (precondition 5/5) | FAIL error 5/5 (precondition 5/5) | skip | skip | skip | skip | skip | skip | skip | skip | skip | skip | **FAIL** silent 5/5 (precondition 5/5) | **FAIL** silent 5/5 (precondition 5/5) | FAIL error 5/5 (precondition 5/5) | skip |
 | `sql-prepare-isolated-between-clients` | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | FAIL error | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | FAIL error | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent |
 | `sql-prepare-survives-server-change` | skip | skip | skip | skip | skip | skip | skip | skip | skip | FAIL error 5/5 (precondition 5/5) | FAIL error 5/5 (precondition 5/5) | FAIL error 5/5 (precondition 5/5) | skip | skip | skip | skip | skip | skip | skip | skip | skip | skip | FAIL error 5/5 (precondition 5/5) | FAIL error 5/5 (precondition 5/5) | FAIL error 5/5 (precondition 5/5) | skip |
@@ -416,7 +417,7 @@ A session advisory lock must stay held by the client that took it, across its la
 
 A WITH HOLD cursor declared by one client must not be visible to another client.
 
-- step 3: `[b] simple: FETCH 1 FROM pp_cur`
+- step 7: `[b] simple: FETCH 1 FROM pp_cur`
 - postgres: `error 34000: cursor "pp_cur" does not exist`
 - pooler: `ok rows=[(1)] tags=[1]`
 
@@ -424,7 +425,7 @@ A WITH HOLD cursor declared by one client must not be visible to another client.
 
 A WITH HOLD cursor declared by one client must not be visible to another client.
 
-- step 3: `[b] simple: FETCH 1 FROM pp_cur`
+- step 7: `[b] simple: FETCH 1 FROM pp_cur`
 - postgres: `error 34000: cursor "pp_cur" does not exist`
 - pooler: `ok rows=[(1)] tags=[1]`
 
@@ -432,7 +433,7 @@ A WITH HOLD cursor declared by one client must not be visible to another client.
 
 A WITH HOLD cursor declared by one client must not be visible to another client.
 
-- step 3: `[b] simple: FETCH 1 FROM pp_cur`
+- step 7: `[b] simple: FETCH 1 FROM pp_cur`
 - postgres: `error 34000: cursor "pp_cur" does not exist`
 - pooler: `ok rows=[(1)] tags=[1]`
 
@@ -440,7 +441,7 @@ A WITH HOLD cursor declared by one client must not be visible to another client.
 
 A WITH HOLD cursor declared by one client must not be visible to another client.
 
-- step 3: `[b] simple: FETCH 1 FROM pp_cur`
+- step 7: `[b] simple: FETCH 1 FROM pp_cur`
 - postgres: `error 34000: cursor "pp_cur" does not exist`
 - pooler: `ok rows=[(1)] tags=[1]`
 
@@ -448,7 +449,7 @@ A WITH HOLD cursor declared by one client must not be visible to another client.
 
 A WITH HOLD cursor declared by one client must not be visible to another client.
 
-- step 3: `[b] simple: FETCH 1 FROM pp_cur`
+- step 7: `[b] simple: FETCH 1 FROM pp_cur`
 - postgres: `error 34000: cursor "pp_cur" does not exist`
 - pooler: `ok rows=[(1)] tags=[1]`
 
@@ -456,7 +457,7 @@ A WITH HOLD cursor declared by one client must not be visible to another client.
 
 A WITH HOLD cursor declared by one client must not be visible to another client.
 
-- step 3: `[b] simple: FETCH 1 FROM pp_cur`
+- step 7: `[b] simple: FETCH 1 FROM pp_cur`
 - postgres: `error 34000: cursor "pp_cur" does not exist`
 - pooler: `ok rows=[(1)] tags=[1]`
 
@@ -464,7 +465,7 @@ A WITH HOLD cursor declared by one client must not be visible to another client.
 
 A WITH HOLD cursor declared by one client must not be visible to another client.
 
-- step 3: `[b] simple: FETCH 1 FROM pp_cur`
+- step 7: `[b] simple: FETCH 1 FROM pp_cur`
 - postgres: `error 34000: cursor "pp_cur" does not exist`
 - pooler: `ok rows=[(1)] tags=[1]`
 
@@ -472,7 +473,7 @@ A WITH HOLD cursor declared by one client must not be visible to another client.
 
 A WITH HOLD cursor declared by one client must not be visible to another client.
 
-- step 3: `[b] simple: FETCH 1 FROM pp_cur`
+- step 7: `[b] simple: FETCH 1 FROM pp_cur`
 - postgres: `error 34000: cursor "pp_cur" does not exist`
 - pooler: `ok rows=[(1)] tags=[1]`
 
@@ -480,7 +481,7 @@ A WITH HOLD cursor declared by one client must not be visible to another client.
 
 A WITH HOLD cursor declared by one client must not be visible to another client.
 
-- step 3: `[b] simple: FETCH 1 FROM pp_cur`
+- step 7: `[b] simple: FETCH 1 FROM pp_cur`
 - postgres: `error 34000: cursor "pp_cur" does not exist`
 - pooler: `ok rows=[(1)] tags=[1]`
 
@@ -488,7 +489,7 @@ A WITH HOLD cursor declared by one client must not be visible to another client.
 
 A WITH HOLD cursor declared by one client must not be visible to another client.
 
-- step 3: `[b] simple: FETCH 1 FROM pp_cur`
+- step 7: `[b] simple: FETCH 1 FROM pp_cur`
 - postgres: `error 34000: cursor "pp_cur" does not exist`
 - pooler: `ok rows=[(1)] tags=[1]`
 
@@ -496,7 +497,7 @@ A WITH HOLD cursor declared by one client must not be visible to another client.
 
 A WITH HOLD cursor declared by one client must not be visible to another client.
 
-- step 1: `[a] simple: DECLARE pp_cur CURSOR WITH HOLD FOR SELECT generate_series(1, 3)::text`
+- step 3: `[a] simple: DECLARE pp_cur CURSOR WITH HOLD FOR SELECT generate_series(1, 3)::text`
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error XX000: (ESESSIONLEAK) WITH HOLD cursor is not allowed in transaction mode`
 
@@ -504,7 +505,7 @@ A WITH HOLD cursor declared by one client must not be visible to another client.
 
 A WITH HOLD cursor declared by one client must not be visible to another client.
 
-- step 3: `[b] simple: FETCH 1 FROM pp_cur`
+- step 7: `[b] simple: FETCH 1 FROM pp_cur`
 - postgres: `error 34000: cursor "pp_cur" does not exist`
 - pooler: `ok rows=[(1)] tags=[1]`
 
@@ -512,7 +513,7 @@ A WITH HOLD cursor declared by one client must not be visible to another client.
 
 A WITH HOLD cursor declared by one client must not be visible to another client.
 
-- step 3: `[b] simple: FETCH 1 FROM pp_cur`
+- step 7: `[b] simple: FETCH 1 FROM pp_cur`
 - postgres: `error 34000: cursor "pp_cur" does not exist`
 - pooler: `ok rows=[(1)] tags=[1]`
 
@@ -520,7 +521,7 @@ A WITH HOLD cursor declared by one client must not be visible to another client.
 
 A WITH HOLD cursor declared by one client must not be visible to another client.
 
-- step 3: `[b] simple: FETCH 1 FROM pp_cur`
+- step 7: `[b] simple: FETCH 1 FROM pp_cur`
 - postgres: `error 34000: cursor "pp_cur" does not exist`
 - pooler: `ok rows=[(1)] tags=[1]`
 
@@ -528,7 +529,7 @@ A WITH HOLD cursor declared by one client must not be visible to another client.
 
 A WITH HOLD cursor declared by one client must not be visible to another client.
 
-- step 3: `[b] simple: FETCH 1 FROM pp_cur`
+- step 7: `[b] simple: FETCH 1 FROM pp_cur`
 - postgres: `error 34000: cursor "pp_cur" does not exist`
 - pooler: `ok rows=[(1)] tags=[1]`
 
@@ -536,7 +537,7 @@ A WITH HOLD cursor declared by one client must not be visible to another client.
 
 A WITH HOLD cursor declared by one client must not be visible to another client.
 
-- step 3: `[b] simple: FETCH 1 FROM pp_cur`
+- step 7: `[b] simple: FETCH 1 FROM pp_cur`
 - postgres: `error 34000: cursor "pp_cur" does not exist`
 - pooler: `ok rows=[(1)] tags=[1]`
 
@@ -544,7 +545,7 @@ A WITH HOLD cursor declared by one client must not be visible to another client.
 
 A WITH HOLD cursor declared by one client must not be visible to another client.
 
-- step 3: `[b] simple: FETCH 1 FROM pp_cur`
+- step 7: `[b] simple: FETCH 1 FROM pp_cur`
 - postgres: `error 34000: cursor "pp_cur" does not exist`
 - pooler: `ok rows=[(1)] tags=[1]`
 
@@ -552,7 +553,7 @@ A WITH HOLD cursor declared by one client must not be visible to another client.
 
 A WITH HOLD cursor declared by one client must not be visible to another client.
 
-- step 3: `[b] simple: FETCH 1 FROM pp_cur`
+- step 7: `[b] simple: FETCH 1 FROM pp_cur`
 - postgres: `error 34000: cursor "pp_cur" does not exist`
 - pooler: `ok rows=[(1)] tags=[1]`
 
@@ -560,7 +561,7 @@ A WITH HOLD cursor declared by one client must not be visible to another client.
 
 A WITH HOLD cursor declared by one client must not be visible to another client.
 
-- step 3: `[b] simple: FETCH 1 FROM pp_cur`
+- step 7: `[b] simple: FETCH 1 FROM pp_cur`
 - postgres: `error 34000: cursor "pp_cur" does not exist`
 - pooler: `ok rows=[(1)] tags=[1]`
 
@@ -568,7 +569,7 @@ A WITH HOLD cursor declared by one client must not be visible to another client.
 
 A WITH HOLD cursor declared by one client must not be visible to another client.
 
-- step 3: `[b] simple: FETCH 1 FROM pp_cur`
+- step 7: `[b] simple: FETCH 1 FROM pp_cur`
 - postgres: `error 34000: cursor "pp_cur" does not exist`
 - pooler: `ok rows=[(1)] tags=[1]`
 
@@ -576,7 +577,7 @@ A WITH HOLD cursor declared by one client must not be visible to another client.
 
 A WITH HOLD cursor declared by one client must not be visible to another client.
 
-- step 3: `[b] simple: FETCH 1 FROM pp_cur`
+- step 7: `[b] simple: FETCH 1 FROM pp_cur`
 - postgres: `error 34000: cursor "pp_cur" does not exist`
 - pooler: `ok rows=[(1)] tags=[1]`
 
@@ -584,7 +585,7 @@ A WITH HOLD cursor declared by one client must not be visible to another client.
 
 A WITH HOLD cursor declared by one client must not be visible to another client.
 
-- step 3: `[b] simple: FETCH 1 FROM pp_cur`
+- step 7: `[b] simple: FETCH 1 FROM pp_cur`
 - postgres: `error 34000: cursor "pp_cur" does not exist`
 - pooler: `ok rows=[(1)] tags=[1]`
 
@@ -592,7 +593,7 @@ A WITH HOLD cursor declared by one client must not be visible to another client.
 
 A WITH HOLD cursor declared by one client must not be visible to another client.
 
-- step 1: `[a] simple: DECLARE pp_cur CURSOR WITH HOLD FOR SELECT generate_series(1, 3)::text`
+- step 3: `[a] simple: DECLARE pp_cur CURSOR WITH HOLD FOR SELECT generate_series(1, 3)::text`
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error XX000: (ESESSIONLEAK) WITH HOLD cursor is not allowed in transaction mode`
 
@@ -600,7 +601,7 @@ A WITH HOLD cursor declared by one client must not be visible to another client.
 
 A WITH HOLD cursor declared by one client must not be visible to another client.
 
-- step 3: `[b] simple: FETCH 1 FROM pp_cur`
+- step 7: `[b] simple: FETCH 1 FROM pp_cur`
 - postgres: `error 34000: cursor "pp_cur" does not exist`
 - pooler: `ok rows=[(1)] tags=[1]`
 
@@ -640,7 +641,7 @@ A WITH HOLD cursor must stay usable by the client that declared it, across its l
 
 DEALLOCATE ALL from one client must not remove another client's prepared statements.
 
-- step 4: `[a] execute q`
+- step 11: `[a] execute q`
 - postgres: `ok rows=[(from a)] tags=[1]`
 - pooler: `error 26000: prepared statement "s49" does not exist`
 
@@ -648,7 +649,7 @@ DEALLOCATE ALL from one client must not remove another client's prepared stateme
 
 DEALLOCATE ALL from one client must not remove another client's prepared statements.
 
-- step 4: `[a] execute q`
+- step 11: `[a] execute q`
 - postgres: `ok rows=[(from a)] tags=[1]`
 - pooler: `error 26000: prepared statement "s61" does not exist`
 
@@ -656,7 +657,7 @@ DEALLOCATE ALL from one client must not remove another client's prepared stateme
 
 DEALLOCATE ALL from one client must not remove another client's prepared statements.
 
-- step 4: `[a] execute q`
+- step 11: `[a] execute q`
 - postgres: `ok rows=[(from a)] tags=[1]`
 - pooler: `error 26000: prepared statement "s75" does not exist`
 
@@ -664,7 +665,7 @@ DEALLOCATE ALL from one client must not remove another client's prepared stateme
 
 DEALLOCATE ALL from one client must not remove another client's prepared statements.
 
-- step 4: `[a] execute q`
+- step 11: `[a] execute q`
 - postgres: `ok rows=[(from a)] tags=[1]`
 - pooler: `error 26000: prepared statement "s87" does not exist`
 
@@ -672,7 +673,7 @@ DEALLOCATE ALL from one client must not remove another client's prepared stateme
 
 DEALLOCATE ALL from one client must not remove another client's prepared statements.
 
-- step 4: `[a] execute q`
+- step 11: `[a] execute q`
 - postgres: `ok rows=[(from a)] tags=[1]`
 - pooler: `error 26000: prepared statement "s49" does not exist`
 
@@ -680,7 +681,7 @@ DEALLOCATE ALL from one client must not remove another client's prepared stateme
 
 DEALLOCATE ALL from one client must not remove another client's prepared statements.
 
-- step 4: `[a] execute q`
+- step 11: `[a] execute q`
 - postgres: `ok rows=[(from a)] tags=[1]`
 - pooler: `error 26000: prepared statement "s61" does not exist`
 
@@ -688,7 +689,7 @@ DEALLOCATE ALL from one client must not remove another client's prepared stateme
 
 DEALLOCATE ALL from one client must not remove another client's prepared statements.
 
-- step 4: `[a] execute q`
+- step 11: `[a] execute q`
 - postgres: `ok rows=[(from a)] tags=[1]`
 - pooler: `error 26000: prepared statement "s75" does not exist`
 
@@ -696,7 +697,7 @@ DEALLOCATE ALL from one client must not remove another client's prepared stateme
 
 DEALLOCATE ALL from one client must not remove another client's prepared statements.
 
-- step 4: `[a] execute q`
+- step 11: `[a] execute q`
 - postgres: `ok rows=[(from a)] tags=[1]`
 - pooler: `error 26000: prepared statement "s87" does not exist`
 
@@ -768,7 +769,7 @@ DISCARD ALL must reset the client's settings to their defaults.
 
 An empty search_path set with set_config() must survive another client changing it.
 
-- step 4: `[a] simple: SHOW search_path`
+- step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[()] tags=[0]`
 - pooler: `ok rows=[(public)] tags=[0]`
 - from https://github.com/pgbouncer/pgbouncer/issues/1663
@@ -777,7 +778,7 @@ An empty search_path set with set_config() must survive another client changing 
 
 An empty search_path set with set_config() must survive another client changing it.
 
-- step 4: `[a] simple: SHOW search_path`
+- step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[()] tags=[0]`
 - pooler: `ok rows=[(public)] tags=[0]`
 - from https://github.com/pgbouncer/pgbouncer/issues/1663
@@ -786,7 +787,7 @@ An empty search_path set with set_config() must survive another client changing 
 
 An empty search_path set with set_config() must survive another client changing it.
 
-- step 4: `[a] simple: SHOW search_path`
+- step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[()] tags=[0]`
 - pooler: `ok rows=[(public)] tags=[0]`
 - from https://github.com/pgbouncer/pgbouncer/issues/1663
@@ -795,7 +796,7 @@ An empty search_path set with set_config() must survive another client changing 
 
 An empty search_path set with set_config() must survive another client changing it.
 
-- step 4: `[a] simple: SHOW search_path`
+- step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[()] tags=[0]`
 - pooler: `ok rows=[("$user", public)] tags=[0]`
 - from https://github.com/pgbouncer/pgbouncer/issues/1663
@@ -804,7 +805,7 @@ An empty search_path set with set_config() must survive another client changing 
 
 An empty search_path set with set_config() must survive another client changing it.
 
-- step 4: `[a] simple: SHOW search_path`
+- step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[()] tags=[0]`
 - pooler: `ok rows=[("$user", public)] tags=[0]`
 - from https://github.com/pgbouncer/pgbouncer/issues/1663
@@ -813,7 +814,7 @@ An empty search_path set with set_config() must survive another client changing 
 
 An empty search_path set with set_config() must survive another client changing it.
 
-- step 4: `[a] simple: SHOW search_path`
+- step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[()] tags=[0]`
 - pooler: `ok rows=[("$user", public)] tags=[0]`
 - from https://github.com/pgbouncer/pgbouncer/issues/1663
@@ -822,7 +823,7 @@ An empty search_path set with set_config() must survive another client changing 
 
 An empty search_path set with set_config() must survive another client changing it.
 
-- step 4: `[a] simple: SHOW search_path`
+- step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[()] tags=[0]`
 - pooler: `ok rows=[("$user", public)] tags=[0]`
 - from https://github.com/pgbouncer/pgbouncer/issues/1663
@@ -831,7 +832,7 @@ An empty search_path set with set_config() must survive another client changing 
 
 An empty search_path set with set_config() must survive another client changing it.
 
-- step 4: `[a] simple: SHOW search_path`
+- step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[()] tags=[0]`
 - pooler: `ok rows=[("$user", public)] tags=[0]`
 - from https://github.com/pgbouncer/pgbouncer/issues/1663
@@ -840,7 +841,7 @@ An empty search_path set with set_config() must survive another client changing 
 
 An empty search_path set with set_config() must survive another client changing it.
 
-- step 4: `[a] simple: SHOW search_path`
+- step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[()] tags=[0]`
 - pooler: `ok rows=[("$user", public)] tags=[0]`
 - from https://github.com/pgbouncer/pgbouncer/issues/1663
@@ -849,7 +850,7 @@ An empty search_path set with set_config() must survive another client changing 
 
 An empty search_path set with set_config() must survive another client changing it.
 
-- step 4: `[a] simple: SHOW search_path`
+- step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[()] tags=[0]`
 - pooler: `ok rows=[(public)] tags=[0]`
 - from https://github.com/pgbouncer/pgbouncer/issues/1663
@@ -858,7 +859,7 @@ An empty search_path set with set_config() must survive another client changing 
 
 An empty search_path set with set_config() must survive another client changing it.
 
-- step 4: `[a] simple: SHOW search_path`
+- step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[()] tags=[0]`
 - pooler: `ok rows=[(public)] tags=[0]`
 - from https://github.com/pgbouncer/pgbouncer/issues/1663
@@ -876,7 +877,7 @@ An empty search_path set with set_config() must survive another client changing 
 
 An empty search_path set with set_config() must survive another client changing it.
 
-- step 4: `[a] simple: SHOW search_path`
+- step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[()] tags=[0]`
 - pooler: `ok rows=[(public)] tags=[0]`
 - from https://github.com/pgbouncer/pgbouncer/issues/1663
@@ -885,7 +886,7 @@ An empty search_path set with set_config() must survive another client changing 
 
 An empty search_path set with set_config() must survive another client changing it.
 
-- step 4: `[a] simple: SHOW search_path`
+- step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[()] tags=[0]`
 - pooler: `ok rows=[(public)] tags=[0]`
 - from https://github.com/pgbouncer/pgbouncer/issues/1663
@@ -894,7 +895,7 @@ An empty search_path set with set_config() must survive another client changing 
 
 An empty search_path set with set_config() must survive another client changing it.
 
-- step 4: `[a] simple: SHOW search_path`
+- step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[()] tags=[0]`
 - pooler: `ok rows=[(public)] tags=[0]`
 - from https://github.com/pgbouncer/pgbouncer/issues/1663
@@ -903,16 +904,16 @@ An empty search_path set with set_config() must survive another client changing 
 
 An empty search_path set with set_config() must survive another client changing it.
 
-- step 4: `[a] simple: SHOW search_path`
+- step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[()] tags=[0]`
-- pooler: `error 08P01: invalid server parameter`
+- pooler: `error CLOSED: connection closed`
 - from https://github.com/pgbouncer/pgbouncer/issues/1663
 
 ### pgdog-0.1.50 (pg 18.4) / empty-search-path-from-set-config (silent)
 
 An empty search_path set with set_config() must survive another client changing it.
 
-- step 4: `[a] simple: SHOW search_path`
+- step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[()] tags=[0]`
 - pooler: `ok rows=[("")] tags=[0]`
 - from https://github.com/pgbouncer/pgbouncer/issues/1663
@@ -921,7 +922,7 @@ An empty search_path set with set_config() must survive another client changing 
 
 An empty search_path set with set_config() must survive another client changing it.
 
-- step 4: `[a] simple: SHOW search_path`
+- step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[()] tags=[0]`
 - pooler: `ok rows=[("")] tags=[0]`
 - from https://github.com/pgbouncer/pgbouncer/issues/1663
@@ -930,7 +931,7 @@ An empty search_path set with set_config() must survive another client changing 
 
 An empty search_path set with set_config() must survive another client changing it.
 
-- step 4: `[a] simple: SHOW search_path`
+- step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[()] tags=[0]`
 - pooler: `ok rows=[("")] tags=[0]`
 - from https://github.com/pgbouncer/pgbouncer/issues/1663
@@ -939,7 +940,7 @@ An empty search_path set with set_config() must survive another client changing 
 
 An empty search_path set with set_config() must survive another client changing it.
 
-- step 4: `[a] simple: SHOW search_path`
+- step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[()] tags=[0]`
 - pooler: `ok rows=[("")] tags=[0]`
 - from https://github.com/pgbouncer/pgbouncer/issues/1663
@@ -948,7 +949,7 @@ An empty search_path set with set_config() must survive another client changing 
 
 An empty search_path set with set_config() must survive another client changing it.
 
-- step 4: `[a] simple: SHOW search_path`
+- step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[()] tags=[0]`
 - pooler: `ok rows=[("$user", public)] tags=[0]`
 - from https://github.com/pgbouncer/pgbouncer/issues/1663
@@ -957,7 +958,7 @@ An empty search_path set with set_config() must survive another client changing 
 
 An empty search_path set with set_config() must survive another client changing it.
 
-- step 4: `[a] simple: SHOW search_path`
+- step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[()] tags=[0]`
 - pooler: `ok rows=[("")] tags=[0]`
 - from https://github.com/pgbouncer/pgbouncer/issues/1663
@@ -966,7 +967,7 @@ An empty search_path set with set_config() must survive another client changing 
 
 An empty search_path set with set_config() must survive another client changing it.
 
-- step 4: `[a] simple: SHOW search_path`
+- step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[()] tags=[0]`
 - pooler: `ok rows=[(public)] tags=[0]`
 - from https://github.com/pgbouncer/pgbouncer/issues/1663
@@ -975,7 +976,7 @@ An empty search_path set with set_config() must survive another client changing 
 
 An empty search_path set with set_config() must survive another client changing it.
 
-- step 4: `[a] simple: SHOW search_path`
+- step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[()] tags=[0]`
 - pooler: `ok rows=[(public)] tags=[0]`
 - from https://github.com/pgbouncer/pgbouncer/issues/1663
@@ -993,16 +994,16 @@ An empty search_path set with set_config() must survive another client changing 
 
 An empty search_path set with set_config() must survive another client changing it.
 
-- step 4: `[a] simple: SHOW search_path`
+- step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[()] tags=[0]`
-- pooler: `error 08P01: invalid server parameter`
+- pooler: `error CLOSED: connection closed`
 - from https://github.com/pgbouncer/pgbouncer/issues/1663
 
 ### pgbouncer-1.24.1 (pg 17.11) / listen-notify-delivered (silent)
 
 A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
-- step 5: `[a] notifications`
+- step 9: `[a] notifications`
 - postgres: `ok rows=[(pp_chan, hello)] tags=[]`
 - pooler: `ok rows=[] tags=[]`
 - from https://github.com/pgbouncer/pgbouncer/issues/655
@@ -1011,7 +1012,7 @@ A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
 A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
-- step 5: `[a] notifications`
+- step 9: `[a] notifications`
 - postgres: `ok rows=[(pp_chan, hello)] tags=[]`
 - pooler: `ok rows=[] tags=[]`
 - from https://github.com/pgbouncer/pgbouncer/issues/655
@@ -1020,7 +1021,7 @@ A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
 A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
-- step 5: `[a] notifications`
+- step 9: `[a] notifications`
 - postgres: `ok rows=[(pp_chan, hello)] tags=[]`
 - pooler: `ok rows=[] tags=[]`
 - from https://github.com/pgbouncer/pgbouncer/issues/655
@@ -1029,7 +1030,7 @@ A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
 A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
-- step 1: `[a] simple: LISTEN pp_chan`
+- step 3: `[a] simple: LISTEN pp_chan`
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error 58000: pub/sub disabled`
 - from https://github.com/pgbouncer/pgbouncer/issues/655
@@ -1038,7 +1039,7 @@ A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
 A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
-- step 1: `[a] simple: LISTEN pp_chan`
+- step 3: `[a] simple: LISTEN pp_chan`
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error 58000: pub/sub disabled`
 - from https://github.com/pgbouncer/pgbouncer/issues/655
@@ -1047,7 +1048,7 @@ A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
 A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
-- step 1: `[a] simple: LISTEN pp_chan`
+- step 3: `[a] simple: LISTEN pp_chan`
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error 58000: pub/sub disabled`
 - from https://github.com/pgbouncer/pgbouncer/issues/655
@@ -1056,7 +1057,7 @@ A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
 A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
-- step 5: `[a] notifications`
+- step 9: `[a] notifications`
 - postgres: `ok rows=[(pp_chan, hello)] tags=[]`
 - pooler: `ok rows=[] tags=[]`
 - from https://github.com/pgbouncer/pgbouncer/issues/655
@@ -1065,7 +1066,7 @@ A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
 A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
-- step 5: `[a] notifications`
+- step 9: `[a] notifications`
 - postgres: `ok rows=[(pp_chan, hello)] tags=[]`
 - pooler: `ok rows=[] tags=[]`
 - from https://github.com/pgbouncer/pgbouncer/issues/655
@@ -1074,7 +1075,7 @@ A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
 A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
-- step 5: `[a] notifications`
+- step 9: `[a] notifications`
 - postgres: `ok rows=[(pp_chan, hello)] tags=[]`
 - pooler: `ok rows=[] tags=[]`
 - from https://github.com/pgbouncer/pgbouncer/issues/655
@@ -1083,7 +1084,7 @@ A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
 A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
-- step 5: `[a] notifications`
+- step 9: `[a] notifications`
 - postgres: `ok rows=[(pp_chan, hello)] tags=[]`
 - pooler: `ok rows=[] tags=[]`
 - from https://github.com/pgbouncer/pgbouncer/issues/655
@@ -1092,7 +1093,7 @@ A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
 A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
-- step 1: `[a] simple: LISTEN pp_chan`
+- step 3: `[a] simple: LISTEN pp_chan`
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error XX000: (ESESSIONLEAK) LISTEN statement is not allowed in transaction mode`
 - from https://github.com/pgbouncer/pgbouncer/issues/655
@@ -1101,7 +1102,7 @@ A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
 A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
-- step 5: `[a] notifications`
+- step 9: `[a] notifications`
 - postgres: `ok rows=[(pp_chan, hello)] tags=[]`
 - pooler: `ok rows=[] tags=[]`
 - from https://github.com/pgbouncer/pgbouncer/issues/655
@@ -1110,7 +1111,7 @@ A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
 A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
-- step 5: `[a] notifications`
+- step 9: `[a] notifications`
 - postgres: `ok rows=[(pp_chan, hello)] tags=[]`
 - pooler: `ok rows=[] tags=[]`
 - from https://github.com/pgbouncer/pgbouncer/issues/655
@@ -1119,7 +1120,7 @@ A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
 A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
-- step 5: `[a] notifications`
+- step 9: `[a] notifications`
 - postgres: `ok rows=[(pp_chan, hello)] tags=[]`
 - pooler: `ok rows=[] tags=[]`
 - from https://github.com/pgbouncer/pgbouncer/issues/655
@@ -1128,7 +1129,7 @@ A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
 A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
-- step 5: `[a] notifications`
+- step 9: `[a] notifications`
 - postgres: `ok rows=[(pp_chan, hello)] tags=[]`
 - pooler: `ok rows=[] tags=[]`
 - from https://github.com/pgbouncer/pgbouncer/issues/655
@@ -1137,7 +1138,7 @@ A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
 A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
-- step 1: `[a] simple: LISTEN pp_chan`
+- step 3: `[a] simple: LISTEN pp_chan`
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error 58000: pub/sub disabled`
 - from https://github.com/pgbouncer/pgbouncer/issues/655
@@ -1146,7 +1147,7 @@ A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
 A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
-- step 1: `[a] simple: LISTEN pp_chan`
+- step 3: `[a] simple: LISTEN pp_chan`
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error 58000: pub/sub disabled`
 - from https://github.com/pgbouncer/pgbouncer/issues/655
@@ -1155,7 +1156,7 @@ A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
 A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
-- step 1: `[a] simple: LISTEN pp_chan`
+- step 3: `[a] simple: LISTEN pp_chan`
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error 58000: pub/sub disabled`
 - from https://github.com/pgbouncer/pgbouncer/issues/655
@@ -1164,7 +1165,7 @@ A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
 A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
-- step 5: `[a] notifications`
+- step 9: `[a] notifications`
 - postgres: `ok rows=[(pp_chan, hello)] tags=[]`
 - pooler: `ok rows=[] tags=[]`
 - from https://github.com/pgbouncer/pgbouncer/issues/655
@@ -1173,7 +1174,7 @@ A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
 A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
-- step 5: `[a] notifications`
+- step 9: `[a] notifications`
 - postgres: `ok rows=[(pp_chan, hello)] tags=[]`
 - pooler: `ok rows=[] tags=[]`
 - from https://github.com/pgbouncer/pgbouncer/issues/655
@@ -1182,7 +1183,7 @@ A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
 A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
-- step 5: `[a] notifications`
+- step 9: `[a] notifications`
 - postgres: `ok rows=[(pp_chan, hello)] tags=[]`
 - pooler: `ok rows=[] tags=[]`
 - from https://github.com/pgbouncer/pgbouncer/issues/655
@@ -1191,7 +1192,7 @@ A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
 A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
-- step 5: `[a] notifications`
+- step 9: `[a] notifications`
 - postgres: `ok rows=[(pp_chan, hello)] tags=[]`
 - pooler: `ok rows=[] tags=[]`
 - from https://github.com/pgbouncer/pgbouncer/issues/655
@@ -1200,7 +1201,7 @@ A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
 A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
-- step 1: `[a] simple: LISTEN pp_chan`
+- step 3: `[a] simple: LISTEN pp_chan`
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error XX000: (ESESSIONLEAK) LISTEN statement is not allowed in transaction mode`
 - from https://github.com/pgbouncer/pgbouncer/issues/655
@@ -1209,7 +1210,7 @@ A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
 A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
-- step 5: `[a] notifications`
+- step 9: `[a] notifications`
 - postgres: `ok rows=[(pp_chan, hello)] tags=[]`
 - pooler: `ok rows=[] tags=[]`
 - from https://github.com/pgbouncer/pgbouncer/issues/655
@@ -1218,7 +1219,7 @@ A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
 A library one client loads with LOAD must not show up for another client.
 
-- step 4: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
+- step 8: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
 - postgres: `ok rows=[(NULL)] tags=[1]`
 - pooler: `ok rows=[(-1)] tags=[1]`
 
@@ -1226,7 +1227,7 @@ A library one client loads with LOAD must not show up for another client.
 
 A library one client loads with LOAD must not show up for another client.
 
-- step 4: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
+- step 8: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
 - postgres: `ok rows=[(NULL)] tags=[1]`
 - pooler: `ok rows=[(-1)] tags=[1]`
 
@@ -1234,7 +1235,7 @@ A library one client loads with LOAD must not show up for another client.
 
 A library one client loads with LOAD must not show up for another client.
 
-- step 4: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
+- step 8: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
 - postgres: `ok rows=[(NULL)] tags=[1]`
 - pooler: `ok rows=[(-1)] tags=[1]`
 
@@ -1242,7 +1243,7 @@ A library one client loads with LOAD must not show up for another client.
 
 A library one client loads with LOAD must not show up for another client.
 
-- step 4: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
+- step 8: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
 - postgres: `ok rows=[(NULL)] tags=[1]`
 - pooler: `ok rows=[(-1)] tags=[1]`
 
@@ -1250,7 +1251,7 @@ A library one client loads with LOAD must not show up for another client.
 
 A library one client loads with LOAD must not show up for another client.
 
-- step 4: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
+- step 8: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
 - postgres: `ok rows=[(NULL)] tags=[1]`
 - pooler: `ok rows=[(-1)] tags=[1]`
 
@@ -1258,7 +1259,7 @@ A library one client loads with LOAD must not show up for another client.
 
 A library one client loads with LOAD must not show up for another client.
 
-- step 4: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
+- step 8: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
 - postgres: `ok rows=[(NULL)] tags=[1]`
 - pooler: `ok rows=[(-1)] tags=[1]`
 
@@ -1266,7 +1267,7 @@ A library one client loads with LOAD must not show up for another client.
 
 A library one client loads with LOAD must not show up for another client.
 
-- step 4: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
+- step 8: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
 - postgres: `ok rows=[(NULL)] tags=[1]`
 - pooler: `ok rows=[(-1)] tags=[1]`
 
@@ -1274,7 +1275,7 @@ A library one client loads with LOAD must not show up for another client.
 
 A library one client loads with LOAD must not show up for another client.
 
-- step 4: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
+- step 8: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
 - postgres: `ok rows=[(NULL)] tags=[1]`
 - pooler: `ok rows=[(-1)] tags=[1]`
 
@@ -1282,7 +1283,7 @@ A library one client loads with LOAD must not show up for another client.
 
 A library one client loads with LOAD must not show up for another client.
 
-- step 4: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
+- step 8: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
 - postgres: `ok rows=[(NULL)] tags=[1]`
 - pooler: `ok rows=[(-1)] tags=[1]`
 
@@ -1290,7 +1291,7 @@ A library one client loads with LOAD must not show up for another client.
 
 A library one client loads with LOAD must not show up for another client.
 
-- step 4: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
+- step 8: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
 - postgres: `ok rows=[(NULL)] tags=[1]`
 - pooler: `ok rows=[(-1)] tags=[1]`
 
@@ -1298,7 +1299,7 @@ A library one client loads with LOAD must not show up for another client.
 
 A library one client loads with LOAD must not show up for another client.
 
-- step 4: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
+- step 8: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
 - postgres: `ok rows=[(NULL)] tags=[1]`
 - pooler: `ok rows=[(-1)] tags=[1]`
 
@@ -1306,7 +1307,7 @@ A library one client loads with LOAD must not show up for another client.
 
 A library one client loads with LOAD must not show up for another client.
 
-- step 1: `[a] simple: LOAD 'auto_explain'`
+- step 3: `[a] simple: LOAD 'auto_explain'`
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error XX000: (ESESSIONLEAK) LOAD statement is not allowed in transaction mode`
 
@@ -1314,7 +1315,7 @@ A library one client loads with LOAD must not show up for another client.
 
 A library one client loads with LOAD must not show up for another client.
 
-- step 4: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
+- step 8: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
 - postgres: `ok rows=[(NULL)] tags=[1]`
 - pooler: `ok rows=[(-1)] tags=[1]`
 
@@ -1322,7 +1323,7 @@ A library one client loads with LOAD must not show up for another client.
 
 A library one client loads with LOAD must not show up for another client.
 
-- step 4: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
+- step 8: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
 - postgres: `ok rows=[(NULL)] tags=[1]`
 - pooler: `ok rows=[(-1)] tags=[1]`
 
@@ -1330,7 +1331,7 @@ A library one client loads with LOAD must not show up for another client.
 
 A library one client loads with LOAD must not show up for another client.
 
-- step 4: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
+- step 8: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
 - postgres: `ok rows=[(NULL)] tags=[1]`
 - pooler: `ok rows=[(-1)] tags=[1]`
 
@@ -1338,7 +1339,7 @@ A library one client loads with LOAD must not show up for another client.
 
 A library one client loads with LOAD must not show up for another client.
 
-- step 4: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
+- step 8: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
 - postgres: `ok rows=[(NULL)] tags=[1]`
 - pooler: `ok rows=[(-1)] tags=[1]`
 
@@ -1346,7 +1347,7 @@ A library one client loads with LOAD must not show up for another client.
 
 A library one client loads with LOAD must not show up for another client.
 
-- step 4: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
+- step 8: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
 - postgres: `ok rows=[(NULL)] tags=[1]`
 - pooler: `ok rows=[(-1)] tags=[1]`
 
@@ -1354,7 +1355,7 @@ A library one client loads with LOAD must not show up for another client.
 
 A library one client loads with LOAD must not show up for another client.
 
-- step 4: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
+- step 8: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
 - postgres: `ok rows=[(NULL)] tags=[1]`
 - pooler: `ok rows=[(-1)] tags=[1]`
 
@@ -1362,7 +1363,7 @@ A library one client loads with LOAD must not show up for another client.
 
 A library one client loads with LOAD must not show up for another client.
 
-- step 4: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
+- step 8: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
 - postgres: `ok rows=[(NULL)] tags=[1]`
 - pooler: `ok rows=[(-1)] tags=[1]`
 
@@ -1370,7 +1371,7 @@ A library one client loads with LOAD must not show up for another client.
 
 A library one client loads with LOAD must not show up for another client.
 
-- step 4: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
+- step 8: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
 - postgres: `ok rows=[(NULL)] tags=[1]`
 - pooler: `ok rows=[(-1)] tags=[1]`
 
@@ -1378,7 +1379,7 @@ A library one client loads with LOAD must not show up for another client.
 
 A library one client loads with LOAD must not show up for another client.
 
-- step 4: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
+- step 8: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
 - postgres: `ok rows=[(NULL)] tags=[1]`
 - pooler: `ok rows=[(-1)] tags=[1]`
 
@@ -1386,7 +1387,7 @@ A library one client loads with LOAD must not show up for another client.
 
 A library one client loads with LOAD must not show up for another client.
 
-- step 4: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
+- step 8: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
 - postgres: `ok rows=[(NULL)] tags=[1]`
 - pooler: `ok rows=[(-1)] tags=[1]`
 
@@ -1394,7 +1395,7 @@ A library one client loads with LOAD must not show up for another client.
 
 A library one client loads with LOAD must not show up for another client.
 
-- step 4: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
+- step 8: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
 - postgres: `ok rows=[(NULL)] tags=[1]`
 - pooler: `ok rows=[(-1)] tags=[1]`
 
@@ -1402,7 +1403,7 @@ A library one client loads with LOAD must not show up for another client.
 
 A library one client loads with LOAD must not show up for another client.
 
-- step 4: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
+- step 8: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
 - postgres: `ok rows=[(NULL)] tags=[1]`
 - pooler: `ok rows=[(-1)] tags=[1]`
 
@@ -1410,7 +1411,7 @@ A library one client loads with LOAD must not show up for another client.
 
 A library one client loads with LOAD must not show up for another client.
 
-- step 1: `[a] simple: LOAD 'auto_explain'`
+- step 3: `[a] simple: LOAD 'auto_explain'`
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error XX000: (ESESSIONLEAK) LOAD statement is not allowed in transaction mode`
 
@@ -1418,7 +1419,7 @@ A library one client loads with LOAD must not show up for another client.
 
 A library one client loads with LOAD must not show up for another client.
 
-- step 4: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
+- step 8: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
 - postgres: `ok rows=[(NULL)] tags=[1]`
 - pooler: `ok rows=[(-1)] tags=[1]`
 
@@ -1930,7 +1931,7 @@ After a SET of a parameter Postgres reports, the client must get a ParameterStat
 
 A protocol-level prepared statement must still work after other clients used the pool.
 
-- step 6: `[a] execute q`
+- step 8: `[a] execute q`
 - postgres: `ok rows=[(from a)] tags=[1]`
 - pooler: `error 26000: prepared statement "s53" does not exist`
 
@@ -1938,7 +1939,7 @@ A protocol-level prepared statement must still work after other clients used the
 
 A protocol-level prepared statement must still work after other clients used the pool.
 
-- step 6: `[a] execute q`
+- step 8: `[a] execute q`
 - postgres: `ok rows=[(from a)] tags=[1]`
 - pooler: `error 26000: prepared statement "s53" does not exist`
 
@@ -2087,7 +2088,7 @@ Several named statements prepared and run in one pipeline must all return their 
 A protocol-level prepared statement must stay usable by its client while another client holds the server connection it was prepared on.
 
 - precondition met in 5 of 5 runs
-- step 5: `[a] execute q`
+- step 6: `[a] execute q`
 - postgres: `ok rows=[(from a)] tags=[1]`
 - pooler: `error 26000: prepared statement "s69" does not exist`
 
@@ -2096,7 +2097,7 @@ A protocol-level prepared statement must stay usable by its client while another
 A protocol-level prepared statement must stay usable by its client while another client holds the server connection it was prepared on.
 
 - precondition met in 5 of 5 runs
-- step 5: `[a] execute q`
+- step 6: `[a] execute q`
 - postgres: `ok rows=[(from a)] tags=[1]`
 - pooler: `error 26000: prepared statement "s81" does not exist`
 
@@ -2105,7 +2106,7 @@ A protocol-level prepared statement must stay usable by its client while another
 A protocol-level prepared statement must stay usable by its client while another client holds the server connection it was prepared on.
 
 - precondition met in 5 of 5 runs
-- step 5: `[a] execute q`
+- step 6: `[a] execute q`
 - postgres: `ok rows=[(from a)] tags=[1]`
 - pooler: `error 26000: prepared statement "s93" does not exist`
 
@@ -2114,7 +2115,7 @@ A protocol-level prepared statement must stay usable by its client while another
 A protocol-level prepared statement must stay usable by its client while another client holds the server connection it was prepared on.
 
 - precondition met in 5 of 5 runs
-- step 5: `[a] execute q`
+- step 6: `[a] execute q`
 - postgres: `ok rows=[(from a)] tags=[1]`
 - pooler: `error 26000: prepared statement "s69" does not exist`
 
@@ -2123,7 +2124,7 @@ A protocol-level prepared statement must stay usable by its client while another
 A protocol-level prepared statement must stay usable by its client while another client holds the server connection it was prepared on.
 
 - precondition met in 5 of 5 runs
-- step 5: `[a] execute q`
+- step 6: `[a] execute q`
 - postgres: `ok rows=[(from a)] tags=[1]`
 - pooler: `error 26000: prepared statement "s81" does not exist`
 
@@ -2132,7 +2133,7 @@ A protocol-level prepared statement must stay usable by its client while another
 A protocol-level prepared statement must stay usable by its client while another client holds the server connection it was prepared on.
 
 - precondition met in 5 of 5 runs
-- step 5: `[a] execute q`
+- step 6: `[a] execute q`
 - postgres: `ok rows=[(from a)] tags=[1]`
 - pooler: `error 26000: prepared statement "s93" does not exist`
 
@@ -2140,7 +2141,7 @@ A protocol-level prepared statement must stay usable by its client while another
 
 Two clients can prepare protocol-level statements with the same name, and each runs its own.
 
-- step 5: `[b] send: bind - s1 / execute - / sync`
+- step 8: `[b] send: bind - s1 / execute - / sync`
 - postgres: `BindComplete, DataRow from b, CommandComplete SELECT 1, ReadyForQuery I`
 - pooler: `Error 26000, ReadyForQuery I`
 
@@ -2148,7 +2149,7 @@ Two clients can prepare protocol-level statements with the same name, and each r
 
 Two clients can prepare protocol-level statements with the same name, and each runs its own.
 
-- step 3: `[b] send: parse s1 SELECT 'from b'::text / sync`
+- step 7: `[b] send: parse s1 SELECT 'from b'::text / sync`
 - postgres: `ParseComplete, ReadyForQuery I`
 - pooler: `Error 42P05, ReadyForQuery I`
 
@@ -2156,7 +2157,7 @@ Two clients can prepare protocol-level statements with the same name, and each r
 
 Two clients can prepare protocol-level statements with the same name, and each runs its own.
 
-- step 3: `[b] send: parse s1 SELECT 'from b'::text / sync`
+- step 7: `[b] send: parse s1 SELECT 'from b'::text / sync`
 - postgres: `ParseComplete, ReadyForQuery I`
 - pooler: `Error 42P05, ReadyForQuery I`
 
@@ -2164,7 +2165,7 @@ Two clients can prepare protocol-level statements with the same name, and each r
 
 Two clients can prepare protocol-level statements with the same name, and each runs its own.
 
-- step 3: `[b] send: parse s1 SELECT 'from b'::text / sync`
+- step 7: `[b] send: parse s1 SELECT 'from b'::text / sync`
 - postgres: `ParseComplete, ReadyForQuery I`
 - pooler: `Error 42P05, ReadyForQuery I`
 
@@ -2172,7 +2173,7 @@ Two clients can prepare protocol-level statements with the same name, and each r
 
 Two clients can prepare protocol-level statements with the same name, and each runs its own.
 
-- step 5: `[b] send: bind - s1 / execute - / sync`
+- step 8: `[b] send: bind - s1 / execute - / sync`
 - postgres: `BindComplete, DataRow from b, CommandComplete SELECT 1, ReadyForQuery I`
 - pooler: `Error 26000, ReadyForQuery I`
 
@@ -2180,7 +2181,7 @@ Two clients can prepare protocol-level statements with the same name, and each r
 
 Two clients can prepare protocol-level statements with the same name, and each runs its own.
 
-- step 3: `[b] send: parse s1 SELECT 'from b'::text / sync`
+- step 7: `[b] send: parse s1 SELECT 'from b'::text / sync`
 - postgres: `ParseComplete, ReadyForQuery I`
 - pooler: `Error 42P05, ReadyForQuery I`
 
@@ -2188,7 +2189,7 @@ Two clients can prepare protocol-level statements with the same name, and each r
 
 Two clients can prepare protocol-level statements with the same name, and each runs its own.
 
-- step 3: `[b] send: parse s1 SELECT 'from b'::text / sync`
+- step 7: `[b] send: parse s1 SELECT 'from b'::text / sync`
 - postgres: `ParseComplete, ReadyForQuery I`
 - pooler: `Error 42P05, ReadyForQuery I`
 
@@ -2196,7 +2197,7 @@ Two clients can prepare protocol-level statements with the same name, and each r
 
 Two clients can prepare protocol-level statements with the same name, and each runs its own.
 
-- step 3: `[b] send: parse s1 SELECT 'from b'::text / sync`
+- step 7: `[b] send: parse s1 SELECT 'from b'::text / sync`
 - postgres: `ParseComplete, ReadyForQuery I`
 - pooler: `Error 42P05, ReadyForQuery I`
 
@@ -2204,7 +2205,7 @@ Two clients can prepare protocol-level statements with the same name, and each r
 
 After Close, a statement name can be prepared again with different SQL, and the new SQL runs.
 
-- step 8: `[a] send: bind - s1 / execute - / sync`
+- step 10: `[a] send: bind - s1 / execute - / sync`
 - postgres: `BindComplete, DataRow new, CommandComplete SELECT 1, ReadyForQuery I`
 - pooler: `Error 26000, ReadyForQuery I`
 
@@ -2212,7 +2213,7 @@ After Close, a statement name can be prepared again with different SQL, and the 
 
 After Close, a statement name can be prepared again with different SQL, and the new SQL runs.
 
-- step 8: `[a] send: bind - s1 / execute - / sync`
+- step 10: `[a] send: bind - s1 / execute - / sync`
 - postgres: `BindComplete, DataRow new, CommandComplete SELECT 1, ReadyForQuery I`
 - pooler: `Error 26000, ReadyForQuery I`
 
@@ -2220,7 +2221,7 @@ After Close, a statement name can be prepared again with different SQL, and the 
 
 The unnamed statement stays usable until the same client replaces it, even if other clients ran queries.
 
-- step 4: `[a] send: bind - - / execute - / sync`
+- step 8: `[a] send: bind - - / execute - / sync`
 - postgres: `BindComplete, DataRow from a, CommandComplete SELECT 1, ReadyForQuery I`
 - pooler: `Error 26000, ReadyForQuery I`
 
@@ -2228,7 +2229,7 @@ The unnamed statement stays usable until the same client replaces it, even if ot
 
 The unnamed statement stays usable until the same client replaces it, even if other clients ran queries.
 
-- step 4: `[a] send: bind - - / execute - / sync`
+- step 8: `[a] send: bind - - / execute - / sync`
 - postgres: `BindComplete, DataRow from a, CommandComplete SELECT 1, ReadyForQuery I`
 - pooler: `Error 26000, ReadyForQuery I`
 
@@ -2236,7 +2237,7 @@ The unnamed statement stays usable until the same client replaces it, even if ot
 
 The unnamed statement stays usable until the same client replaces it, even if other clients ran queries.
 
-- step 4: `[a] send: bind - - / execute - / sync`
+- step 8: `[a] send: bind - - / execute - / sync`
 - postgres: `BindComplete, DataRow from a, CommandComplete SELECT 1, ReadyForQuery I`
 - pooler: `Error 26000, ReadyForQuery I`
 
@@ -2244,7 +2245,7 @@ The unnamed statement stays usable until the same client replaces it, even if ot
 
 The unnamed statement stays usable until the same client replaces it, even if other clients ran queries.
 
-- step 4: `[a] send: bind - - / execute - / sync`
+- step 8: `[a] send: bind - - / execute - / sync`
 - postgres: `BindComplete, DataRow from a, CommandComplete SELECT 1, ReadyForQuery I`
 - pooler: `Error 26000, ReadyForQuery I`
 
@@ -2252,7 +2253,7 @@ The unnamed statement stays usable until the same client replaces it, even if ot
 
 The unnamed statement stays usable until the same client replaces it, even if other clients ran queries.
 
-- step 4: `[a] send: bind - - / execute - / sync`
+- step 8: `[a] send: bind - - / execute - / sync`
 - postgres: `BindComplete, DataRow from a, CommandComplete SELECT 1, ReadyForQuery I`
 - pooler: `Error 26000, ReadyForQuery I`
 
@@ -2260,7 +2261,7 @@ The unnamed statement stays usable until the same client replaces it, even if ot
 
 The unnamed statement stays usable until the same client replaces it, even if other clients ran queries.
 
-- step 4: `[a] send: bind - - / execute - / sync`
+- step 8: `[a] send: bind - - / execute - / sync`
 - postgres: `BindComplete, DataRow from a, CommandComplete SELECT 1, ReadyForQuery I`
 - pooler: `Error 26000, ReadyForQuery I`
 
@@ -2268,7 +2269,7 @@ The unnamed statement stays usable until the same client replaces it, even if ot
 
 The unnamed statement stays usable until the same client replaces it, even if other clients ran queries.
 
-- step 4: `[a] send: bind - - / execute - / sync`
+- step 8: `[a] send: bind - - / execute - / sync`
 - postgres: `BindComplete, DataRow from a, CommandComplete SELECT 1, ReadyForQuery I`
 - pooler: `Error 26000, ReadyForQuery I`
 
@@ -2276,7 +2277,7 @@ The unnamed statement stays usable until the same client replaces it, even if ot
 
 The unnamed statement stays usable until the same client replaces it, even if other clients ran queries.
 
-- step 4: `[a] send: bind - - / execute - / sync`
+- step 8: `[a] send: bind - - / execute - / sync`
 - postgres: `BindComplete, DataRow from a, CommandComplete SELECT 1, ReadyForQuery I`
 - pooler: `Error 26000, ReadyForQuery I`
 
@@ -2284,7 +2285,7 @@ The unnamed statement stays usable until the same client replaces it, even if ot
 
 The unnamed statement stays usable until the same client replaces it, even if other clients ran queries.
 
-- step 4: `[a] send: bind - - / execute - / sync`
+- step 8: `[a] send: bind - - / execute - / sync`
 - postgres: `BindComplete, DataRow from a, CommandComplete SELECT 1, ReadyForQuery I`
 - pooler: `Error 26000, ReadyForQuery I`
 
@@ -2292,7 +2293,7 @@ The unnamed statement stays usable until the same client replaces it, even if ot
 
 The unnamed statement stays usable until the same client replaces it, even if other clients ran queries.
 
-- step 4: `[a] send: bind - - / execute - / sync`
+- step 8: `[a] send: bind - - / execute - / sync`
 - postgres: `BindComplete, DataRow from a, CommandComplete SELECT 1, ReadyForQuery I`
 - pooler: `Error 26000, ReadyForQuery I`
 
@@ -2300,7 +2301,7 @@ The unnamed statement stays usable until the same client replaces it, even if ot
 
 The unnamed statement stays usable until the same client replaces it, even if other clients ran queries.
 
-- step 4: `[a] send: bind - - / execute - / sync`
+- step 8: `[a] send: bind - - / execute - / sync`
 - postgres: `BindComplete, DataRow from a, CommandComplete SELECT 1, ReadyForQuery I`
 - pooler: `Error 26000, ReadyForQuery I`
 
@@ -2308,7 +2309,7 @@ The unnamed statement stays usable until the same client replaces it, even if ot
 
 The unnamed statement stays usable until the same client replaces it, even if other clients ran queries.
 
-- step 4: `[a] send: bind - - / execute - / sync`
+- step 8: `[a] send: bind - - / execute - / sync`
 - postgres: `BindComplete, DataRow from a, CommandComplete SELECT 1, ReadyForQuery I`
 - pooler: `Error 26000, ReadyForQuery I`
 
@@ -2316,7 +2317,7 @@ The unnamed statement stays usable until the same client replaces it, even if ot
 
 The unnamed statement stays usable until the same client replaces it, even if other clients ran queries.
 
-- step 4: `[a] send: bind - - / execute - / sync`
+- step 8: `[a] send: bind - - / execute - / sync`
 - postgres: `BindComplete, DataRow from a, CommandComplete SELECT 1, ReadyForQuery I`
 - pooler: `Error 26000, ReadyForQuery I`
 
@@ -2324,7 +2325,7 @@ The unnamed statement stays usable until the same client replaces it, even if ot
 
 The unnamed statement stays usable until the same client replaces it, even if other clients ran queries.
 
-- step 4: `[a] send: bind - - / execute - / sync`
+- step 8: `[a] send: bind - - / execute - / sync`
 - postgres: `BindComplete, DataRow from a, CommandComplete SELECT 1, ReadyForQuery I`
 - pooler: `Error 26000, ReadyForQuery I`
 
@@ -2332,7 +2333,7 @@ The unnamed statement stays usable until the same client replaces it, even if ot
 
 The unnamed statement stays usable until the same client replaces it, even if other clients ran queries.
 
-- step 4: `[a] send: bind - - / execute - / sync`
+- step 8: `[a] send: bind - - / execute - / sync`
 - postgres: `BindComplete, DataRow from a, CommandComplete SELECT 1, ReadyForQuery I`
 - pooler: `Error 26000, ReadyForQuery I`
 
@@ -2340,7 +2341,7 @@ The unnamed statement stays usable until the same client replaces it, even if ot
 
 The unnamed statement stays usable until the same client replaces it, even if other clients ran queries.
 
-- step 4: `[a] send: bind - - / execute - / sync`
+- step 8: `[a] send: bind - - / execute - / sync`
 - postgres: `BindComplete, DataRow from a, CommandComplete SELECT 1, ReadyForQuery I`
 - pooler: `Error 26000, ReadyForQuery I`
 
@@ -2348,7 +2349,7 @@ The unnamed statement stays usable until the same client replaces it, even if ot
 
 A client's empty search_path must still be empty after another client changed it.
 
-- step 4: `[a] simple: SHOW search_path`
+- step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[("")] tags=[0]`
 - pooler: `ok rows=[(public)] tags=[0]`
 
@@ -2356,7 +2357,7 @@ A client's empty search_path must still be empty after another client changed it
 
 A client's empty search_path must still be empty after another client changed it.
 
-- step 4: `[a] simple: SHOW search_path`
+- step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[("")] tags=[0]`
 - pooler: `ok rows=[(public)] tags=[0]`
 
@@ -2364,7 +2365,7 @@ A client's empty search_path must still be empty after another client changed it
 
 A client's empty search_path must still be empty after another client changed it.
 
-- step 4: `[a] simple: SHOW search_path`
+- step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[("")] tags=[0]`
 - pooler: `ok rows=[(public)] tags=[0]`
 
@@ -2372,7 +2373,7 @@ A client's empty search_path must still be empty after another client changed it
 
 A client's empty search_path must still be empty after another client changed it.
 
-- step 4: `[a] simple: SHOW search_path`
+- step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[("")] tags=[0]`
 - pooler: `ok rows=[("$user", public)] tags=[0]`
 
@@ -2380,7 +2381,7 @@ A client's empty search_path must still be empty after another client changed it
 
 A client's empty search_path must still be empty after another client changed it.
 
-- step 4: `[a] simple: SHOW search_path`
+- step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[("")] tags=[0]`
 - pooler: `ok rows=[("$user", public)] tags=[0]`
 
@@ -2388,7 +2389,7 @@ A client's empty search_path must still be empty after another client changed it
 
 A client's empty search_path must still be empty after another client changed it.
 
-- step 4: `[a] simple: SHOW search_path`
+- step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[("")] tags=[0]`
 - pooler: `ok rows=[(public)] tags=[0]`
 
@@ -2396,7 +2397,7 @@ A client's empty search_path must still be empty after another client changed it
 
 A client's empty search_path must still be empty after another client changed it.
 
-- step 4: `[a] simple: SHOW search_path`
+- step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[("")] tags=[0]`
 - pooler: `ok rows=[(public)] tags=[0]`
 
@@ -2412,7 +2413,7 @@ A client's empty search_path must still be empty after another client changed it
 
 A client's empty search_path must still be empty after another client changed it.
 
-- step 4: `[a] simple: SHOW search_path`
+- step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[("")] tags=[0]`
 - pooler: `ok rows=[(public)] tags=[0]`
 
@@ -2420,7 +2421,7 @@ A client's empty search_path must still be empty after another client changed it
 
 A client's empty search_path must still be empty after another client changed it.
 
-- step 4: `[a] simple: SHOW search_path`
+- step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[("")] tags=[0]`
 - pooler: `ok rows=[(public)] tags=[0]`
 
@@ -2428,7 +2429,7 @@ A client's empty search_path must still be empty after another client changed it
 
 A client's empty search_path must still be empty after another client changed it.
 
-- step 4: `[a] simple: SHOW search_path`
+- step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[("")] tags=[0]`
 - pooler: `ok rows=[(public)] tags=[0]`
 
@@ -2436,7 +2437,7 @@ A client's empty search_path must still be empty after another client changed it
 
 A client's empty search_path must still be empty after another client changed it.
 
-- step 4: `[a] simple: SHOW search_path`
+- step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[("")] tags=[0]`
 - pooler: `ok rows=[("$user", public)] tags=[0]`
 
@@ -2444,7 +2445,7 @@ A client's empty search_path must still be empty after another client changed it
 
 A client's empty search_path must still be empty after another client changed it.
 
-- step 4: `[a] simple: SHOW search_path`
+- step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[("")] tags=[0]`
 - pooler: `ok rows=[("""""")] tags=[0]`
 
@@ -2452,7 +2453,7 @@ A client's empty search_path must still be empty after another client changed it
 
 A client's empty search_path must still be empty after another client changed it.
 
-- step 4: `[a] simple: SHOW search_path`
+- step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[("")] tags=[0]`
 - pooler: `ok rows=[(public)] tags=[0]`
 
@@ -2460,7 +2461,7 @@ A client's empty search_path must still be empty after another client changed it
 
 A client's empty search_path must still be empty after another client changed it.
 
-- step 4: `[a] simple: SHOW search_path`
+- step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[("")] tags=[0]`
 - pooler: `ok rows=[(public)] tags=[0]`
 
@@ -2476,7 +2477,7 @@ A client's empty search_path must still be empty after another client changed it
 
 Settings from a client that disconnected must not show up for the next client.
 
-- step 4: `[b] simple: SHOW work_mem`
+- step 8: `[b] simple: SHOW work_mem`
 - postgres: `ok rows=[(4MB)] tags=[0]`
 - pooler: `ok rows=[(7MB)] tags=[0]`
 - from https://github.com/pgdogdev/pgdog/issues/1850
@@ -2485,7 +2486,7 @@ Settings from a client that disconnected must not show up for the next client.
 
 Settings from a client that disconnected must not show up for the next client.
 
-- step 4: `[b] simple: SHOW work_mem`
+- step 8: `[b] simple: SHOW work_mem`
 - postgres: `ok rows=[(4MB)] tags=[0]`
 - pooler: `ok rows=[(7MB)] tags=[0]`
 - from https://github.com/pgdogdev/pgdog/issues/1850
@@ -2494,7 +2495,7 @@ Settings from a client that disconnected must not show up for the next client.
 
 Settings from a client that disconnected must not show up for the next client.
 
-- step 4: `[b] simple: SHOW work_mem`
+- step 8: `[b] simple: SHOW work_mem`
 - postgres: `ok rows=[(4MB)] tags=[0]`
 - pooler: `ok rows=[(7MB)] tags=[0]`
 - from https://github.com/pgdogdev/pgdog/issues/1850
@@ -2503,7 +2504,7 @@ Settings from a client that disconnected must not show up for the next client.
 
 Settings from a client that disconnected must not show up for the next client.
 
-- step 4: `[b] simple: SHOW work_mem`
+- step 8: `[b] simple: SHOW work_mem`
 - postgres: `ok rows=[(4MB)] tags=[0]`
 - pooler: `ok rows=[(7MB)] tags=[0]`
 - from https://github.com/pgdogdev/pgdog/issues/1850
@@ -2512,7 +2513,7 @@ Settings from a client that disconnected must not show up for the next client.
 
 Settings from a client that disconnected must not show up for the next client.
 
-- step 4: `[b] simple: SHOW work_mem`
+- step 8: `[b] simple: SHOW work_mem`
 - postgres: `ok rows=[(4MB)] tags=[0]`
 - pooler: `ok rows=[(7MB)] tags=[0]`
 - from https://github.com/pgdogdev/pgdog/issues/1850
@@ -2521,7 +2522,7 @@ Settings from a client that disconnected must not show up for the next client.
 
 Settings from a client that disconnected must not show up for the next client.
 
-- step 1: `[a] simple: SET work_mem = '7MB'`
+- step 3: `[a] simple: SET work_mem = '7MB'`
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error XX000: (ESESSIONLEAK) session-level SET statement is not allowed in transaction mode`
 - from https://github.com/pgdogdev/pgdog/issues/1850
@@ -2530,7 +2531,7 @@ Settings from a client that disconnected must not show up for the next client.
 
 Settings from a client that disconnected must not show up for the next client.
 
-- step 4: `[b] simple: SHOW work_mem`
+- step 8: `[b] simple: SHOW work_mem`
 - postgres: `ok rows=[(4MB)] tags=[0]`
 - pooler: `ok rows=[(7MB)] tags=[0]`
 - from https://github.com/pgdogdev/pgdog/issues/1850
@@ -2539,7 +2540,7 @@ Settings from a client that disconnected must not show up for the next client.
 
 Settings from a client that disconnected must not show up for the next client.
 
-- step 4: `[b] simple: SHOW work_mem`
+- step 8: `[b] simple: SHOW work_mem`
 - postgres: `ok rows=[(4MB)] tags=[0]`
 - pooler: `ok rows=[(7MB)] tags=[0]`
 - from https://github.com/pgdogdev/pgdog/issues/1850
@@ -2548,7 +2549,7 @@ Settings from a client that disconnected must not show up for the next client.
 
 Settings from a client that disconnected must not show up for the next client.
 
-- step 4: `[b] simple: SHOW work_mem`
+- step 8: `[b] simple: SHOW work_mem`
 - postgres: `ok rows=[(4MB)] tags=[0]`
 - pooler: `ok rows=[(7MB)] tags=[0]`
 - from https://github.com/pgdogdev/pgdog/issues/1850
@@ -2557,7 +2558,7 @@ Settings from a client that disconnected must not show up for the next client.
 
 Settings from a client that disconnected must not show up for the next client.
 
-- step 4: `[b] simple: SHOW work_mem`
+- step 8: `[b] simple: SHOW work_mem`
 - postgres: `ok rows=[(4MB)] tags=[0]`
 - pooler: `ok rows=[(7MB)] tags=[0]`
 - from https://github.com/pgdogdev/pgdog/issues/1850
@@ -2566,7 +2567,7 @@ Settings from a client that disconnected must not show up for the next client.
 
 Settings from a client that disconnected must not show up for the next client.
 
-- step 4: `[b] simple: SHOW work_mem`
+- step 8: `[b] simple: SHOW work_mem`
 - postgres: `ok rows=[(4MB)] tags=[0]`
 - pooler: `ok rows=[(7MB)] tags=[0]`
 - from https://github.com/pgdogdev/pgdog/issues/1850
@@ -2575,7 +2576,7 @@ Settings from a client that disconnected must not show up for the next client.
 
 Settings from a client that disconnected must not show up for the next client.
 
-- step 4: `[b] simple: SHOW work_mem`
+- step 8: `[b] simple: SHOW work_mem`
 - postgres: `ok rows=[(4MB)] tags=[0]`
 - pooler: `ok rows=[(7MB)] tags=[0]`
 - from https://github.com/pgdogdev/pgdog/issues/1850
@@ -2584,7 +2585,7 @@ Settings from a client that disconnected must not show up for the next client.
 
 Settings from a client that disconnected must not show up for the next client.
 
-- step 1: `[a] simple: SET work_mem = '7MB'`
+- step 3: `[a] simple: SET work_mem = '7MB'`
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error XX000: (ESESSIONLEAK) session-level SET statement is not allowed in transaction mode`
 - from https://github.com/pgdogdev/pgdog/issues/1850
@@ -2593,7 +2594,7 @@ Settings from a client that disconnected must not show up for the next client.
 
 Settings from a client that disconnected must not show up for the next client.
 
-- step 4: `[b] simple: SHOW work_mem`
+- step 8: `[b] simple: SHOW work_mem`
 - postgres: `ok rows=[(4MB)] tags=[0]`
 - pooler: `ok rows=[(7MB)] tags=[0]`
 - from https://github.com/pgdogdev/pgdog/issues/1850
@@ -2602,7 +2603,7 @@ Settings from a client that disconnected must not show up for the next client.
 
 A plain SET from one client must not change the setting another client sees.
 
-- step 4: `[a] simple: SHOW work_mem`
+- step 7: `[a] simple: SHOW work_mem`
 - postgres: `ok rows=[(7MB)] tags=[0]`
 - pooler: `ok rows=[(4MB)] tags=[0]`
 - from https://github.com/pgdogdev/pgdog/issues/1850
@@ -2611,7 +2612,7 @@ A plain SET from one client must not change the setting another client sees.
 
 A plain SET from one client must not change the setting another client sees.
 
-- step 4: `[a] simple: SHOW work_mem`
+- step 7: `[a] simple: SHOW work_mem`
 - postgres: `ok rows=[(7MB)] tags=[0]`
 - pooler: `ok rows=[(4MB)] tags=[0]`
 - from https://github.com/pgdogdev/pgdog/issues/1850
@@ -2620,7 +2621,7 @@ A plain SET from one client must not change the setting another client sees.
 
 A plain SET from one client must not change the setting another client sees.
 
-- step 4: `[a] simple: SHOW work_mem`
+- step 7: `[a] simple: SHOW work_mem`
 - postgres: `ok rows=[(7MB)] tags=[0]`
 - pooler: `ok rows=[(9MB)] tags=[0]`
 - from https://github.com/pgdogdev/pgdog/issues/1850
@@ -2629,7 +2630,7 @@ A plain SET from one client must not change the setting another client sees.
 
 A plain SET from one client must not change the setting another client sees.
 
-- step 4: `[a] simple: SHOW work_mem`
+- step 7: `[a] simple: SHOW work_mem`
 - postgres: `ok rows=[(7MB)] tags=[0]`
 - pooler: `ok rows=[(9MB)] tags=[0]`
 - from https://github.com/pgdogdev/pgdog/issues/1850
@@ -2647,7 +2648,7 @@ A plain SET from one client must not change the setting another client sees.
 
 A plain SET from one client must not change the setting another client sees.
 
-- step 4: `[a] simple: SHOW work_mem`
+- step 7: `[a] simple: SHOW work_mem`
 - postgres: `ok rows=[(7MB)] tags=[0]`
 - pooler: `ok rows=[(4MB)] tags=[0]`
 - from https://github.com/pgdogdev/pgdog/issues/1850
@@ -2656,7 +2657,7 @@ A plain SET from one client must not change the setting another client sees.
 
 A plain SET from one client must not change the setting another client sees.
 
-- step 4: `[a] simple: SHOW work_mem`
+- step 7: `[a] simple: SHOW work_mem`
 - postgres: `ok rows=[(7MB)] tags=[0]`
 - pooler: `ok rows=[(4MB)] tags=[0]`
 - from https://github.com/pgdogdev/pgdog/issues/1850
@@ -2665,7 +2666,7 @@ A plain SET from one client must not change the setting another client sees.
 
 A plain SET from one client must not change the setting another client sees.
 
-- step 4: `[a] simple: SHOW work_mem`
+- step 7: `[a] simple: SHOW work_mem`
 - postgres: `ok rows=[(7MB)] tags=[0]`
 - pooler: `ok rows=[(9MB)] tags=[0]`
 - from https://github.com/pgdogdev/pgdog/issues/1850
@@ -2674,7 +2675,7 @@ A plain SET from one client must not change the setting another client sees.
 
 A plain SET from one client must not change the setting another client sees.
 
-- step 4: `[a] simple: SHOW work_mem`
+- step 7: `[a] simple: SHOW work_mem`
 - postgres: `ok rows=[(7MB)] tags=[0]`
 - pooler: `ok rows=[(9MB)] tags=[0]`
 - from https://github.com/pgdogdev/pgdog/issues/1850
@@ -2908,7 +2909,7 @@ SET LOCAL ... TO DEFAULT must not change the session value, outside or inside a 
 
 SET ROLE from one client must not change the role another client runs as.
 
-- step 3: `[b] simple: SELECT current_user::text`
+- step 7: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
 
@@ -2916,7 +2917,7 @@ SET ROLE from one client must not change the role another client runs as.
 
 SET ROLE from one client must not change the role another client runs as.
 
-- step 3: `[b] simple: SELECT current_user::text`
+- step 7: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
 
@@ -2924,7 +2925,7 @@ SET ROLE from one client must not change the role another client runs as.
 
 SET ROLE from one client must not change the role another client runs as.
 
-- step 3: `[b] simple: SELECT current_user::text`
+- step 7: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
 
@@ -2932,7 +2933,7 @@ SET ROLE from one client must not change the role another client runs as.
 
 SET ROLE from one client must not change the role another client runs as.
 
-- step 3: `[b] simple: SELECT current_user::text`
+- step 7: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
 
@@ -2940,7 +2941,7 @@ SET ROLE from one client must not change the role another client runs as.
 
 SET ROLE from one client must not change the role another client runs as.
 
-- step 3: `[b] simple: SELECT current_user::text`
+- step 7: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
 
@@ -2948,7 +2949,7 @@ SET ROLE from one client must not change the role another client runs as.
 
 SET ROLE from one client must not change the role another client runs as.
 
-- step 1: `[a] simple: SET ROLE pp_role`
+- step 3: `[a] simple: SET ROLE pp_role`
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error XX000: (ESESSIONLEAK) session-level SET statement is not allowed in transaction mode`
 
@@ -2956,7 +2957,7 @@ SET ROLE from one client must not change the role another client runs as.
 
 SET ROLE from one client must not change the role another client runs as.
 
-- step 3: `[b] simple: SELECT current_user::text`
+- step 7: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
 
@@ -2964,7 +2965,7 @@ SET ROLE from one client must not change the role another client runs as.
 
 SET ROLE from one client must not change the role another client runs as.
 
-- step 3: `[b] simple: SELECT current_user::text`
+- step 7: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
 
@@ -2972,7 +2973,7 @@ SET ROLE from one client must not change the role another client runs as.
 
 SET ROLE from one client must not change the role another client runs as.
 
-- step 3: `[b] simple: SELECT current_user::text`
+- step 7: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
 
@@ -2980,7 +2981,7 @@ SET ROLE from one client must not change the role another client runs as.
 
 SET ROLE from one client must not change the role another client runs as.
 
-- step 3: `[b] simple: SELECT current_user::text`
+- step 7: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
 
@@ -2988,7 +2989,7 @@ SET ROLE from one client must not change the role another client runs as.
 
 SET ROLE from one client must not change the role another client runs as.
 
-- step 3: `[b] simple: SELECT current_user::text`
+- step 7: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
 
@@ -2996,7 +2997,7 @@ SET ROLE from one client must not change the role another client runs as.
 
 SET ROLE from one client must not change the role another client runs as.
 
-- step 3: `[b] simple: SELECT current_user::text`
+- step 7: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
 
@@ -3004,7 +3005,7 @@ SET ROLE from one client must not change the role another client runs as.
 
 SET ROLE from one client must not change the role another client runs as.
 
-- step 1: `[a] simple: SET ROLE pp_role`
+- step 3: `[a] simple: SET ROLE pp_role`
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error XX000: (ESESSIONLEAK) session-level SET statement is not allowed in transaction mode`
 
@@ -3012,7 +3013,7 @@ SET ROLE from one client must not change the role another client runs as.
 
 SET ROLE from one client must not change the role another client runs as.
 
-- step 3: `[b] simple: SELECT current_user::text`
+- step 7: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
 
@@ -3020,7 +3021,7 @@ SET ROLE from one client must not change the role another client runs as.
 
 A client that held an advisory lock and ran SET ROLE must not pass its role to the next client.
 
-- step 5: `[b] simple: SELECT current_user::text`
+- step 8: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
 - from https://github.com/pgdogdev/pgdog/issues/1341
@@ -3029,7 +3030,7 @@ A client that held an advisory lock and ran SET ROLE must not pass its role to t
 
 A client that held an advisory lock and ran SET ROLE must not pass its role to the next client.
 
-- step 5: `[b] simple: SELECT current_user::text`
+- step 8: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
 - from https://github.com/pgdogdev/pgdog/issues/1341
@@ -3038,7 +3039,7 @@ A client that held an advisory lock and ran SET ROLE must not pass its role to t
 
 A client that held an advisory lock and ran SET ROLE must not pass its role to the next client.
 
-- step 5: `[b] simple: SELECT current_user::text`
+- step 8: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
 - from https://github.com/pgdogdev/pgdog/issues/1341
@@ -3047,7 +3048,7 @@ A client that held an advisory lock and ran SET ROLE must not pass its role to t
 
 A client that held an advisory lock and ran SET ROLE must not pass its role to the next client.
 
-- step 5: `[b] simple: SELECT current_user::text`
+- step 8: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
 - from https://github.com/pgdogdev/pgdog/issues/1341
@@ -3056,7 +3057,7 @@ A client that held an advisory lock and ran SET ROLE must not pass its role to t
 
 A client that held an advisory lock and ran SET ROLE must not pass its role to the next client.
 
-- step 5: `[b] simple: SELECT current_user::text`
+- step 8: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
 - from https://github.com/pgdogdev/pgdog/issues/1341
@@ -3074,7 +3075,7 @@ A client that held an advisory lock and ran SET ROLE must not pass its role to t
 
 A client that held an advisory lock and ran SET ROLE must not pass its role to the next client.
 
-- step 5: `[b] simple: SELECT current_user::text`
+- step 8: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
 - from https://github.com/pgdogdev/pgdog/issues/1341
@@ -3083,7 +3084,7 @@ A client that held an advisory lock and ran SET ROLE must not pass its role to t
 
 A client that held an advisory lock and ran SET ROLE must not pass its role to the next client.
 
-- step 5: `[b] simple: SELECT current_user::text`
+- step 8: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
 - from https://github.com/pgdogdev/pgdog/issues/1341
@@ -3092,7 +3093,7 @@ A client that held an advisory lock and ran SET ROLE must not pass its role to t
 
 A client that held an advisory lock and ran SET ROLE must not pass its role to the next client.
 
-- step 5: `[b] simple: SELECT current_user::text`
+- step 8: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
 - from https://github.com/pgdogdev/pgdog/issues/1341
@@ -3101,7 +3102,7 @@ A client that held an advisory lock and ran SET ROLE must not pass its role to t
 
 A client that held an advisory lock and ran SET ROLE must not pass its role to the next client.
 
-- step 5: `[b] simple: SELECT current_user::text`
+- step 8: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
 - from https://github.com/pgdogdev/pgdog/issues/1341
@@ -3110,7 +3111,7 @@ A client that held an advisory lock and ran SET ROLE must not pass its role to t
 
 A client that held an advisory lock and ran SET ROLE must not pass its role to the next client.
 
-- step 5: `[b] simple: SELECT current_user::text`
+- step 8: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
 - from https://github.com/pgdogdev/pgdog/issues/1341
@@ -3119,7 +3120,7 @@ A client that held an advisory lock and ran SET ROLE must not pass its role to t
 
 A client that held an advisory lock and ran SET ROLE must not pass its role to the next client.
 
-- step 5: `[b] simple: SELECT current_user::text`
+- step 8: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
 - from https://github.com/pgdogdev/pgdog/issues/1341
@@ -3137,7 +3138,133 @@ A client that held an advisory lock and ran SET ROLE must not pass its role to t
 
 A client that held an advisory lock and ran SET ROLE must not pass its role to the next client.
 
-- step 5: `[b] simple: SELECT current_user::text`
+- step 8: `[b] simple: SELECT current_user::text`
+- postgres: `ok rows=[(postgres)] tags=[1]`
+- pooler: `ok rows=[(pp_role)] tags=[1]`
+- from https://github.com/pgdogdev/pgdog/issues/1341
+
+### pgbouncer-1.24.1 (pg 17.11) / set-role-reset-after-temp-table-disconnect (silent)
+
+A client that created a temp table and ran SET ROLE must not pass its role to the next client.
+
+- step 8: `[b] simple: SELECT current_user::text`
+- postgres: `ok rows=[(postgres)] tags=[1]`
+- pooler: `ok rows=[(pp_role)] tags=[1]`
+- from https://github.com/pgdogdev/pgdog/issues/1341
+
+### pgbouncer-1.25.2 (pg 17.11) / set-role-reset-after-temp-table-disconnect (silent)
+
+A client that created a temp table and ran SET ROLE must not pass its role to the next client.
+
+- step 8: `[b] simple: SELECT current_user::text`
+- postgres: `ok rows=[(postgres)] tags=[1]`
+- pooler: `ok rows=[(pp_role)] tags=[1]`
+- from https://github.com/pgdogdev/pgdog/issues/1341
+
+### pgbouncer-1.26.1 (pg 17.11) / set-role-reset-after-temp-table-disconnect (silent)
+
+A client that created a temp table and ran SET ROLE must not pass its role to the next client.
+
+- step 8: `[b] simple: SELECT current_user::text`
+- postgres: `ok rows=[(postgres)] tags=[1]`
+- pooler: `ok rows=[(pp_role)] tags=[1]`
+- from https://github.com/pgdogdev/pgdog/issues/1341
+
+### supavisor-2.9.13 (pg 17.11) / set-role-reset-after-temp-table-disconnect (silent)
+
+A client that created a temp table and ran SET ROLE must not pass its role to the next client.
+
+- step 8: `[b] simple: SELECT current_user::text`
+- postgres: `ok rows=[(postgres)] tags=[1]`
+- pooler: `ok rows=[(pp_role)] tags=[1]`
+- from https://github.com/pgdogdev/pgdog/issues/1341
+
+### supavisor-2.10.0-rc.1 (pg 17.11) / set-role-reset-after-temp-table-disconnect (silent)
+
+A client that created a temp table and ran SET ROLE must not pass its role to the next client.
+
+- step 8: `[b] simple: SELECT current_user::text`
+- postgres: `ok rows=[(postgres)] tags=[1]`
+- pooler: `ok rows=[(pp_role)] tags=[1]`
+- from https://github.com/pgdogdev/pgdog/issues/1341
+
+### supavisor-2.10.0-rc.1-strict (pg 17.11) / set-role-reset-after-temp-table-disconnect (error)
+
+A client that created a temp table and ran SET ROLE must not pass its role to the next client.
+
+- step 1: `[a] simple: CREATE TEMP TABLE pp_role_tmp (x int)`
+- postgres: `ok rows=[] tags=[0]`
+- pooler: `error XX000: (ESESSIONLEAK) temporary table creation is not allowed in transaction mode`
+- from https://github.com/pgdogdev/pgdog/issues/1341
+
+### pgbouncer-1.26.1-tls (pg 17.11) / set-role-reset-after-temp-table-disconnect (silent)
+
+A client that created a temp table and ran SET ROLE must not pass its role to the next client.
+
+- step 8: `[b] simple: SELECT current_user::text`
+- postgres: `ok rows=[(postgres)] tags=[1]`
+- pooler: `ok rows=[(pp_role)] tags=[1]`
+- from https://github.com/pgdogdev/pgdog/issues/1341
+
+### pgbouncer-1.24.1 (pg 18.4) / set-role-reset-after-temp-table-disconnect (silent)
+
+A client that created a temp table and ran SET ROLE must not pass its role to the next client.
+
+- step 8: `[b] simple: SELECT current_user::text`
+- postgres: `ok rows=[(postgres)] tags=[1]`
+- pooler: `ok rows=[(pp_role)] tags=[1]`
+- from https://github.com/pgdogdev/pgdog/issues/1341
+
+### pgbouncer-1.25.2 (pg 18.4) / set-role-reset-after-temp-table-disconnect (silent)
+
+A client that created a temp table and ran SET ROLE must not pass its role to the next client.
+
+- step 8: `[b] simple: SELECT current_user::text`
+- postgres: `ok rows=[(postgres)] tags=[1]`
+- pooler: `ok rows=[(pp_role)] tags=[1]`
+- from https://github.com/pgdogdev/pgdog/issues/1341
+
+### pgbouncer-1.26.1 (pg 18.4) / set-role-reset-after-temp-table-disconnect (silent)
+
+A client that created a temp table and ran SET ROLE must not pass its role to the next client.
+
+- step 8: `[b] simple: SELECT current_user::text`
+- postgres: `ok rows=[(postgres)] tags=[1]`
+- pooler: `ok rows=[(pp_role)] tags=[1]`
+- from https://github.com/pgdogdev/pgdog/issues/1341
+
+### supavisor-2.9.13 (pg 18.4) / set-role-reset-after-temp-table-disconnect (silent)
+
+A client that created a temp table and ran SET ROLE must not pass its role to the next client.
+
+- step 8: `[b] simple: SELECT current_user::text`
+- postgres: `ok rows=[(postgres)] tags=[1]`
+- pooler: `ok rows=[(pp_role)] tags=[1]`
+- from https://github.com/pgdogdev/pgdog/issues/1341
+
+### supavisor-2.10.0-rc.1 (pg 18.4) / set-role-reset-after-temp-table-disconnect (silent)
+
+A client that created a temp table and ran SET ROLE must not pass its role to the next client.
+
+- step 8: `[b] simple: SELECT current_user::text`
+- postgres: `ok rows=[(postgres)] tags=[1]`
+- pooler: `ok rows=[(pp_role)] tags=[1]`
+- from https://github.com/pgdogdev/pgdog/issues/1341
+
+### supavisor-2.10.0-rc.1-strict (pg 18.4) / set-role-reset-after-temp-table-disconnect (error)
+
+A client that created a temp table and ran SET ROLE must not pass its role to the next client.
+
+- step 1: `[a] simple: CREATE TEMP TABLE pp_role_tmp (x int)`
+- postgres: `ok rows=[] tags=[0]`
+- pooler: `error XX000: (ESESSIONLEAK) temporary table creation is not allowed in transaction mode`
+- from https://github.com/pgdogdev/pgdog/issues/1341
+
+### pgbouncer-1.26.1-tls (pg 18.4) / set-role-reset-after-temp-table-disconnect (silent)
+
+A client that created a temp table and ran SET ROLE must not pass its role to the next client.
+
+- step 8: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
 - from https://github.com/pgdogdev/pgdog/issues/1341
@@ -3147,7 +3274,7 @@ A client that held an advisory lock and ran SET ROLE must not pass its role to t
 A session setting must stay in effect for its client while another client holds the server connection it was set on.
 
 - precondition met in 5 of 5 runs
-- step 5: `[a] simple: SHOW work_mem`
+- step 6: `[a] simple: SHOW work_mem`
 - postgres: `ok rows=[(7MB)] tags=[0]`
 - pooler: `ok rows=[(4MB)] tags=[0]`
 
@@ -3156,7 +3283,7 @@ A session setting must stay in effect for its client while another client holds 
 A session setting must stay in effect for its client while another client holds the server connection it was set on.
 
 - precondition met in 5 of 5 runs
-- step 5: `[a] simple: SHOW work_mem`
+- step 6: `[a] simple: SHOW work_mem`
 - postgres: `ok rows=[(7MB)] tags=[0]`
 - pooler: `ok rows=[(4MB)] tags=[0]`
 
@@ -3165,7 +3292,7 @@ A session setting must stay in effect for its client while another client holds 
 A session setting must stay in effect for its client while another client holds the server connection it was set on.
 
 - precondition met in 5 of 5 runs
-- step 1: `[a] simple: SET work_mem = '7MB'`
+- step 2: `[a] simple: SET work_mem = '7MB'`
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error XX000: (ESESSIONLEAK) session-level SET statement is not allowed in transaction mode`
 
@@ -3174,7 +3301,7 @@ A session setting must stay in effect for its client while another client holds 
 A session setting must stay in effect for its client while another client holds the server connection it was set on.
 
 - precondition met in 5 of 5 runs
-- step 5: `[a] simple: SHOW work_mem`
+- step 6: `[a] simple: SHOW work_mem`
 - postgres: `ok rows=[(7MB)] tags=[0]`
 - pooler: `ok rows=[(4MB)] tags=[0]`
 
@@ -3183,7 +3310,7 @@ A session setting must stay in effect for its client while another client holds 
 A session setting must stay in effect for its client while another client holds the server connection it was set on.
 
 - precondition met in 5 of 5 runs
-- step 5: `[a] simple: SHOW work_mem`
+- step 6: `[a] simple: SHOW work_mem`
 - postgres: `ok rows=[(7MB)] tags=[0]`
 - pooler: `ok rows=[(4MB)] tags=[0]`
 
@@ -3192,7 +3319,7 @@ A session setting must stay in effect for its client while another client holds 
 A session setting must stay in effect for its client while another client holds the server connection it was set on.
 
 - precondition met in 5 of 5 runs
-- step 1: `[a] simple: SET work_mem = '7MB'`
+- step 2: `[a] simple: SET work_mem = '7MB'`
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error XX000: (ESESSIONLEAK) session-level SET statement is not allowed in transaction mode`
 
@@ -3200,7 +3327,7 @@ A session setting must stay in effect for its client while another client holds 
 
 A statement made with SQL PREPARE must be usable by the client that made it, and only by it.
 
-- step 3: `[b] simple: EXECUTE pp_q`
+- step 7: `[b] simple: EXECUTE pp_q`
 - postgres: `error 26000: prepared statement "pp_q" does not exist`
 - pooler: `ok rows=[(from a)] tags=[1]`
 
@@ -3208,7 +3335,7 @@ A statement made with SQL PREPARE must be usable by the client that made it, and
 
 A statement made with SQL PREPARE must be usable by the client that made it, and only by it.
 
-- step 3: `[b] simple: EXECUTE pp_q`
+- step 7: `[b] simple: EXECUTE pp_q`
 - postgres: `error 26000: prepared statement "pp_q" does not exist`
 - pooler: `ok rows=[(from a)] tags=[1]`
 
@@ -3216,7 +3343,7 @@ A statement made with SQL PREPARE must be usable by the client that made it, and
 
 A statement made with SQL PREPARE must be usable by the client that made it, and only by it.
 
-- step 3: `[b] simple: EXECUTE pp_q`
+- step 7: `[b] simple: EXECUTE pp_q`
 - postgres: `error 26000: prepared statement "pp_q" does not exist`
 - pooler: `ok rows=[(from a)] tags=[1]`
 
@@ -3224,7 +3351,7 @@ A statement made with SQL PREPARE must be usable by the client that made it, and
 
 A statement made with SQL PREPARE must be usable by the client that made it, and only by it.
 
-- step 3: `[b] simple: EXECUTE pp_q`
+- step 7: `[b] simple: EXECUTE pp_q`
 - postgres: `error 26000: prepared statement "pp_q" does not exist`
 - pooler: `ok rows=[(from a)] tags=[1]`
 
@@ -3232,7 +3359,7 @@ A statement made with SQL PREPARE must be usable by the client that made it, and
 
 A statement made with SQL PREPARE must be usable by the client that made it, and only by it.
 
-- step 3: `[b] simple: EXECUTE pp_q`
+- step 7: `[b] simple: EXECUTE pp_q`
 - postgres: `error 26000: prepared statement "pp_q" does not exist`
 - pooler: `ok rows=[(from a)] tags=[1]`
 
@@ -3240,7 +3367,7 @@ A statement made with SQL PREPARE must be usable by the client that made it, and
 
 A statement made with SQL PREPARE must be usable by the client that made it, and only by it.
 
-- step 3: `[b] simple: EXECUTE pp_q`
+- step 7: `[b] simple: EXECUTE pp_q`
 - postgres: `error 26000: prepared statement "pp_q" does not exist`
 - pooler: `ok rows=[(from a)] tags=[1]`
 
@@ -3248,7 +3375,7 @@ A statement made with SQL PREPARE must be usable by the client that made it, and
 
 A statement made with SQL PREPARE must be usable by the client that made it, and only by it.
 
-- step 3: `[b] simple: EXECUTE pp_q`
+- step 7: `[b] simple: EXECUTE pp_q`
 - postgres: `error 26000: prepared statement "pp_q" does not exist`
 - pooler: `ok rows=[(from a)] tags=[1]`
 
@@ -3256,7 +3383,7 @@ A statement made with SQL PREPARE must be usable by the client that made it, and
 
 A statement made with SQL PREPARE must be usable by the client that made it, and only by it.
 
-- step 5: `[a] simple: EXECUTE pp_q`
+- step 9: `[a] simple: EXECUTE pp_q`
 - postgres: `ok rows=[(from a)] tags=[1]`
 - pooler: `error 26000: prepared statement "pp_q" does not exist`
 
@@ -3264,7 +3391,7 @@ A statement made with SQL PREPARE must be usable by the client that made it, and
 
 A statement made with SQL PREPARE must be usable by the client that made it, and only by it.
 
-- step 3: `[b] simple: EXECUTE pp_q`
+- step 7: `[b] simple: EXECUTE pp_q`
 - postgres: `error 26000: prepared statement "pp_q" does not exist`
 - pooler: `ok rows=[(from a)] tags=[1]`
 
@@ -3272,7 +3399,7 @@ A statement made with SQL PREPARE must be usable by the client that made it, and
 
 A statement made with SQL PREPARE must be usable by the client that made it, and only by it.
 
-- step 3: `[b] simple: EXECUTE pp_q`
+- step 7: `[b] simple: EXECUTE pp_q`
 - postgres: `error 26000: prepared statement "pp_q" does not exist`
 - pooler: `ok rows=[(from a)] tags=[1]`
 
@@ -3280,7 +3407,7 @@ A statement made with SQL PREPARE must be usable by the client that made it, and
 
 A statement made with SQL PREPARE must be usable by the client that made it, and only by it.
 
-- step 3: `[b] simple: EXECUTE pp_q`
+- step 7: `[b] simple: EXECUTE pp_q`
 - postgres: `error 26000: prepared statement "pp_q" does not exist`
 - pooler: `ok rows=[(from a)] tags=[1]`
 
@@ -3288,7 +3415,7 @@ A statement made with SQL PREPARE must be usable by the client that made it, and
 
 A statement made with SQL PREPARE must be usable by the client that made it, and only by it.
 
-- step 3: `[b] simple: EXECUTE pp_q`
+- step 7: `[b] simple: EXECUTE pp_q`
 - postgres: `error 26000: prepared statement "pp_q" does not exist`
 - pooler: `ok rows=[(from a)] tags=[1]`
 
@@ -3296,7 +3423,7 @@ A statement made with SQL PREPARE must be usable by the client that made it, and
 
 A statement made with SQL PREPARE must be usable by the client that made it, and only by it.
 
-- step 3: `[b] simple: EXECUTE pp_q`
+- step 7: `[b] simple: EXECUTE pp_q`
 - postgres: `error 26000: prepared statement "pp_q" does not exist`
 - pooler: `ok rows=[(from a)] tags=[1]`
 
@@ -3304,7 +3431,7 @@ A statement made with SQL PREPARE must be usable by the client that made it, and
 
 A statement made with SQL PREPARE must be usable by the client that made it, and only by it.
 
-- step 3: `[b] simple: EXECUTE pp_q`
+- step 7: `[b] simple: EXECUTE pp_q`
 - postgres: `error 26000: prepared statement "pp_q" does not exist`
 - pooler: `ok rows=[(from a)] tags=[1]`
 
@@ -3312,7 +3439,7 @@ A statement made with SQL PREPARE must be usable by the client that made it, and
 
 A statement made with SQL PREPARE must be usable by the client that made it, and only by it.
 
-- step 3: `[b] simple: EXECUTE pp_q`
+- step 7: `[b] simple: EXECUTE pp_q`
 - postgres: `error 26000: prepared statement "pp_q" does not exist`
 - pooler: `ok rows=[(from a)] tags=[1]`
 
@@ -3320,7 +3447,7 @@ A statement made with SQL PREPARE must be usable by the client that made it, and
 
 A statement made with SQL PREPARE must be usable by the client that made it, and only by it.
 
-- step 3: `[b] simple: EXECUTE pp_q`
+- step 7: `[b] simple: EXECUTE pp_q`
 - postgres: `error 26000: prepared statement "pp_q" does not exist`
 - pooler: `ok rows=[(from a)] tags=[1]`
 
@@ -3328,7 +3455,7 @@ A statement made with SQL PREPARE must be usable by the client that made it, and
 
 A statement made with SQL PREPARE must be usable by the client that made it, and only by it.
 
-- step 3: `[b] simple: EXECUTE pp_q`
+- step 7: `[b] simple: EXECUTE pp_q`
 - postgres: `error 26000: prepared statement "pp_q" does not exist`
 - pooler: `ok rows=[(from a)] tags=[1]`
 
@@ -3336,7 +3463,7 @@ A statement made with SQL PREPARE must be usable by the client that made it, and
 
 A statement made with SQL PREPARE must be usable by the client that made it, and only by it.
 
-- step 3: `[b] simple: EXECUTE pp_q`
+- step 7: `[b] simple: EXECUTE pp_q`
 - postgres: `error 26000: prepared statement "pp_q" does not exist`
 - pooler: `ok rows=[(from a)] tags=[1]`
 
@@ -3344,7 +3471,7 @@ A statement made with SQL PREPARE must be usable by the client that made it, and
 
 A statement made with SQL PREPARE must be usable by the client that made it, and only by it.
 
-- step 3: `[b] simple: EXECUTE pp_q`
+- step 7: `[b] simple: EXECUTE pp_q`
 - postgres: `error 26000: prepared statement "pp_q" does not exist`
 - pooler: `ok rows=[(from a)] tags=[1]`
 
@@ -3352,7 +3479,7 @@ A statement made with SQL PREPARE must be usable by the client that made it, and
 
 A statement made with SQL PREPARE must be usable by the client that made it, and only by it.
 
-- step 3: `[b] simple: EXECUTE pp_q`
+- step 7: `[b] simple: EXECUTE pp_q`
 - postgres: `error 26000: prepared statement "pp_q" does not exist`
 - pooler: `ok rows=[(from a)] tags=[1]`
 
@@ -3360,7 +3487,7 @@ A statement made with SQL PREPARE must be usable by the client that made it, and
 
 A statement made with SQL PREPARE must be usable by the client that made it, and only by it.
 
-- step 5: `[a] simple: EXECUTE pp_q`
+- step 9: `[a] simple: EXECUTE pp_q`
 - postgres: `ok rows=[(from a)] tags=[1]`
 - pooler: `error 26000: prepared statement "pp_q" does not exist`
 
@@ -3368,7 +3495,7 @@ A statement made with SQL PREPARE must be usable by the client that made it, and
 
 A statement made with SQL PREPARE must be usable by the client that made it, and only by it.
 
-- step 3: `[b] simple: EXECUTE pp_q`
+- step 7: `[b] simple: EXECUTE pp_q`
 - postgres: `error 26000: prepared statement "pp_q" does not exist`
 - pooler: `ok rows=[(from a)] tags=[1]`
 
@@ -3376,7 +3503,7 @@ A statement made with SQL PREPARE must be usable by the client that made it, and
 
 A statement made with SQL PREPARE must be usable by the client that made it, and only by it.
 
-- step 3: `[b] simple: EXECUTE pp_q`
+- step 7: `[b] simple: EXECUTE pp_q`
 - postgres: `error 26000: prepared statement "pp_q" does not exist`
 - pooler: `ok rows=[(from a)] tags=[1]`
 
@@ -3384,7 +3511,7 @@ A statement made with SQL PREPARE must be usable by the client that made it, and
 
 A statement made with SQL PREPARE must be usable by the client that made it, and only by it.
 
-- step 3: `[b] simple: EXECUTE pp_q`
+- step 7: `[b] simple: EXECUTE pp_q`
 - postgres: `error 26000: prepared statement "pp_q" does not exist`
 - pooler: `ok rows=[(from a)] tags=[1]`
 
@@ -3392,7 +3519,7 @@ A statement made with SQL PREPARE must be usable by the client that made it, and
 
 A statement made with SQL PREPARE must be usable by the client that made it, and only by it.
 
-- step 3: `[b] simple: EXECUTE pp_q`
+- step 7: `[b] simple: EXECUTE pp_q`
 - postgres: `error 26000: prepared statement "pp_q" does not exist`
 - pooler: `ok rows=[(from a)] tags=[1]`
 
@@ -3400,7 +3527,7 @@ A statement made with SQL PREPARE must be usable by the client that made it, and
 
 A statement made with SQL PREPARE must be usable by the client that made it, and only by it.
 
-- step 3: `[b] simple: EXECUTE pp_q`
+- step 7: `[b] simple: EXECUTE pp_q`
 - postgres: `error 26000: prepared statement "pp_q" does not exist`
 - pooler: `ok rows=[(from a)] tags=[1]`
 
@@ -3409,7 +3536,7 @@ A statement made with SQL PREPARE must be usable by the client that made it, and
 A statement prepared with SQL PREPARE must stay usable by its client while another client holds the server connection it was prepared on.
 
 - precondition met in 5 of 5 runs
-- step 5: `[a] simple: EXECUTE pp_hog_stmt`
+- step 7: `[a] simple: EXECUTE pp_hog_stmt`
 - postgres: `ok rows=[(from a)] tags=[1]`
 - pooler: `error 26000: prepared statement "pp_hog_stmt" does not exist`
 
@@ -3418,7 +3545,7 @@ A statement prepared with SQL PREPARE must stay usable by its client while anoth
 A statement prepared with SQL PREPARE must stay usable by its client while another client holds the server connection it was prepared on.
 
 - precondition met in 5 of 5 runs
-- step 5: `[a] simple: EXECUTE pp_hog_stmt`
+- step 7: `[a] simple: EXECUTE pp_hog_stmt`
 - postgres: `ok rows=[(from a)] tags=[1]`
 - pooler: `error 26000: prepared statement "pp_hog_stmt" does not exist`
 
@@ -3427,7 +3554,7 @@ A statement prepared with SQL PREPARE must stay usable by its client while anoth
 A statement prepared with SQL PREPARE must stay usable by its client while another client holds the server connection it was prepared on.
 
 - precondition met in 5 of 5 runs
-- step 5: `[a] simple: EXECUTE pp_hog_stmt`
+- step 7: `[a] simple: EXECUTE pp_hog_stmt`
 - postgres: `ok rows=[(from a)] tags=[1]`
 - pooler: `error 26000: prepared statement "pp_hog_stmt" does not exist`
 
@@ -3436,7 +3563,7 @@ A statement prepared with SQL PREPARE must stay usable by its client while anoth
 A statement prepared with SQL PREPARE must stay usable by its client while another client holds the server connection it was prepared on.
 
 - precondition met in 5 of 5 runs
-- step 5: `[a] simple: EXECUTE pp_hog_stmt`
+- step 7: `[a] simple: EXECUTE pp_hog_stmt`
 - postgres: `ok rows=[(from a)] tags=[1]`
 - pooler: `error 26000: prepared statement "pp_hog_stmt" does not exist`
 
@@ -3445,7 +3572,7 @@ A statement prepared with SQL PREPARE must stay usable by its client while anoth
 A statement prepared with SQL PREPARE must stay usable by its client while another client holds the server connection it was prepared on.
 
 - precondition met in 5 of 5 runs
-- step 5: `[a] simple: EXECUTE pp_hog_stmt`
+- step 7: `[a] simple: EXECUTE pp_hog_stmt`
 - postgres: `ok rows=[(from a)] tags=[1]`
 - pooler: `error 26000: prepared statement "pp_hog_stmt" does not exist`
 
@@ -3454,7 +3581,7 @@ A statement prepared with SQL PREPARE must stay usable by its client while anoth
 A statement prepared with SQL PREPARE must stay usable by its client while another client holds the server connection it was prepared on.
 
 - precondition met in 5 of 5 runs
-- step 5: `[a] simple: EXECUTE pp_hog_stmt`
+- step 7: `[a] simple: EXECUTE pp_hog_stmt`
 - postgres: `ok rows=[(from a)] tags=[1]`
 - pooler: `error 26000: prepared statement "pp_hog_stmt" does not exist`
 
@@ -3462,7 +3589,7 @@ A statement prepared with SQL PREPARE must stay usable by its client while anoth
 
 A temp table created by one client must not be visible to another client.
 
-- step 3: `[b] simple: SELECT count(*) FROM pp_tmp`
+- step 7: `[b] simple: SELECT count(*) FROM pp_tmp`
 - postgres: `error 42P01: relation "pp_tmp" does not exist`
 - pooler: `ok rows=[(0)] tags=[1]`
 - from https://github.com/pgdogdev/pgdog/issues/1733
@@ -3471,7 +3598,7 @@ A temp table created by one client must not be visible to another client.
 
 A temp table created by one client must not be visible to another client.
 
-- step 3: `[b] simple: SELECT count(*) FROM pp_tmp`
+- step 7: `[b] simple: SELECT count(*) FROM pp_tmp`
 - postgres: `error 42P01: relation "pp_tmp" does not exist`
 - pooler: `ok rows=[(0)] tags=[1]`
 - from https://github.com/pgdogdev/pgdog/issues/1733
@@ -3480,7 +3607,7 @@ A temp table created by one client must not be visible to another client.
 
 A temp table created by one client must not be visible to another client.
 
-- step 3: `[b] simple: SELECT count(*) FROM pp_tmp`
+- step 7: `[b] simple: SELECT count(*) FROM pp_tmp`
 - postgres: `error 42P01: relation "pp_tmp" does not exist`
 - pooler: `ok rows=[(0)] tags=[1]`
 - from https://github.com/pgdogdev/pgdog/issues/1733
@@ -3489,7 +3616,7 @@ A temp table created by one client must not be visible to another client.
 
 A temp table created by one client must not be visible to another client.
 
-- step 3: `[b] simple: SELECT count(*) FROM pp_tmp`
+- step 7: `[b] simple: SELECT count(*) FROM pp_tmp`
 - postgres: `error 42P01: relation "pp_tmp" does not exist`
 - pooler: `ok rows=[(0)] tags=[1]`
 - from https://github.com/pgdogdev/pgdog/issues/1733
@@ -3498,7 +3625,7 @@ A temp table created by one client must not be visible to another client.
 
 A temp table created by one client must not be visible to another client.
 
-- step 3: `[b] simple: SELECT count(*) FROM pp_tmp`
+- step 7: `[b] simple: SELECT count(*) FROM pp_tmp`
 - postgres: `error 42P01: relation "pp_tmp" does not exist`
 - pooler: `ok rows=[(0)] tags=[1]`
 - from https://github.com/pgdogdev/pgdog/issues/1733
@@ -3507,7 +3634,7 @@ A temp table created by one client must not be visible to another client.
 
 A temp table created by one client must not be visible to another client.
 
-- step 3: `[b] simple: SELECT count(*) FROM pp_tmp`
+- step 7: `[b] simple: SELECT count(*) FROM pp_tmp`
 - postgres: `error 42P01: relation "pp_tmp" does not exist`
 - pooler: `ok rows=[(0)] tags=[1]`
 - from https://github.com/pgdogdev/pgdog/issues/1733
@@ -3516,7 +3643,7 @@ A temp table created by one client must not be visible to another client.
 
 A temp table created by one client must not be visible to another client.
 
-- step 3: `[b] simple: SELECT count(*) FROM pp_tmp`
+- step 7: `[b] simple: SELECT count(*) FROM pp_tmp`
 - postgres: `error 42P01: relation "pp_tmp" does not exist`
 - pooler: `ok rows=[(0)] tags=[1]`
 - from https://github.com/pgdogdev/pgdog/issues/1733
@@ -3525,7 +3652,7 @@ A temp table created by one client must not be visible to another client.
 
 A temp table created by one client must not be visible to another client.
 
-- step 3: `[b] simple: SELECT count(*) FROM pp_tmp`
+- step 7: `[b] simple: SELECT count(*) FROM pp_tmp`
 - postgres: `error 42P01: relation "pp_tmp" does not exist`
 - pooler: `ok rows=[(0)] tags=[1]`
 - from https://github.com/pgdogdev/pgdog/issues/1733
@@ -3534,7 +3661,7 @@ A temp table created by one client must not be visible to another client.
 
 A temp table created by one client must not be visible to another client.
 
-- step 3: `[b] simple: SELECT count(*) FROM pp_tmp`
+- step 7: `[b] simple: SELECT count(*) FROM pp_tmp`
 - postgres: `error 42P01: relation "pp_tmp" does not exist`
 - pooler: `ok rows=[(0)] tags=[1]`
 - from https://github.com/pgdogdev/pgdog/issues/1733
@@ -3543,7 +3670,7 @@ A temp table created by one client must not be visible to another client.
 
 A temp table created by one client must not be visible to another client.
 
-- step 3: `[b] simple: SELECT count(*) FROM pp_tmp`
+- step 7: `[b] simple: SELECT count(*) FROM pp_tmp`
 - postgres: `error 42P01: relation "pp_tmp" does not exist`
 - pooler: `ok rows=[(0)] tags=[1]`
 - from https://github.com/pgdogdev/pgdog/issues/1733
@@ -3552,7 +3679,7 @@ A temp table created by one client must not be visible to another client.
 
 A temp table created by one client must not be visible to another client.
 
-- step 1: `[a] simple: CREATE TEMP TABLE pp_tmp (x int)`
+- step 3: `[a] simple: CREATE TEMP TABLE pp_tmp (x int)`
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error XX000: (ESESSIONLEAK) temporary table creation is not allowed in transaction mode`
 - from https://github.com/pgdogdev/pgdog/issues/1733
@@ -3561,7 +3688,7 @@ A temp table created by one client must not be visible to another client.
 
 A temp table created by one client must not be visible to another client.
 
-- step 3: `[b] simple: SELECT count(*) FROM pp_tmp`
+- step 7: `[b] simple: SELECT count(*) FROM pp_tmp`
 - postgres: `error 42P01: relation "pp_tmp" does not exist`
 - pooler: `ok rows=[(0)] tags=[1]`
 - from https://github.com/pgdogdev/pgdog/issues/1733
@@ -3570,7 +3697,7 @@ A temp table created by one client must not be visible to another client.
 
 A temp table created by one client must not be visible to another client.
 
-- step 3: `[b] simple: SELECT count(*) FROM pp_tmp`
+- step 7: `[b] simple: SELECT count(*) FROM pp_tmp`
 - postgres: `error 42P01: relation "pp_tmp" does not exist`
 - pooler: `ok rows=[(0)] tags=[1]`
 - from https://github.com/pgdogdev/pgdog/issues/1733
@@ -3579,7 +3706,7 @@ A temp table created by one client must not be visible to another client.
 
 A temp table created by one client must not be visible to another client.
 
-- step 3: `[b] simple: SELECT count(*) FROM pp_tmp`
+- step 7: `[b] simple: SELECT count(*) FROM pp_tmp`
 - postgres: `error 42P01: relation "pp_tmp" does not exist`
 - pooler: `ok rows=[(0)] tags=[1]`
 - from https://github.com/pgdogdev/pgdog/issues/1733
@@ -3588,7 +3715,7 @@ A temp table created by one client must not be visible to another client.
 
 A temp table created by one client must not be visible to another client.
 
-- step 3: `[b] simple: SELECT count(*) FROM pp_tmp`
+- step 7: `[b] simple: SELECT count(*) FROM pp_tmp`
 - postgres: `error 42P01: relation "pp_tmp" does not exist`
 - pooler: `ok rows=[(0)] tags=[1]`
 - from https://github.com/pgdogdev/pgdog/issues/1733
@@ -3597,7 +3724,7 @@ A temp table created by one client must not be visible to another client.
 
 A temp table created by one client must not be visible to another client.
 
-- step 3: `[b] simple: SELECT count(*) FROM pp_tmp`
+- step 7: `[b] simple: SELECT count(*) FROM pp_tmp`
 - postgres: `error 42P01: relation "pp_tmp" does not exist`
 - pooler: `ok rows=[(0)] tags=[1]`
 - from https://github.com/pgdogdev/pgdog/issues/1733
@@ -3606,7 +3733,7 @@ A temp table created by one client must not be visible to another client.
 
 A temp table created by one client must not be visible to another client.
 
-- step 3: `[b] simple: SELECT count(*) FROM pp_tmp`
+- step 7: `[b] simple: SELECT count(*) FROM pp_tmp`
 - postgres: `error 42P01: relation "pp_tmp" does not exist`
 - pooler: `ok rows=[(0)] tags=[1]`
 - from https://github.com/pgdogdev/pgdog/issues/1733
@@ -3615,7 +3742,7 @@ A temp table created by one client must not be visible to another client.
 
 A temp table created by one client must not be visible to another client.
 
-- step 3: `[b] simple: SELECT count(*) FROM pp_tmp`
+- step 7: `[b] simple: SELECT count(*) FROM pp_tmp`
 - postgres: `error 42P01: relation "pp_tmp" does not exist`
 - pooler: `ok rows=[(0)] tags=[1]`
 - from https://github.com/pgdogdev/pgdog/issues/1733
@@ -3624,7 +3751,7 @@ A temp table created by one client must not be visible to another client.
 
 A temp table created by one client must not be visible to another client.
 
-- step 3: `[b] simple: SELECT count(*) FROM pp_tmp`
+- step 7: `[b] simple: SELECT count(*) FROM pp_tmp`
 - postgres: `error 42P01: relation "pp_tmp" does not exist`
 - pooler: `ok rows=[(0)] tags=[1]`
 - from https://github.com/pgdogdev/pgdog/issues/1733
@@ -3633,7 +3760,7 @@ A temp table created by one client must not be visible to another client.
 
 A temp table created by one client must not be visible to another client.
 
-- step 3: `[b] simple: SELECT count(*) FROM pp_tmp`
+- step 7: `[b] simple: SELECT count(*) FROM pp_tmp`
 - postgres: `error 42P01: relation "pp_tmp" does not exist`
 - pooler: `ok rows=[(0)] tags=[1]`
 - from https://github.com/pgdogdev/pgdog/issues/1733
@@ -3642,7 +3769,7 @@ A temp table created by one client must not be visible to another client.
 
 A temp table created by one client must not be visible to another client.
 
-- step 3: `[b] simple: SELECT count(*) FROM pp_tmp`
+- step 7: `[b] simple: SELECT count(*) FROM pp_tmp`
 - postgres: `error 42P01: relation "pp_tmp" does not exist`
 - pooler: `ok rows=[(0)] tags=[1]`
 - from https://github.com/pgdogdev/pgdog/issues/1733
@@ -3651,7 +3778,7 @@ A temp table created by one client must not be visible to another client.
 
 A temp table created by one client must not be visible to another client.
 
-- step 3: `[b] simple: SELECT count(*) FROM pp_tmp`
+- step 7: `[b] simple: SELECT count(*) FROM pp_tmp`
 - postgres: `error 42P01: relation "pp_tmp" does not exist`
 - pooler: `ok rows=[(0)] tags=[1]`
 - from https://github.com/pgdogdev/pgdog/issues/1733
@@ -3660,7 +3787,7 @@ A temp table created by one client must not be visible to another client.
 
 A temp table created by one client must not be visible to another client.
 
-- step 1: `[a] simple: CREATE TEMP TABLE pp_tmp (x int)`
+- step 3: `[a] simple: CREATE TEMP TABLE pp_tmp (x int)`
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error XX000: (ESESSIONLEAK) temporary table creation is not allowed in transaction mode`
 - from https://github.com/pgdogdev/pgdog/issues/1733
@@ -3669,7 +3796,7 @@ A temp table created by one client must not be visible to another client.
 
 A temp table created by one client must not be visible to another client.
 
-- step 3: `[b] simple: SELECT count(*) FROM pp_tmp`
+- step 7: `[b] simple: SELECT count(*) FROM pp_tmp`
 - postgres: `error 42P01: relation "pp_tmp" does not exist`
 - pooler: `ok rows=[(0)] tags=[1]`
 - from https://github.com/pgdogdev/pgdog/issues/1733
@@ -3711,7 +3838,7 @@ A temp table must stay usable by the client that created it, across its later tr
 A temp table must stay usable by its client while another client holds the server connection it was created on.
 
 - precondition met in 5 of 5 runs
-- step 5: `[a] simple: SELECT count(*) FROM pp_hog_tmp`
+- step 7: `[a] simple: SELECT count(*) FROM pp_hog_tmp`
 - postgres: `ok rows=[(0)] tags=[1]`
 - pooler: `error 42P01: relation "pp_hog_tmp" does not exist`
 
@@ -3720,7 +3847,7 @@ A temp table must stay usable by its client while another client holds the serve
 A temp table must stay usable by its client while another client holds the server connection it was created on.
 
 - precondition met in 5 of 5 runs
-- step 5: `[a] simple: SELECT count(*) FROM pp_hog_tmp`
+- step 7: `[a] simple: SELECT count(*) FROM pp_hog_tmp`
 - postgres: `ok rows=[(0)] tags=[1]`
 - pooler: `error 42P01: relation "pp_hog_tmp" does not exist`
 
@@ -3729,7 +3856,7 @@ A temp table must stay usable by its client while another client holds the serve
 A temp table must stay usable by its client while another client holds the server connection it was created on.
 
 - precondition met in 5 of 5 runs
-- step 1: `[a] simple: CREATE TEMP TABLE pp_hog_tmp (x int)`
+- step 2: `[a] simple: CREATE TEMP TABLE pp_hog_tmp (x int)`
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error XX000: (ESESSIONLEAK) temporary table creation is not allowed in transaction mode`
 
@@ -3738,7 +3865,7 @@ A temp table must stay usable by its client while another client holds the serve
 A temp table must stay usable by its client while another client holds the server connection it was created on.
 
 - precondition met in 5 of 5 runs
-- step 5: `[a] simple: SELECT count(*) FROM pp_hog_tmp`
+- step 7: `[a] simple: SELECT count(*) FROM pp_hog_tmp`
 - postgres: `ok rows=[(0)] tags=[1]`
 - pooler: `error 42P01: relation "pp_hog_tmp" does not exist`
 
@@ -3747,7 +3874,7 @@ A temp table must stay usable by its client while another client holds the serve
 A temp table must stay usable by its client while another client holds the server connection it was created on.
 
 - precondition met in 5 of 5 runs
-- step 5: `[a] simple: SELECT count(*) FROM pp_hog_tmp`
+- step 7: `[a] simple: SELECT count(*) FROM pp_hog_tmp`
 - postgres: `ok rows=[(0)] tags=[1]`
 - pooler: `error 42P01: relation "pp_hog_tmp" does not exist`
 
@@ -3756,7 +3883,7 @@ A temp table must stay usable by its client while another client holds the serve
 A temp table must stay usable by its client while another client holds the server connection it was created on.
 
 - precondition met in 5 of 5 runs
-- step 1: `[a] simple: CREATE TEMP TABLE pp_hog_tmp (x int)`
+- step 2: `[a] simple: CREATE TEMP TABLE pp_hog_tmp (x int)`
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error XX000: (ESESSIONLEAK) temporary table creation is not allowed in transaction mode`
 
@@ -3769,7 +3896,7 @@ A plain SET from one client must not change the setting another client sees.
 - on pgbouncer-1.24.1 (pg 17.11), pgbouncer-1.25.2 (pg 17.11), pgbouncer-1.26.1 (pg 17.11), pgbouncer-1.26.1-tls (pg 17.11), pgbouncer-1.24.1 (pg 18.4), pgbouncer-1.25.2 (pg 18.4), pgbouncer-1.26.1 (pg 18.4), pgbouncer-1.26.1-tls (pg 18.4)
 - documented: "SET/RESET | Yes | Never", https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes
 - note: Row of the table "SQL feature map for pooling modes" (columns: Feature, Session pooling, Transaction pooling), with the table's padding spaces collapsed.
-- step 4: `[a] simple: SHOW work_mem`
+- step 7: `[a] simple: SHOW work_mem`
 - postgres: `ok rows=[(7MB)] tags=[0]`
 - pooler: `ok rows=[(9MB)] tags=[0]`
 - from https://github.com/pgdogdev/pgdog/issues/1850
