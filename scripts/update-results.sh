@@ -12,7 +12,7 @@ cargo build --release --locked -q
 trap 'rm -f results/*.json.new' EXIT
 for version in "$@"; do
   echo "== Postgres $version"
-  $compose down -v --remove-orphans >/dev/null 2>&1
+  $compose --profile '*' down -v --remove-orphans >/dev/null 2>&1
   POSTGRES_IMAGE="postgres:$version" $compose up -d --wait --wait-timeout 300 >/dev/null
   # Exit 1 only means some scenario failed, which is expected. --check-scenarios runs
   # each scenario twice on Postgres first: one whose results differ between those runs
