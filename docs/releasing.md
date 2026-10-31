@@ -61,6 +61,12 @@ it is out.
    cargo binstall poolproof
    ```
 
+   And the action's download path, which CI can't test before a release exists: in any
+   repository, a workflow with `uses: Nihal-Pandey-2302/poolproof@vX.Y.Z` and
+   `command: scan` must log the attestation check and poolproof's version. After the
+   first release, add a scheduled job to `ci.yml` that runs the action that way against
+   the latest release, so a broken download or verification shows up on its own.
+
 Running `release.yml` by hand (Actions > release > Run workflow) only builds, which is
 the way to check the build matrix without releasing.
 
