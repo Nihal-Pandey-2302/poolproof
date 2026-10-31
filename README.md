@@ -168,8 +168,9 @@ kind each target used.
 
 To share the outcome with your team, `--format html` writes one self-contained page with
 the grid and every step's trace. `--format json` saves the raw results;
-`poolproof report a.json b.json --format html` (or `markdown`) combines saved runs. In
-these formats, a progress line per result goes to stderr. Text output is colored on a
+`poolproof report a.json b.json --format html` (or `markdown`) combines saved runs. The
+JSON carries `schema_version` and `generated_at`; poolproof refuses a report in a newer
+format than it reads. In these formats, a progress line per result goes to stderr. Text output is colored on a
 terminal unless `NO_COLOR` is set; `FORCE_COLOR` or `CLICOLOR_FORCE` colors it anywhere.
 
 Scenarios create and drop their own objects (prefixed `pp_`), so use a scratch database.

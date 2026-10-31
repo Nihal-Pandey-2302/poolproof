@@ -237,7 +237,9 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
                     })
                     .collect();
                 let report = report::Report {
+                    schema_version: report::SCHEMA_VERSION,
                     poolproof: env!("CARGO_PKG_VERSION").to_string(),
+                    generated_at: Some(report::now_rfc3339()),
                     targets: target_infos,
                     scenarios,
                     results,
