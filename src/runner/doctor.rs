@@ -267,6 +267,30 @@ async fn exact_reset(target: &Target, yes: bool, t: &Timeouts) -> Check {
     }
 }
 
+/// The warning for other sessions reset = "all" leaves, worded for how many there are.
+fn sessions_left(left: &OtherSessions) -> String {
+    let count = |n: &str| n.parse::<u64>().unwrap_or(0);
+    let (left_n, total) = (count(&left.unreachable), count(&left.total));
+    let which = match (left_n, total) {
+        (1, 1) => "the only other session belongs to a role".to_string(),
+        (2, 2) => "both other sessions belong to roles".to_string(),
+        (n, t) if n == t => format!("all {t} other sessions belong to roles"),
+        (1, t) => format!("1 of the {t} other sessions belongs to a role"),
+        (n, t) => format!("{n} of the {t} other sessions belong to roles"),
+    };
+    let superusers = match count(&left.superusers) {
+        0 => String::new(),
+        1 if left_n == 1 => " (a superuser's)".to_string(),
+        1 => " (1 superuser's)".to_string(),
+        n => format!(" ({n} superusers')"),
+    };
+    let them = if left_n == 1 { "it" } else { "them" };
+    format!(
+        "but {which} this user can't end{superusers}; reset leaves {them}, and anything held there (locks, pp_* \
+         objects) can change results"
+    )
+}
+
 /// What reset would do. resolve_reset refuses one that can't end the pooler's
 /// sessions (a FAIL here). For `all`, other sessions this user can't end are a WARN:
 /// the reset leaves them, with whatever they hold.
@@ -329,16 +353,7 @@ async fn reset(
             return Check::new("reset", Status::Ok, text).public(public);
         }
         // Not the pooler's (resolve_reset checked those), but whatever they hold stays.
-        let superusers = match left.superusers.as_str() {
-            "0" => String::new(),
-            "1" => " (1 superuser's)".to_string(),
-            n => format!(" ({n} superusers')"),
-        };
-        let stays = format!(
-            "but {} of the {} other sessions belong to roles this user can't end{superusers}; reset leaves them, \
-             and anything they hold (locks, pp_* objects) can change results",
-            left.unreachable, left.total
-        );
+        let stays = sessions_left(&left);
         return Check::new("reset", Status::Warn, format!("{text}; {stays}")).public(format!("{public}; {stays}"));
     }
 
@@ -651,11 +666,42 @@ mod tests {
             all_reset_with(|sql| pooler_reachable(sql).unwrap_or_else(|| vec![Some("3"), Some("2"), Some("1")])).await;
         assert_eq!(check.status, Status::Warn, "{}", check.detail);
         let stays = "but 2 of the 3 other sessions belong to roles this user can't end (1 superuser's); reset leaves \
-                     them, and anything they hold (locks, pp_* objects) can change results";
+                     them, and anything held there (locks, pp_* objects) can change results";
         assert!(check.detail.ends_with(stays), "{}", check.detail);
         let public = check.public.unwrap();
         assert!(public.ends_with(stays), "{public}");
         assert!(!public.contains("127.0.0.1") && !public.contains("app"), "{public}");
+    }
+
+    #[test]
+    fn the_warning_counts_sessions_in_words() {
+        let left = |unreachable: &str, total: &str, superusers: &str| OtherSessions {
+            total: total.into(),
+            unreachable: unreachable.into(),
+            superusers: superusers.into(),
+        };
+        let head = |l: OtherSessions| sessions_left(&l).split("; ").next().unwrap().to_string();
+        assert_eq!(
+            head(left("1", "1", "1")),
+            "but the only other session belongs to a role this user can't end (a superuser's)"
+        );
+        assert_eq!(
+            head(left("1", "3", "0")),
+            "but 1 of the 3 other sessions belongs to a role this user can't end"
+        );
+        assert_eq!(
+            head(left("2", "2", "2")),
+            "but both other sessions belong to roles this user can't end (2 superusers')"
+        );
+        assert_eq!(
+            head(left("4", "4", "0")),
+            "but all 4 other sessions belong to roles this user can't end"
+        );
+        assert_eq!(
+            head(left("2", "5", "1")),
+            "but 2 of the 5 other sessions belong to roles this user can't end (1 superuser's)"
+        );
+        assert!(sessions_left(&left("1", "1", "0")).contains("reset leaves it,"));
     }
 
     #[test]
