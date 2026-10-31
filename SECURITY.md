@@ -27,11 +27,12 @@ about or sessions you can't lose.
 - runs `pg_sleep` for up to 15 seconds and sends CancelRequests for its own queries;
 - drops connections mid-query on purpose, to test abandoned clients;
 - runs each scenario's `setup` and `teardown` SQL, and a target's `reset`. `reset = "all"`
-  **terminates every other session on the database** that the `direct` user may end
-  (against a Postgres on another machine only with `run --yes`); `reset = "auto"`
-  terminates every session from the address and user the pooler connects as, which can
-  include other applications behind the same NAT or pooler. `run` prints what a reset will
-  end before it runs. Scenario and targets files are code: only run ones you trust.
+  **terminates every other session on the database** that the `direct` user may end, never
+  a superuser's unless it is one (against a Postgres on another machine only with
+  `run --yes`); `reset = "auto"` terminates every session from the address and user the
+  pooler connects as, which can include other applications behind the same NAT or pooler.
+  `run` prints what a reset will end before it runs. Scenario and targets files are code:
+  only run ones you trust.
 
 `poolproof scan` and `poolproof report` only read the files they are given. They don't
 connect to anything.
