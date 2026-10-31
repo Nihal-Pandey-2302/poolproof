@@ -1,6 +1,7 @@
 #!/bin/sh
 # Rebuilds results/drivers-postgres-17.11.json and DRIVERS.md: builds the driver images,
-# then runs every driver case on the targets in drivers/targets.txt, on a fresh test bed.
+# then runs every driver case on the targets in drivers/targets.txt, on a fresh test bed
+# with only Postgres and those targets' services.
 # Usage: scripts/update-driver-results.sh
 set -eu
 cd "$(dirname "$0")/.."
@@ -12,8 +13,10 @@ docker buildx bake -f drivers/docker-bake.hcl --load
 targets=$(awk 'NF && $1 !~ /^#/ { printf "--target %s ", $1 }' drivers/targets.txt)
 new="results/drivers-postgres-$version.json.new"
 trap 'rm -f "$new"' EXIT
+services=$(awk 'NF && $1 !~ /^#/ { for (i = 2; i <= NF; i++) print $i }' drivers/targets.txt | sort -u)
 $compose down -v --remove-orphans >/dev/null 2>&1
-POSTGRES_IMAGE="postgres:$version" $compose up -d --wait --wait-timeout 300 >/dev/null
+# shellcheck disable=SC2086 # one word per service
+POSTGRES_IMAGE="postgres:$version" $compose up -d --wait --wait-timeout 300 postgres $services >/dev/null
 # Exit 1 only means some case failed, which is expected. --check-scenarios runs each case
 # twice on Postgres first: one whose results differ tests timing, not the pooler.
 # shellcheck disable=SC2086 # one word per flag and name

@@ -74,9 +74,13 @@ jobs:
           files: drivers/docker-bake.hcl
           load: true
 
+      # Postgres and the targets' services only, not the whole matrix.
       - name: Start test bed
         id: bed
-        run: docker compose -f docker/compose.yml up -d --wait --wait-timeout 300
+        run: |
+          services=$(awk 'NF && $1 !~ /^#/ { for (i = 2; i <= NF; i++) print $i }' drivers/targets.txt | sort -u)
+          # shellcheck disable=SC2086 # one word per service
+          docker compose -f docker/compose.yml up -d --wait --wait-timeout 300 postgres $services
 
       - name: Run driver cases
         id: run

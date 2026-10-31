@@ -17,7 +17,9 @@ cases every driver runs. Scenario names are `driver/<driver>-<variant>/<case>`.
 
 ## Running
 
-Linux only for now: the containers use the host network to reach `127.0.0.1` URLs.
+Linux only for now: the containers use `--network host` to reach `127.0.0.1` URLs, and
+on Docker Desktop (macOS, Windows) the host network is the Linux VM's, not your
+machine's, so in practice that only works on Linux.
 
 ```sh
 docker buildx bake -f drivers/docker-bake.hcl --load   # build the four images
@@ -78,3 +80,8 @@ through the pooler it is a FAIL.
 The version is part of what is tested, so it changes by hand, never through Dependabot:
 the lockfile (`uv.lock`, `package-lock.json`, `go.mod` and `go.sum`, or `pom.xml`),
 `drivers.toml`, then `scripts/update-driver-results.sh` and commit the results.
+
+Dependabot ignores the drivers, so it won't open security updates for them either.
+Watch the GitHub advisories for psycopg, pgx, pg (node-postgres) and pgjdbc, and bump
+by hand when one applies. The programs only talk to the test bed, but an old driver
+with a known hole shouldn't sit here.

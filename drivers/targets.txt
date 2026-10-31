@@ -1,8 +1,9 @@
 # The targets `poolproof drivers` runs on in CI and in scripts/update-driver-results.sh:
-# the newest version of each pooler, not the whole matrix. One target name per line.
-pgbouncer-1.26.1
-pgdog-0.1.62
-pgcat-1.2.0
-odyssey-1.5.2
-supavisor-2.10.0-rc.1
-supavisor-2.10.0-rc.1-strict
+# the newest version of each pooler, not the whole matrix. Each line is a target name,
+# then the docker/compose.yml services it needs (compose starts their dependencies).
+pgbouncer-1.26.1               pgbouncer-1.26.1
+pgdog-0.1.62                   pgdog-0.1.62
+pgcat-1.2.0                    pgcat-1.2.0
+odyssey-1.5.2                  odyssey-1.5.2
+supavisor-2.10.0-rc.1          supavisor-2.10.0-rc.1 supavisor-2.10.0-rc.1-tenants
+supavisor-2.10.0-rc.1-strict   supavisor-2.10.0-rc.1 supavisor-2.10.0-rc.1-tenants
