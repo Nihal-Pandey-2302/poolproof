@@ -505,7 +505,8 @@ mod tests {
         }
     }
 
-    /// set-isolated-between-clients: SET, SET, then SHOW, which leaks on the pooler.
+    /// set-isolated-between-clients: SET, SET, b's evidence, then SHOW, which leaks on
+    /// the pooler, and a's evidence.
     fn row(target: &TargetInfo, pooler_show: Outcome) -> ResultRow {
         let empty = Outcome::Ok {
             rows: vec![],
@@ -525,12 +526,20 @@ mod tests {
                 pooler: pooler_show.clone(),
             },
         ];
+        // The evidence steps: never run on Postgres, never compared.
+        let evidence = || StepOutcomes {
+            postgres: Outcome::NotRun,
+            pooler: ok(&["1"]),
+        };
+        let mut steps = steps;
+        steps.insert(2, evidence());
+        steps.push(evidence());
         let verdict = if pooler_show == ok(&["7MB"]) {
             Verdict::Pass
         } else {
             Verdict::Fail {
                 mismatch: Mismatch {
-                    step: 3,
+                    step: 4,
                     action: String::new(),
                     kind: FailKind::of(&ok(&["7MB"]), &pooler_show),
                     expected: ok(&["7MB"]),
@@ -558,7 +567,7 @@ scenario = "set-isolated-between-clients"
 mode = "transaction"
 since = "1.24.1"
 fixed_in = "1.30"
-differs = [{ step = 3, pooler = { status = "ok", rows = [["9MB"]], tags = [0] } }]
+differs = [{ step = 4, pooler = { status = "ok", rows = [["9MB"]], tags = [0] } }]
 doc = "https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md"
 quote = "SET/RESET | Yes | Never"
 "#;
@@ -763,7 +772,7 @@ quote = "SET/RESET | Yes | Never"
                 (passes.name.as_str(), "passes now"),
                 (
                     differs.name.as_str(),
-                    "fails differently: step 3 ok rows=[(8MB)] tags=[0]"
+                    "fails differently: step 4 ok rows=[(8MB)] tags=[0]"
                 ),
             ]
         );
@@ -781,7 +790,13 @@ quote = "SET/RESET | Yes | Never"
         set.apply(&mut old, &scenarios());
         assert!(old.results[0].expected.is_some());
         // Recorded modes don't need the scenario at all.
-        old.scenarios[0].compare = vec![Compare::Full; 3];
+        old.scenarios[0].compare = vec![
+            Compare::Full,
+            Compare::Full,
+            Compare::Ignore,
+            Compare::Full,
+            Compare::Ignore,
+        ];
         set.apply(&mut old, &[]);
         assert!(old.results[0].expected.is_some());
     }
@@ -792,7 +807,13 @@ quote = "SET/RESET | Yes | Never"
         let t = target("pgbouncer", "1.26.1", "default", "17.11");
         let mut changed = report(vec![t.clone()], vec![row(&t, ok(&["9MB"]))]);
         changed.scenarios[0].steps[0] = "[a] simple: SET work_mem = '1MB'".into();
-        changed.scenarios[0].compare = vec![Compare::Full; 3];
+        changed.scenarios[0].compare = vec![
+            Compare::Full,
+            Compare::Full,
+            Compare::Ignore,
+            Compare::Full,
+            Compare::Ignore,
+        ];
         set.apply(&mut changed, &[]);
         // Neither expected nor stale: the entry is about another scenario.
         assert!(changed.results[0].expected.is_none());
@@ -808,7 +829,13 @@ quote = "SET/RESET | Yes | Never"
         assert!(set.expected_for(&t, &custom, &row(&t, ok(&["9MB"]))).is_none());
         // The same steps compared another way are another scenario too.
         let mut loose = report(vec![t.clone()], vec![row(&t, ok(&["9MB"]))]);
-        loose.scenarios[0].compare = vec![Compare::Full, Compare::Full, Compare::Status];
+        loose.scenarios[0].compare = vec![
+            Compare::Full,
+            Compare::Full,
+            Compare::Ignore,
+            Compare::Status,
+            Compare::Ignore,
+        ];
         set.apply(&mut loose, &[]);
         assert!(loose.results[0].expected.is_none());
         assert!(loose.stale_expectations.is_empty());
@@ -816,11 +843,13 @@ quote = "SET/RESET | Yes | Never"
             "name = 'set-isolated-between-clients'\ndescription = ''\n\
              [[step]]\nclient = 'a'\nsimple = \"SET work_mem = '7MB'\"\n\
              [[step]]\nclient = 'b'\nsimple = \"SET work_mem = '9MB'\"\n\
-             [[step]]\nclient = 'a'\nsimple = 'SHOW work_mem'\n",
+             [[step]]\nclient = 'b'\nevidence = true\n\
+             [[step]]\nclient = 'a'\nsimple = 'SHOW work_mem'\n\
+             [[step]]\nclient = 'a'\nevidence = true\n",
         )
         .unwrap();
         assert!(set.expected_for(&t, &status, &row(&t, ok(&["9MB"]))).is_some());
-        status.steps[2].compare = Compare::Status;
+        status.steps[3].compare = Compare::Status;
         assert!(set.expected_for(&t, &status, &row(&t, ok(&["9MB"]))).is_none());
     }
 
@@ -869,8 +898,9 @@ quote = "SET/RESET | Yes | Never"
             assert!(err.contains(wanted), "{to}: {err}");
         };
         bad("set-isolated-between-clients\"", "nope\"", "no such scenario");
-        bad("step = 3", "step = 4", "step 4 doesn't exist");
-        bad("step = 3", "step = 0", "step 0 doesn't exist");
+        bad("step = 4", "step = 6", "step 6 doesn't exist");
+        bad("step = 4", "step = 3", "step 3 is never compared");
+        bad("step = 4", "step = 0", "step 0 doesn't exist");
         bad(
             "status = \"ok\", rows = [[\"9MB\"]], tags = [0]",
             "status = \"error\", code = \"TIMEOUT\"",
