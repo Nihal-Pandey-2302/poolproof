@@ -139,13 +139,13 @@ exists, and `require` then checks the chain like `verify-ca`; `verify-ca` and
 and the reset and setup connections use the same settings. A Unix socket never uses TLS,
 as in psql. Not supported yet: client certificates.
 
-A URL names one host and port: several hosts or ports, `hostaddr`,
-`target_session_attrs` and `load_balance_hosts` are refused, since poolproof would
-otherwise pick a host on its own. So is `sslnegotiation=direct` (or
-`PGSSLNEGOTIATION=direct`), since `send` clients always start with SSLRequest. Socket options work as in psql: `connect_timeout`,
+A URL names one host and port: several hosts or ports, `hostaddr`, `target_session_attrs`
+and `load_balance_hosts` are refused, since poolproof would otherwise pick a host on its
+own. So is `sslnegotiation=direct` (or `PGSSLNEGOTIATION=direct`), since `send` clients
+always start with SSLRequest. Socket options work as in psql: `connect_timeout`,
 `keepalives` (on unless `keepalives=0`) with `keepalives_idle`, `keepalives_interval` and
-`keepalives_retries`, and `tcp_user_timeout` in milliseconds. One the system can't set
-is an error rather than ignored.
+`keepalives_retries`, and `tcp_user_timeout` in milliseconds. One the system can't set is
+an error rather than ignored.
 
 For several poolers, or to reset state between scenarios, use a targets file
 (`--targets`, default `targets.toml`):

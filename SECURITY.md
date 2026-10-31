@@ -3,8 +3,8 @@
 ## Reporting a vulnerability
 
 Use GitHub private vulnerability reporting: the repository's **Security** tab, then
-**Report a vulnerability**. Please don't open a public issue for it. You should get a reply
-within a week. Fixes go into the next release and the advisory is published with it.
+**Report a vulnerability**. Please don't open a public issue for it. You should get a
+reply within a week. Fixes go into the next release and the advisory is published with it.
 
 Only the latest release is supported.
 
@@ -28,10 +28,10 @@ about or sessions you can't lose.
 - drops connections mid-query on purpose, to test abandoned clients;
 - runs each scenario's `setup` and `teardown` SQL, and a target's `reset`. `reset = "all"`
   **terminates every other session on the database** that the `direct` user may end
-  (against a Postgres on another machine only with `run --yes`); `reset = "auto"` terminates every session from the
-  address and user the pooler connects as, which can include other applications behind
-  the same NAT or pooler. `run` prints what a reset will end before it runs. Scenario
-  and targets files are code: only run ones you trust.
+  (against a Postgres on another machine only with `run --yes`); `reset = "auto"`
+  terminates every session from the address and user the pooler connects as, which can
+  include other applications behind the same NAT or pooler. `run` prints what a reset will
+  end before it runs. Scenario and targets files are code: only run ones you trust.
 
 `poolproof scan` and `poolproof report` only read the files they are given. They don't
 connect to anything.
@@ -62,8 +62,8 @@ with any `${NAME}` value in it, so keep secrets in URLs, not in `reset`.
   For anything not on localhost, use `verify-full`. `sslrootcert=system` requires
   `verify-full`.
 - Not supported: client certificates (the connection fails and says so) and
-  `sslnegotiation=direct` (refused when the targets load). `send` clients don't use SCRAM
-  channel binding.
+  `sslnegotiation=direct` (or `PGSSLNEGOTIATION=direct`; refused when the targets load).
+  `send` clients don't use SCRAM channel binding.
 - With SCRAM the password itself never goes over the wire. If the server asks for a
   clear-text password, poolproof sends it, also to anyone impersonating the server when
   the certificate isn't checked (`prefer`, or `require` without a root certificate).

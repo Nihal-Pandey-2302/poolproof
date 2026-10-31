@@ -106,18 +106,18 @@ First release.
   exists) checks the chain. `verify-ca` and `verify-full` without one are an error when
   the targets load. `sslrootcert=system` needs `verify-full`. Client certificates are not
   supported yet.
-- `reset = "auto"` ends only the sessions from the address and user the pooler connects
-  to Postgres as, and refuses when that can't be told apart from poolproof's own
-  sessions. `reset = "all"` ends every other session on the database that the `direct`
-  user may end, and needs `run --yes` against a Postgres on another machine. Unless the
-  `direct` user is a superuser, both check the role the pooler connects as and refuse to
-  run when they couldn't end its sessions (without `pg_signal_backend` and
-  `pg_read_all_stats`, or when that role is a superuser), naming the `GRANT` that fixes
-  it; `doctor` reports this as a failure. A list of statements works as before. Before
-  the first scenario, `run` prints what each target's reset will end, and warns when your
-  own reset statements terminate sessions without those privileges. `run --pooler ... --reset
-  auto|all` for a single target. The JSON report records each target's reset kind,
-  never the SQL or addresses.
+- `reset = "auto"` ends only the sessions from the address and user the pooler connects to
+  Postgres as, and refuses when that can't be told apart from poolproof's own sessions.
+  `reset = "all"` ends every other session on the database that the `direct` user may end,
+  and needs `run --yes` against a Postgres on another machine. Unless the `direct` user is
+  a superuser, both check the role the pooler connects as and refuse to run when they
+  couldn't end its sessions (when the pooler's role is another one and the direct user
+  lacks `pg_signal_backend` or `pg_read_all_stats`, or when that role is a superuser),
+  naming the `GRANT` that fixes it; `doctor` reports this as a failure. A list of
+  statements works as before. Before the first scenario, `run` prints what each target's
+  reset will end, and warns when your own reset statements terminate sessions without
+  those privileges. `run --pooler ... --reset auto|all` for a single target. The JSON
+  report records each target's reset kind, never the SQL or addresses.
 - `requires` in scenario files: privileges the `direct` user needs (`createrole`,
   `superuser`, `pg_signal_backend`). A target without them SKIPs the scenario, with the
   reason; if the privileges can't be read, the scenario is ERROR.
