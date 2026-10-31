@@ -19,7 +19,9 @@ cases every driver runs. Scenario names are `driver/<driver>-<variant>/<case>`.
 
 Linux only for now: the containers use `--network host` to reach `127.0.0.1` URLs, and
 on Docker Desktop (macOS, Windows) the host network is the Linux VM's, not your
-machine's, so in practice that only works on Linux.
+machine's, so in practice that only works on Linux. The images are built from a checkout
+of github.com/Nihal-Pandey-2302/poolproof, which has their Dockerfiles; an installed
+poolproof then runs them.
 
 ```sh
 docker buildx bake -f drivers/docker-bake.hcl --load   # build the four images
