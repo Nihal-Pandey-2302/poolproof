@@ -36,3 +36,37 @@ pooler = "postgres://postgres.ppsession:postgres@127.0.0.1:56463/app?sslmode=dis
 direct = "postgres://postgres:postgres@127.0.0.1:55432/app?sslmode=disable"
 mode = "session"
 reset = "all"
+
+# Pool of four server connections, transaction mode. Pools open connections only when
+# needed, so a lone client still stays on one; the *-survives-server-change scenarios
+# make one client move. Scenarios that need a pool of one SKIP.
+
+[[target]]
+name = "pgbouncer-1.26.1-pool4"
+product = "pgbouncer"
+version = "1.26.1"
+config = "pool4"
+pooler = "postgres://postgres:postgres@127.0.0.1:56446/app?sslmode=disable"
+direct = "postgres://postgres:postgres@127.0.0.1:55432/app?sslmode=disable"
+mode = "transaction"
+reset = "all"
+
+[[target]]
+name = "pgdog-0.1.62-pool4"
+product = "pgdog"
+version = "0.1.62"
+config = "pool4"
+pooler = "postgres://postgres:postgres@127.0.0.1:56456/app?sslmode=disable"
+direct = "postgres://postgres:postgres@127.0.0.1:55432/app?sslmode=disable"
+mode = "transaction"
+reset = "all"
+
+[[target]]
+name = "supavisor-2.10.0-rc.1-pool4"
+product = "supavisor"
+version = "2.10.0-rc.1"
+config = "pool4"
+pooler = "postgres://postgres.pppool4:postgres@127.0.0.1:56462/app?sslmode=disable"
+direct = "postgres://postgres:postgres@127.0.0.1:55432/app?sslmode=disable"
+mode = "transaction"
+reset = "all"

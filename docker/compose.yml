@@ -1,6 +1,7 @@
 # Test bed: one Postgres with several pooler versions in front of it. Every pooler
-# has a pool of ONE server connection, so state leaks between clients show up every
-# time instead of by chance. POSTGRES_IMAGE picks the server (CI runs 17 and 18).
+# has a pool of ONE server connection (the pool4 variants aside), so state leaks
+# between clients show up every time instead of by chance. POSTGRES_IMAGE picks the
+# server (CI runs 17 and 18).
 # Ports are published on 127.0.0.1 only. PP_PORT_<port> moves a host port, so several
 # test beds can run side by side; scripts/testbed.sh sets them all from one offset.
 name: poolproof
@@ -153,6 +154,16 @@ services:
       postgres:
         condition: service_healthy
     ports: ["127.0.0.1:${PP_PORT_56445:-56445}:6432"]
+  pgbouncer-1.26.1-pool4:
+    profiles: [variants]
+    image: edoburu/pgbouncer:v1.26.1-p0
+    volumes:
+      - ./pgbouncer/pgbouncer-pool4.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports: ["127.0.0.1:${PP_PORT_56446:-56446}:6432"]
 
   pgdog-0.1.50:
     <<: *pgdog
@@ -181,6 +192,14 @@ services:
       - ./pgdog/pgdog-session.toml:/pgdog/pgdog.toml:ro
       - ./pgdog/users.toml:/pgdog/users.toml:ro
     ports: ["127.0.0.1:${PP_PORT_56455:-56455}:6432"]
+  pgdog-0.1.62-pool4:
+    <<: *pgdog
+    profiles: [variants]
+    image: ghcr.io/pgdogdev/pgdog:v0.1.62
+    volumes:
+      - ./pgdog/pgdog-pool4.toml:/pgdog/pgdog.toml:ro
+      - ./pgdog/users.toml:/pgdog/users.toml:ro
+    ports: ["127.0.0.1:${PP_PORT_56456:-56456}:6432"]
 
   pgcat-1.2.0:
     image: ghcr.io/postgresml/pgcat:v1.2.0
@@ -244,7 +263,7 @@ services:
     <<: *supavisor-tenants
     environment:
       SUPAVISOR: supavisor-2.10.0-rc.1:4000
-      TENANTS: pp:default.json ppstrict:strict.json ppsession:session.json
+      TENANTS: pp:default.json ppstrict:strict.json ppsession:session.json pppool4:pool4.json
     depends_on: [supavisor-2.10.0-rc.1]
 
   # Self-test targets (selftest/targets.toml, selftest/expected.toml): one port per
