@@ -652,8 +652,8 @@ compared by pid alone. `ignore_server_requirements` turns the pair check off. Pu
 evidence steps right after the steps whose server connection matters; in transaction
 mode a client can still move between its step and the evidence after it, which a
 `BEGIN`..`COMMIT` around both rules out where that doesn't change what is tested. An
-evidence step of a `send` client must follow one that ends with `sync`. Two more rules
-for where evidence goes:
+evidence step of a `send` client must follow one that ends with `sync` or a `query`
+(both end with ReadyForQuery). Two more rules for where evidence goes:
 
 - Never on a client inside an aborted transaction (after an error inside `BEGIN`, before
   `ROLLBACK`): its SELECT gets 25P02, which reads as a FAIL of the pooler.
