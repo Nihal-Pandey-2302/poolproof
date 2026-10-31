@@ -659,11 +659,12 @@ pub async fn resolve_reset(
             // The same rules as auto for whose sessions this user may end; the pooler's
             // user is asked through the pooler.
             check_reach(target, "exact", None, t).await?;
+            let s = if n == 1 { "" } else { "s" };
             Ok((
                 vec![],
                 format!(
-                    "reset: '{name}': ends only the pooler's {n} server connections, found by holding {n} \
-                     transactions through it before each run, on database {db} at {host} (exact)"
+                    "reset: '{name}': ends only the pooler's {n} server connection{s}, found by holding {n} \
+                     transaction{s} through it before each run, on database {db} at {host} (exact)"
                 ),
             ))
         }

@@ -274,8 +274,10 @@ pooler.
   `doctor` runs the same check and shows the pids a reset would end, ending nothing.
 - A list of statements runs as written.
 - Without `reset`, nothing is reset: leaks carry over between scenarios, and `run`
-  warns. With `--pooler` and `--direct`, `--reset auto`, `--reset all` or `--reset exact
-  --pool-size N` picks one.
+  warns about it.
+
+With `--pooler` and `--direct` instead of a targets file, `--reset auto`, `--reset all` or
+`--reset exact --pool-size N` picks the reset.
 
 For `"exact"`, `pool_size` must be every server connection the pooler may open for the
 database and user, extra pools included:
@@ -286,7 +288,7 @@ database and user, extra pools included:
 | PgDog | `default_pool_size` (or the user's `pool_size`) | |
 | PgCat | the pool's `pool_size` | |
 | Odyssey | the route's `pool_size` | |
-| Supavisor | the tenant user's `pool_size` | 2.10.0-rc.1 can open a second server connection when the only one isn't back in the pool yet, which the start check reports |
+| Supavisor | the tenant user's `pool_size` | 2.10.0-rc.1 can open a second server connection when the only one isn't back in the pool yet; the start check then fails, so exact is an ERROR on that target |
 
 A user that isn't a superuser needs `pg_signal_backend` and `pg_read_all_stats` to end
 other roles' sessions, and can never end a superuser's. Without `pg_read_all_stats`,

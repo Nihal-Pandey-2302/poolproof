@@ -224,10 +224,10 @@ impl Exact {
         let fresh = self.discover(&[], t).await?;
         if fresh.len() < self.size {
             let reason = format!(
-                "exact reset: after ending its server connections, could hold only {} of {} transactions through \
-                 the pooler (pool_size = {})",
+                "exact reset: after ending its server connections, could hold only {} of {} through the pooler \
+                 (pool_size = {})",
                 fresh.len(),
-                self.size,
+                transactions(self.size),
                 self.size
             );
             return Err(self.fail(reason));
@@ -242,8 +242,9 @@ impl Exact {
     async fn leftover(&self, held: usize, seen: &[Backend], t: &Timeouts) -> String {
         let n = self.size;
         let head = format!(
-            "exact reset: could hold only {held} of {n} transactions through the pooler, and no server connection \
-             seen before accounts for the rest"
+            "exact reset: could hold only {held} of {} through the pooler, and no server connection \
+             seen before accounts for the rest",
+            transactions(n)
         );
         // The pooler connects as one user from one address, so the first seen stands for
         // all of them.
@@ -291,11 +292,12 @@ impl Exact {
         }
         self.state().known = seen.clone();
         let pids: Vec<String> = seen.iter().map(|b| b.pid.to_string()).collect();
+        let pid = if self.size == 1 { "pid" } else { "pids" };
         Ok(format!(
-            "held {n} transactions, client {} waited; would end pids {}",
+            "held {}, client {} waited; would end {pid} {}",
+            transactions(self.size),
             self.size + 1,
-            pids.join(", "),
-            n = self.size
+            pids.join(", ")
         ))
     }
 
@@ -312,7 +314,8 @@ impl Exact {
             let got = held.backends.len();
             close(held, t).await;
             return Err(self.fail(format!(
-                "exact reset: could hold only {got} of {n} transactions through the pooler (pool_size = {n})"
+                "exact reset: could hold only {got} of {} through the pooler (pool_size = {n})",
+                transactions(n)
             )));
         }
         let backends = held.backends.clone();
@@ -451,6 +454,11 @@ fn union(a: &[Backend], b: &[Backend]) -> Vec<Backend> {
             .cloned(),
     );
     all
+}
+
+/// `1 transaction`, `2 transactions`.
+pub(super) fn transactions(n: usize) -> String {
+    format!("{n} transaction{}", if n == 1 { "" } else { "s" })
 }
 
 fn join(pids: &[i32]) -> String {
@@ -856,7 +864,7 @@ mod tests {
             let t = quick();
             let line = exact.check_start(&t).await.unwrap_or_else(|e| panic!("{what}: {e:#}"));
             assert!(
-                line.starts_with(&format!("held {size} transactions, client {} waited", size + 1)),
+                line.starts_with(&format!("held {}, client {} waited", transactions(size), size + 1)),
                 "{line}"
             );
             let before = pids(&shared);
@@ -942,6 +950,47 @@ mod tests {
         assert_eq!(err, "pool_size = 1, but client 2 got its own server connection");
         // The target is done: its reset fails the same way.
         assert_eq!(format!("{:#}", exact.reset(&quick()).await.unwrap_err()), err);
+    }
+
+    async fn pid_of(c: &Client) -> i32 {
+        first_pid(c.simple_query("SELECT pg_backend_pid()").await.unwrap()).unwrap()
+    }
+
+    #[tokio::test]
+    #[ignore = "needs POOLPROOF_TEST_PG"]
+    async fn on_a_real_server_only_the_held_backend_is_ended() {
+        let url = std::env::var("POOLPROOF_TEST_PG").expect("set POOLPROOF_TEST_PG to a Postgres URL");
+        let direct = Endpoint::parse(&url).unwrap();
+        let sep = if url.contains('?') { '&' } else { '?' };
+        let pooled = Endpoint::parse(&format!("{url}{sep}application_name=pp_stand_in")).unwrap();
+        let t = Timeouts::default();
+        // A pooler's server connection, held in a transaction, and a neighbour with the same
+        // role and address connected straight to Postgres.
+        let (stand_in, _stand_in_driver, _) = connect(&pooled, &t).await.unwrap();
+        stand_in.simple_query("BEGIN").await.unwrap();
+        let pid = pid_of(&stand_in).await;
+        let (neighbour, _neighbour_driver, _) = connect(&direct, &t).await.unwrap();
+        let neighbour_pid = pid_of(&neighbour).await;
+        let exact = Exact::new(pooled, direct.clone(), 1);
+        let held = exact.confirm(&[pid], &t).await.unwrap();
+        assert_eq!(held.len(), 1);
+        assert_eq!(held[0].pid, pid);
+        // The neighbour's pid with another start, as if it were reused: left alone.
+        let reused = Backend {
+            pid: neighbour_pid,
+            start: "2000-01-01 00:00:00.000000".into(),
+            ..held[0].clone()
+        };
+        let sql = terminate_sql(&[held[0].clone(), reused]);
+        run_direct(&direct, &[Statement::plain(&sql)], &t).await.unwrap();
+        assert!(
+            stand_in.simple_query("SELECT 1").await.is_err(),
+            "the held backend survived"
+        );
+        assert!(
+            neighbour.simple_query("SELECT 1").await.is_ok(),
+            "the neighbour was ended"
+        );
     }
 
     #[tokio::test]
