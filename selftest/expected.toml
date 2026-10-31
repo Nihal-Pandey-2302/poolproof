@@ -96,6 +96,7 @@ set-does-not-leak-after-disconnect = { result = "silent", why = "SET survives th
 set-isolated-between-clients = { result = "silent", why = "SET leaks" }
 set-role-isolated-between-clients = { result = "silent", why = "SET ROLE leaks" }
 set-role-reset-after-pinned-disconnect = { result = "silent", why = "SET ROLE survives the disconnect" }
+set-role-reset-after-temp-table-disconnect = { result = "silent", why = "SET ROLE survives the disconnect" }
 sql-prepare-isolated-between-clients = { result = "silent", why = "the SQL PREPARE is visible to the other client" }
 temp-table-isolated-between-clients = { result = "silent", why = "the temp table is visible to the other client" }
 protocol-prepare-survives-server-change = { result = "skip", reason_prefix = "needs several server connections", why = "one server connection, so a can't move to another" }
@@ -131,6 +132,7 @@ set-does-not-leak-after-disconnect = { result = "silent", why = "SET survives th
 set-isolated-between-clients = { result = "silent", why = "SET leaks through the released connection" }
 set-role-isolated-between-clients = { result = "silent", why = "SET ROLE leaks through the released connection" }
 set-role-reset-after-pinned-disconnect = { result = "silent", why = "SET ROLE survives the disconnect on the released connection" }
+set-role-reset-after-temp-table-disconnect = { result = "silent", why = "SET ROLE survives the disconnect on the released connection" }
 sql-prepare-isolated-between-clients = { result = "silent", why = "b gets a's released connection, with the SQL PREPARE" }
 temp-table-isolated-between-clients = { result = "silent", why = "b gets a's released connection, with the temp table" }
 protocol-prepare-survives-server-change = { result = "error", why = "c takes a's released connection, so a's Bind goes to the other one, which never saw the Parse (26000)" }
