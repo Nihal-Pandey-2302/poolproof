@@ -1,5 +1,5 @@
 # Expected verdicts for the self-test targets (tools/pp-proxy). Checked with
-#   pp-selftest-check selftest/expected.toml report.json
+#   pp-selftest-check selftest/expected.toml report.json scenarios
 # Any other verdict is a harness bug, a scenario bug or a proxy bug, and fails CI.
 #
 # Values: pass | silent | error | hang | harness-error | skip, or a table with
@@ -20,7 +20,8 @@ protocol-pipeline-recovers-after-error = { result = "hang", why = "the second re
 # protocol-pipelined-statements passes: its steps have a single Sync each.
 
 # Drops every ErrorResponse after startup. Every scenario where Postgres answers with
-# an error fails; the client gets ReadyForQuery and no hint, so all are silent.
+# an error fails; the client gets ReadyForQuery and no hint, so they are silent, except
+# where the error was the only reply.
 [targets.selftest-swallow-error]
 default = "pass"
 aborted-transaction-not-reused = { result = "silent", why = "57014 from the statement timeout is dropped" }
@@ -29,7 +30,7 @@ cancel-under-saturated-pool = { result = "silent", why = "57014 from the cancel 
 cursor-isolated-between-clients = { result = "silent", why = "the other client's 34000 is dropped" }
 discard-all-in-transaction-fails = { result = "silent", why = "25001 is dropped" }
 prepare-in-aborted-transaction = { result = "silent", why = "22012 that aborts the transaction is dropped" }
-protocol-error-after-flush = { result = "silent", why = "42601 is dropped; with Flush there is no ReadyForQuery, so the reply is empty" }
+protocol-error-after-flush = { result = "hang", why = "42601 is dropped; with Flush nothing else comes back" }
 protocol-pipeline-recovers-after-error = { result = "silent", why = "22012 is dropped" }
 sql-prepare-isolated-between-clients = { result = "silent", why = "the other client's 26000 is dropped" }
 temp-table-isolated-between-clients = { result = "silent", why = "the other client's 42P01 is dropped" }
@@ -65,3 +66,7 @@ set-role-isolated-between-clients = { result = "silent", why = "SET ROLE leaks" 
 set-role-reset-after-pinned-disconnect = { result = "silent", why = "SET ROLE survives the disconnect" }
 sql-prepare-isolated-between-clients = { result = "silent", why = "the SQL PREPARE is visible to the other client" }
 temp-table-isolated-between-clients = { result = "silent", why = "the temp table is visible to the other client" }
+
+# Accepts and closes. Preflight marks every scenario ERROR; nothing may pass.
+[targets.selftest-refuse]
+default = { result = "harness-error", reason_prefix = "target unreachable: pooler:" }

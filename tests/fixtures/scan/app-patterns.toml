@@ -198,8 +198,8 @@ BEGIN ATOMIC
   SELECT pg_advisory_lock(job);
 END'''
 form = "sql"
-expect = []
-note = "creating a function runs nothing; calling it is what takes the lock"
+expect = ["session-advisory-lock"]
+note = "a warning naming the function: each call takes the lock, and scan can't see the calls"
 
 [[query]]
 sql = 'CREATE RULE audit_insert AS ON INSERT TO orders DO ALSO SELECT pg_advisory_lock(1)'
@@ -211,3 +211,55 @@ sql = 'CREATE MATERIALIZED VIEW lock_snapshot AS SELECT pg_advisory_lock(1)'
 form = "sql"
 expect = ["session-advisory-lock"]
 note = "a materialized view runs its query when created"
+
+[[query]]
+sql = '''CREATE OR REPLACE FUNCTION app.acquire_job(job_id bigint) RETURNS boolean
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF NOT pg_try_advisory_lock(job_id) THEN
+    RETURN false;
+  END IF;
+  UPDATE jobs SET state = 'running' WHERE id = job_id;
+  RETURN true;
+END
+$$'''
+form = "sql"
+expect = ["session-advisory-lock"]
+note = "PL/pgSQL helper that takes a session lock: a warning naming the function"
+
+[[query]]
+sql = '''CREATE FUNCTION app.set_tenant(tenant text) RETURNS void LANGUAGE sql AS $$
+  SELECT set_config('app.tenant_id', tenant, false)
+$$'''
+form = "sql"
+expect = ["session-set-config"]
+note = "LANGUAGE sql string body"
+
+[[query]]
+sql = '''CREATE FUNCTION app.set_tenant_local(tenant text) RETURNS void LANGUAGE sql AS $$
+  SELECT set_config('app.tenant_id', tenant, true)
+$$'''
+form = "sql"
+expect = []
+
+[[query]]
+sql = '''DO $$
+BEGIN
+  PERFORM pg_advisory_lock(hashtext('nightly-report'));
+  CREATE TEMP TABLE report_rows AS SELECT * FROM orders WHERE created_at > now() - interval '1 day';
+END
+$$'''
+form = "log"
+expect = ["session-advisory-lock", "temp-table"]
+note = "a DO block runs now, so it keeps the normal severity"
+
+[[query]]
+sql = '''DO $$
+BEGIN
+  PERFORM pg_advisory_xact_lock(hashtext('nightly-report'));
+  EXECUTE format('LISTEN %I', 'jobs');
+END
+$$'''
+form = "log"
+expect = []
+note = "transaction lock is fine; dynamic EXECUTE strings are not inspected"

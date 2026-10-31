@@ -2,7 +2,10 @@
 //! when to Sync and what to pipeline; pooler bugs often hide exactly there, so
 //! these steps write the frontend messages themselves and record every reply.
 
+use std::io;
+use std::pin::Pin;
 use std::str::FromStr;
+use std::task::{Context as TaskContext, Poll};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
@@ -13,10 +16,17 @@ use postgres_protocol::authentication::md5_hash;
 use postgres_protocol::authentication::sasl::{ChannelBinding, ScramSha256};
 use postgres_protocol::message::backend::Message;
 use postgres_protocol::message::frontend;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use rustls::pki_types::ServerName;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::TcpStream;
-use tokio::time::{Instant, timeout};
+use tokio::time::{Instant, timeout_at};
 use tokio_postgres::config::Host;
+use tokio_rustls::TlsConnector;
+use tokio_rustls::client::TlsStream;
+
+use super::pg::tcp_connect;
+use super::tls::{SslMode, Tls, wants_client_certificate};
+use crate::targets::Endpoint;
 
 /// One frontend message, written in a scenario as e.g. `parse s1 SELECT 1`.
 /// `-` stands for the unnamed statement or portal.
@@ -131,23 +141,127 @@ impl RawMessage {
     }
 }
 
+/// The largest backend message accepted on a `send` connection. A server can claim
+/// any length up to 4 GB, and parsing reserves that much before reading it.
+/// tokio-postgres clients use their own codec and are not covered by this cap.
+const MAX_MESSAGE: usize = 64 << 20;
+
+/// Rejects a message header whose length is impossible or above `MAX_MESSAGE`.
+fn check_header(buf: &[u8]) -> Result<()> {
+    let Some(len) = buf.get(1..5) else {
+        return Ok(());
+    };
+    let len = u32::from_be_bytes([len[0], len[1], len[2], len[3]]) as usize;
+    if len < 4 {
+        bail!("server sent a message with invalid length {len}");
+    }
+    if len > MAX_MESSAGE {
+        bail!("server sent a {len}-byte message, the limit is {MAX_MESSAGE} bytes");
+    }
+    Ok(())
+}
+
+/// How `exchange` waits for replies and what it records.
+#[derive(Debug, Clone, Copy)]
+pub struct ExchangeOpts {
+    /// How long to wait for all replies.
+    pub step: Duration,
+    /// Without a Sync, how long the server must be quiet before the replies count as
+    /// complete.
+    pub quiet: Duration,
+    /// Record each ParameterStatus as `ParameterStatus name=value`. Off by default,
+    /// since poolers add, drop and reorder them.
+    pub parameter_status: bool,
+}
+
 enum Next {
     Message(Message),
     Timeout,
-    Closed,
+    /// The connection ended, with the read error if there was one.
+    Closed(Option<io::Error>),
+}
+
+/// The connection under a `send` client: plain TCP, or TLS after an SSLRequest.
+enum RawStream {
+    Plain(TcpStream),
+    Tls(Box<TlsStream<TcpStream>>),
+}
+
+impl AsyncRead for RawStream {
+    fn poll_read(self: Pin<&mut Self>, cx: &mut TaskContext<'_>, buf: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
+        match self.get_mut() {
+            RawStream::Plain(s) => Pin::new(s).poll_read(cx, buf),
+            RawStream::Tls(s) => Pin::new(s.as_mut()).poll_read(cx, buf),
+        }
+    }
+}
+
+impl AsyncWrite for RawStream {
+    fn poll_write(self: Pin<&mut Self>, cx: &mut TaskContext<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+        match self.get_mut() {
+            RawStream::Plain(s) => Pin::new(s).poll_write(cx, buf),
+            RawStream::Tls(s) => Pin::new(s.as_mut()).poll_write(cx, buf),
+        }
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<io::Result<()>> {
+        match self.get_mut() {
+            RawStream::Plain(s) => Pin::new(s).poll_flush(cx),
+            RawStream::Tls(s) => Pin::new(s.as_mut()).poll_flush(cx),
+        }
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<io::Result<()>> {
+        match self.get_mut() {
+            RawStream::Plain(s) => Pin::new(s).poll_shutdown(cx),
+            RawStream::Tls(s) => Pin::new(s.as_mut()).poll_shutdown(cx),
+        }
+    }
+}
+
+/// Asks for TLS with an SSLRequest, as libpq does, and starts it if the server agrees.
+/// A server that declines gets plaintext only with `prefer`.
+async fn negotiate_tls(mut tcp: TcpStream, tls: &Tls, host: &str) -> Result<RawStream> {
+    let Some(config) = &tls.config else {
+        return Ok(RawStream::Plain(tcp));
+    };
+    let mut out = BytesMut::new();
+    frontend::ssl_request(&mut out);
+    tcp.write_all(&out).await?;
+    // Exactly one byte: anything the server sent after it must go through TLS, not be
+    // read as plaintext (CVE-2021-23214).
+    let mut answer = [0u8];
+    tcp.read_exact(&mut answer)
+        .await
+        .context("reading the SSLRequest answer")?;
+    match answer[0] {
+        b'S' => {
+            let name = ServerName::try_from(host.to_string()).context("server name for TLS")?;
+            let stream = match TlsConnector::from(config.clone()).connect(name, tcp).await {
+                Ok(stream) => stream,
+                Err(e) if wants_client_certificate(&e) => {
+                    return Err(anyhow::Error::from(e).context(
+                        "TLS handshake: the server wants a client certificate, which poolproof doesn't support yet",
+                    ));
+                }
+                Err(e) => return Err(anyhow::Error::from(e).context("TLS handshake")),
+            };
+            Ok(RawStream::Tls(Box::new(stream)))
+        }
+        b'N' if tls.mode == SslMode::Prefer => Ok(RawStream::Plain(tcp)),
+        b'N' => bail!("the server does not support TLS (sslmode={})", tls.mode),
+        other => bail!("unexpected answer to SSLRequest: {:?}", other as char),
+    }
 }
 
 pub struct RawConn {
-    stream: TcpStream,
+    stream: RawStream,
     buf: BytesMut,
-    pub url: String,
-    /// From BackendKeyData: the backend pid, or the pooler's stand-in for it.
-    pub pid: Option<i32>,
 }
 
 impl RawConn {
-    pub async fn connect(url: &str, connect_timeout: Duration) -> Result<Self> {
-        let config = tokio_postgres::Config::from_str(url).context("parsing connection URL")?;
+    pub async fn connect(endpoint: &Endpoint, connect_timeout: Duration) -> Result<Self> {
+        let config = endpoint.config();
         let host = match config.get_hosts().first() {
             Some(Host::Tcp(host)) => host.clone(),
             _ => bail!("send steps need a TCP host"),
@@ -157,33 +271,39 @@ impl RawConn {
         let password = config.get_password().unwrap_or_default().to_vec();
         let dbname = config.get_dbname().unwrap_or(&user).to_string();
 
-        let stream = timeout(connect_timeout, TcpStream::connect((host.as_str(), port)))
+        // One deadline for TCP connect and startup, as for tokio-postgres clients.
+        let deadline = Instant::now() + connect_timeout;
+        let tcp = timeout_at(deadline, tcp_connect(config, &host, port))
+            .await
+            .context("connect timed out")??;
+        let stream = timeout_at(deadline, negotiate_tls(tcp, endpoint.tls(), &host))
             .await
             .context("connect timed out")??;
         let mut conn = RawConn {
             stream,
             buf: BytesMut::new(),
-            url: url.to_string(),
-            pid: None,
         };
         let mut out = BytesMut::new();
         frontend::startup_message([("user", user.as_str()), ("database", dbname.as_str())], &mut out)?;
         conn.send(&out).await?;
 
-        let deadline = Instant::now() + connect_timeout;
         let mut scram: Option<ScramSha256> = None;
         loop {
             let message = match conn.next(deadline).await? {
                 Next::Message(m) => m,
                 Next::Timeout => bail!("startup timed out"),
-                Next::Closed => bail!("connection closed during startup"),
+                // With TLS 1.3 the server refuses a missing client certificate only after
+                // the handshake, so it shows up here.
+                Next::Closed(Some(e)) if wants_client_certificate(&e) => {
+                    return Err(anyhow::Error::from(e)
+                        .context("the server wants a client certificate, which poolproof doesn't support yet"));
+                }
+                Next::Closed(Some(e)) => return Err(anyhow::Error::from(e).context("connection closed during startup")),
+                Next::Closed(None) => bail!("connection closed during startup"),
             };
             let mut out = BytesMut::new();
             match message {
-                Message::BackendKeyData(body) => {
-                    conn.pid = Some(body.process_id());
-                    continue;
-                }
+                Message::BackendKeyData(_) => continue,
                 Message::AuthenticationOk | Message::ParameterStatus(_) => continue,
                 Message::NoticeResponse(_) => continue,
                 Message::ReadyForQuery(_) => return Ok(conn),
@@ -193,6 +313,8 @@ impl RawConn {
                     frontend::password_message(hash.as_bytes(), &mut out)?;
                 }
                 Message::AuthenticationSasl(_) => {
+                    // gs2 flag "n" (RFC 5802): no channel binding, also over TLS. Raw clients
+                    // test protocol handling, not authentication.
                     let s = ScramSha256::new(&password, ChannelBinding::unsupported());
                     frontend::sasl_initial_response("SCRAM-SHA-256", s.message(), &mut out)?;
                     scram = Some(s);
@@ -209,7 +331,7 @@ impl RawConn {
                         .finish(body.data())?;
                     continue;
                 }
-                Message::ErrorResponse(body) => bail!("startup failed: {}", error_summary(&body)),
+                Message::ErrorResponse(body) => return Err(ServerError::from(&body).into()),
                 _ => bail!("unexpected message during startup"),
             }
             conn.send(&out).await?;
@@ -223,12 +345,14 @@ impl RawConn {
 
     async fn next(&mut self, deadline: Instant) -> Result<Next> {
         loop {
+            check_header(&self.buf)?;
             if let Some(message) = Message::parse(&mut self.buf)? {
                 return Ok(Next::Message(message));
             }
             match tokio::time::timeout_at(deadline, self.stream.read_buf(&mut self.buf)).await {
                 Err(_) => return Ok(Next::Timeout),
-                Ok(Ok(0)) | Ok(Err(_)) => return Ok(Next::Closed),
+                Ok(Ok(0)) => return Ok(Next::Closed(None)),
+                Ok(Err(e)) => return Ok(Next::Closed(Some(e))),
                 Ok(Ok(_)) => {}
             }
         }
@@ -236,14 +360,9 @@ impl RawConn {
 
     /// Send the messages and record the replies, one line each. Reads until one
     /// ReadyForQuery per Sync/Query/CopyDone. Without any of those (e.g. only Flush)
-    /// it reads until the server has been quiet for `quiet`. Ends with TIMEOUT or
+    /// it reads until the server has been quiet for `opts.quiet`. Ends with TIMEOUT or
     /// CLOSED if the replies stop early.
-    pub async fn exchange(
-        &mut self,
-        messages: &[RawMessage],
-        step_timeout: Duration,
-        quiet: Duration,
-    ) -> Result<Vec<String>> {
+    pub async fn exchange(&mut self, messages: &[RawMessage], opts: &ExchangeOpts) -> Result<Vec<String>> {
         let mut out = BytesMut::new();
         for m in messages {
             m.write(&mut out)?;
@@ -252,11 +371,11 @@ impl RawConn {
 
         let mut cycles = messages.iter().filter(|m| m.ends_cycle()).count();
         let wait_for_quiet = cycles == 0;
-        let deadline = Instant::now() + step_timeout;
+        let deadline = Instant::now() + opts.step;
         let mut lines = Vec::new();
         while wait_for_quiet || cycles > 0 {
             let until = if wait_for_quiet {
-                (Instant::now() + quiet).min(deadline)
+                (Instant::now() + opts.quiet).min(deadline)
             } else {
                 deadline
             };
@@ -268,7 +387,7 @@ impl RawConn {
                     lines.push("TIMEOUT".to_string());
                     break;
                 }
-                Next::Closed => {
+                Next::Closed(_) => {
                     lines.push("CLOSED".to_string());
                     break;
                 }
@@ -278,37 +397,72 @@ impl RawConn {
             if let Message::ReadyForQuery(_) | Message::CopyInResponse(_) = message {
                 cycles = cycles.saturating_sub(1);
             }
-            if let Some(line) = summary(&message)? {
+            if let Some(line) = summary(&message, opts.parameter_status)? {
                 lines.push(line);
             }
         }
         Ok(lines)
     }
 
-    pub async fn terminate(mut self) {
+    /// Sends Terminate and closes the connection. With `wait_for_exit` (on Postgres),
+    /// then reads until the server closes its end, which happens only after the
+    /// backend's session state is gone (see `DrainOnShutdown` in pg.rs), and fails if
+    /// that takes longer.
+    pub async fn terminate(mut self, wait_for_exit: Option<Duration>) -> Result<()> {
         let mut out = BytesMut::new();
         frontend::terminate(&mut out);
         let _ = self.send(&out).await;
         let _ = self.stream.shutdown().await;
-    }
-}
-
-fn error_summary(body: &postgres_protocol::message::backend::ErrorResponseBody) -> String {
-    let mut fields = body.fields();
-    let (mut code, mut message) = (String::new(), String::new());
-    while let Ok(Some(field)) = fields.next() {
-        match field.type_() {
-            b'C' => code = String::from_utf8_lossy(field.value_bytes()).into_owned(),
-            b'M' => message = String::from_utf8_lossy(field.value_bytes()).into_owned(),
-            _ => {}
+        let Some(limit) = wait_for_exit else {
+            return Ok(());
+        };
+        let deadline = Instant::now() + limit;
+        loop {
+            match self.next(deadline).await {
+                Ok(Next::Timeout) => bail!("the backend did not exit within {limit:?} of the disconnect"),
+                // Close_notify or EOF (over TLS whichever comes first), or a broken
+                // connection: either way the server is done with it.
+                Ok(Next::Closed(_)) | Err(_) => return Ok(()),
+                Ok(Next::Message(_)) => {}
+            }
         }
     }
-    format!("{code} {message}")
 }
 
-/// One line per reply. Notices and ParameterStatus are skipped: poolers add,
-/// drop and reorder those, and they don't change what the client gets.
-fn summary(message: &Message) -> Result<Option<String>> {
+/// An ErrorResponse's SQLSTATE and message; as an error, the server refusing a connection
+/// during startup.
+#[derive(Debug)]
+pub struct ServerError {
+    pub code: String,
+    pub message: String,
+}
+
+impl std::fmt::Display for ServerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "startup failed: {} {}", self.code, self.message)
+    }
+}
+
+impl std::error::Error for ServerError {}
+
+impl From<&postgres_protocol::message::backend::ErrorResponseBody> for ServerError {
+    fn from(body: &postgres_protocol::message::backend::ErrorResponseBody) -> Self {
+        let mut fields = body.fields();
+        let (mut code, mut message) = (String::new(), String::new());
+        while let Ok(Some(field)) = fields.next() {
+            match field.type_() {
+                b'C' => code = String::from_utf8_lossy(field.value_bytes()).into_owned(),
+                b'M' => message = String::from_utf8_lossy(field.value_bytes()).into_owned(),
+                _ => {}
+            }
+        }
+        ServerError { code, message }
+    }
+}
+
+/// One line per reply. Notices are skipped, and ParameterStatus unless asked for:
+/// poolers add, drop and reorder those, and they rarely change what the client gets.
+fn summary(message: &Message, parameter_status: bool) -> Result<Option<String>> {
     let line = match message {
         Message::ParseComplete => "ParseComplete".to_string(),
         Message::BindComplete => "BindComplete".to_string(),
@@ -317,6 +471,17 @@ fn summary(message: &Message) -> Result<Option<String>> {
         Message::PortalSuspended => "PortalSuspended".to_string(),
         Message::EmptyQueryResponse => "EmptyQueryResponse".to_string(),
         Message::CopyInResponse(_) => "CopyInResponse".to_string(),
+        Message::CopyOutResponse(_) => "CopyOutResponse".to_string(),
+        Message::CopyData(body) => match std::str::from_utf8(body.data()) {
+            // Escaped so a row's trailing newline doesn't split the line.
+            Ok(text) => format!("CopyData {}", text.escape_debug()),
+            // Binary COPY: lossy text would hide differences.
+            Err(_) => {
+                let hex: String = body.data().iter().map(|b| format!("{b:02x}")).collect();
+                format!("CopyData hex:{hex}")
+            }
+        },
+        Message::CopyDone => "CopyDone".to_string(),
         Message::CommandComplete(body) => format!("CommandComplete {}", body.tag()?),
         Message::ParameterDescription(body) => format!("ParameterDescription {}", body.parameters().count()?),
         Message::RowDescription(body) => {
@@ -333,12 +498,12 @@ fn summary(message: &Message) -> Result<Option<String>> {
         }
         // The code is stable across servers; the wording is not.
         Message::ErrorResponse(body) => {
-            format!(
-                "Error {}",
-                error_summary(body).split_whitespace().next().unwrap_or_default()
-            )
+            format!("Error {}", ServerError::from(body).code)
         }
         Message::ReadyForQuery(body) => format!("ReadyForQuery {}", body.status() as char),
+        Message::ParameterStatus(body) if parameter_status => {
+            format!("ParameterStatus {}={}", body.name()?, body.value()?)
+        }
         _ => return Ok(None),
     };
     Ok(Some(line))
@@ -347,6 +512,53 @@ fn summary(message: &Message) -> Result<Option<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A backend message as the server would send it.
+    fn backend(tag: u8, body: &[u8]) -> Message {
+        let mut buf = BytesMut::new();
+        buf.extend_from_slice(&[tag]);
+        buf.extend_from_slice(&(body.len() as u32 + 4).to_be_bytes());
+        buf.extend_from_slice(body);
+        Message::parse(&mut buf).unwrap().unwrap()
+    }
+
+    #[test]
+    fn caps_message_size() {
+        let header = |len: u32| [&b"D"[..], &len.to_be_bytes()].concat();
+        assert!(check_header(b"").is_ok());
+        assert!(check_header(&header(4)[..3]).is_ok());
+        assert!(check_header(&header(4)).is_ok());
+        assert!(check_header(&header(MAX_MESSAGE as u32)).is_ok());
+        assert!(check_header(&header(MAX_MESSAGE as u32 + 1)).is_err());
+        assert!(check_header(&header(u32::MAX)).is_err());
+        assert!(check_header(&header(3)).is_err());
+    }
+
+    #[test]
+    fn records_copy_out() {
+        let line = |m: Message| summary(&m, false).unwrap().unwrap();
+        assert_eq!(line(backend(b'H', b"\0\0\x02\0\0\0\0")), "CopyOutResponse");
+        assert_eq!(line(backend(b'd', b"1\ta\n")), "CopyData 1\\ta\\n");
+        assert_eq!(
+            line(backend(b'd', b"PGCOPY\n\xff\r\n\0")),
+            "CopyData hex:5047434f50590aff0d0a00"
+        );
+        assert_eq!(line(backend(b'c', b"")), "CopyDone");
+    }
+
+    #[test]
+    fn parameter_status_only_when_asked() {
+        let status = || backend(b'S', b"application_name\0app\0");
+        assert_eq!(summary(&status(), false).unwrap(), None);
+        assert_eq!(
+            summary(&status(), true).unwrap().as_deref(),
+            Some("ParameterStatus application_name=app")
+        );
+        assert_eq!(
+            summary(&backend(b'Z', b"I"), true).unwrap().as_deref(),
+            Some("ReadyForQuery I")
+        );
+    }
 
     #[test]
     fn parses_messages() {

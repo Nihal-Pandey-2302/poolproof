@@ -11,7 +11,7 @@ keywords = ["postgres", "pgbouncer", "connection-pool", "testing", "pooler"]
 categories = ["command-line-utilities", "database", "development-tools::testing"]
 # The test bed and CI files are for this repo, not for `cargo install`. results/ stays:
 # `scan --pooler` reads it.
-exclude = [".github/", "docker/", "scripts/", "selftest/", "tools/", "RESULTS.md", "targets.toml"]
+exclude = [".github/", ".gitguardian.yaml", "docker/", "scripts/", "selftest/", "tools/", "RESULTS.md", "targets.toml"]
 
 # cargo binstall poolproof: download the release archive instead of compiling.
 [package.metadata.binstall]
@@ -24,17 +24,31 @@ pkg-fmt = "zip"
 
 [dependencies]
 anyhow = "1.0.104"
+base64 = "0.22.1"
 bytes = "1.12.1"
 clap = { version = "4.6.7", features = ["derive"] }
 csv = "1.4.0"
 fallible-iterator = "0.2.0"
 pg_query = "18.1.0"
 postgres-protocol = "0.6.12"
+# TLS on ring, not aws-lc-rs: aws-lc-sys needs cmake and nasm, which makes the
+# cross-platform release builds harder.
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-native-certs = "0.8.5"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+sha2 = "0.11.1"
+# Already in the tree through tokio; sets the URL's keepalive and timeout options on our
+# own sockets. "all" has the keepalive interval, retries and tcp_user_timeout.
+socket2 = { version = "0.6.5", features = ["all"] }
 tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "time", "net", "io-util"] }
 tokio-postgres = "0.7.18"
+tokio-postgres-rustls = "0.14.0"
+tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12"] }
 toml = "1.1.8"
+
+[dev-dependencies]
+rcgen = { version = "0.14.10", default-features = false, features = ["crypto", "pem", "ring"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.191"

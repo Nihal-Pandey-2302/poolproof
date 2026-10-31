@@ -1,6 +1,10 @@
 name = "set-role-isolated-between-clients"
 description = "SET ROLE from one client must not change the role another client runs as."
-setup = ["DROP ROLE IF EXISTS pp_role", "CREATE ROLE pp_role"]
+requires = ["createrole"]
+# SET ROLE needs membership with the SET option unless you are superuser. Since
+# Postgres 16 a CREATEROLE user gets only ADMIN on a role it creates
+# (createrole_self_grant is empty by default), so grant it explicitly.
+setup = ["DROP ROLE IF EXISTS pp_role", "CREATE ROLE pp_role", "GRANT pp_role TO CURRENT_USER"]
 teardown = ["DROP ROLE IF EXISTS pp_role"]
 
 [[step]]
