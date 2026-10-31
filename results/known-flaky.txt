@@ -2,10 +2,14 @@
 # pair is skipped; the same scenario on other targets is still compared. Remove a line
 # once the scenario has repeat or the cause is fixed.
 
-# 2026-10-31: flips between pass and fail (silent) on CI runners, about every other run.
-# Rate being measured; drop once the settle fix (#35) is on main and CI is clean ~10 runs.
+# 2026-10-31: a single client can lose its own session state. Supavisor 2.10 opens a
+# second server connection when the only one isn't back in the pool yet (pool_size 1 is
+# not a hard cap), and hands out the most recently returned one, so the client's later
+# queries run where its SET, cursor, temp table or lock isn't. Seen 1 in 16 CI runs on
+# cursor-survives-own-transactions, never locally; the others are exposed the same way.
+# set-local-reverts-after-commit failed 3 in 40 runs, all before the settle fix (#35).
+# Drop these once a Supavisor release no longer does this.
 supavisor-2.10.0-rc.1 set-local-reverts-after-commit
-
-# 2026-10-31: flips between pass and fail (error) on CI runners, about every other run.
-# Rate being measured; drop once the settle fix (#35) is on main and CI is clean ~10 runs.
-supavisor-2.10.0-rc.1 prepared-statement-survives-other-clients
+supavisor-2.10.0-rc.1 cursor-survives-own-transactions
+supavisor-2.10.0-rc.1 temp-table-survives-own-transactions
+supavisor-2.10.0-rc.1 advisory-lock-survives-own-transactions
