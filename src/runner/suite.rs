@@ -42,7 +42,7 @@ pub async fn run(
     let mut results = Vec::new();
     let mut target_infos = Vec::new();
     // --check-scenarios verdicts by (scenario, direct URL).
-    let mut determinism: HashMap<(&str, &str), Result<(), String>> = HashMap::new();
+    let mut determinism: HashMap<(&str, String), Result<(), String>> = HashMap::new();
     for target in targets {
         target_infos.push(TargetInfo {
             name: target.name.clone(),
@@ -75,10 +75,11 @@ pub async fn run(
             } else if let Some(reason) = &unreachable {
                 (Verdict::Error { reason: reason.clone() }, vec![], 0, 0)
             } else {
-                let key = (s.name.as_str(), target.direct.as_str());
+                // Keyed by the redacted endpoint: the password doesn't change the server.
+                let key = (s.name.as_str(), target.direct.to_string());
                 if opts.check_scenarios && !determinism.contains_key(&key) {
                     determinism.insert(
-                        key,
+                        key.clone(),
                         deterministic(s, &target.direct, &target.reset, &for_scenario(&timeouts, s)).await,
                     );
                 }
@@ -235,8 +236,8 @@ mod tests {
              [[step]]\nclient = 'a'\nsimple = 'SELECT 1'\n",
         )
         .unwrap();
-        let mut targets = Targets::single(url.clone(), url.clone(), PoolMode::Transaction).targets;
-        let mut second = Targets::single(url.clone(), url.clone(), PoolMode::Transaction).targets;
+        let mut targets = Targets::single(&url, &url, PoolMode::Transaction).unwrap().targets;
+        let mut second = Targets::single(&url, &url, PoolMode::Transaction).unwrap().targets;
         second[0].name = "b".into();
         targets.append(&mut second);
         let opts = RunOptions {
@@ -269,8 +270,12 @@ mod tests {
 
     #[test]
     fn select_keeps_file_order_and_rejects_unknown_names() {
-        let mut targets = Targets::single("p".into(), "d".into(), PoolMode::Transaction).targets;
-        let mut second = Targets::single("p".into(), "d".into(), PoolMode::Transaction).targets;
+        let mut targets = Targets::single("postgres://u@p/db", "postgres://u@d/db", PoolMode::Transaction)
+            .unwrap()
+            .targets;
+        let mut second = Targets::single("postgres://u@p/db", "postgres://u@d/db", PoolMode::Transaction)
+            .unwrap()
+            .targets;
         second[0].name = "b".into();
         targets.append(&mut second);
         let names = |v: Vec<&Target>| v.into_iter().map(|t| t.name.clone()).collect::<Vec<_>>();

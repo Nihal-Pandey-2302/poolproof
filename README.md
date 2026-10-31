@@ -97,9 +97,16 @@ scripts/testbed.sh down 100
 To test your own pooler, point poolproof at it and at the Postgres server behind it:
 
 ```sh
-poolproof run --pooler postgres://user:pass@pooler-host:6432/db \
-              --direct postgres://user:pass@postgres-host:5432/db
+export PGPASSWORD=...   # keeps the password out of the command line and `ps`
+poolproof run --pooler postgres://user@pooler-host:6432/db \
+              --direct postgres://user@postgres-host:5432/db
 ```
+
+A URL without a password gets one the way psql does: from `PGPASSWORD`, else from the
+password file (`PGPASSFILE`, default `~/.pgpass`; ignored unless only you can read it;
+a Unix socket matches as `localhost`, and only the first of several hosts is looked up).
+In a URL, percent-encode special characters in the password (`@` is `%40`). Output
+never shows passwords.
 
 For several poolers, or to reset state between scenarios, use a targets file
 (`--targets`, default `targets.toml`):
@@ -107,8 +114,12 @@ For several poolers, or to reset state between scenarios, use a targets file
 ```toml
 [[target]]
 name = "prod-like-pgbouncer"
-pooler = "postgres://user:pass@pooler-host:6432/db"
-direct = "postgres://user:pass@postgres-host:5432/db"
+# ${NAME} is replaced with the environment variable NAME ($${ for a literal ${). In a
+# URL the value is percent-encoded (escaped in key=value strings), so any password works;
+# in reset statements it goes in as is. An empty value is an error, except as a URL
+# password (where it means no password).
+pooler = "postgres://user:${POOLER_PASSWORD}@pooler-host:6432/db"
+direct = "postgres://user@postgres-host:5432/db"   # password from PGPASSWORD or ~/.pgpass
 mode = "transaction"
 # Run on `direct` before every run so one scenario's leaked state can't change the next
 # one's result. This terminates every other session on the database.
