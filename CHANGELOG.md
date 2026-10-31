@@ -180,6 +180,10 @@ First release.
   with the reason.
 - `requires` and the reset checks count a privilege only if the user can use it
   (`pg_has_role(..., 'USAGE')`), so a `NOINHERIT` membership no longer counts.
+- `run`: a `direct` user that inherits a superuser role (`GRANT postgres TO app`) passes
+  that check for the superuser, so `reset = "all"` tried to end the superuser's sessions,
+  Postgres refused, and every scenario was ERROR. Only a superuser may end a superuser's
+  session, so the reset now leaves those alone unless the `direct` user is one.
 - `run`: a backend releases its locks and temp tables only when it exits, so a step right
   after a disconnect could still see them. Every close of a connection to Postgres now
   reads until Postgres closes the socket, which it does after that cleanup. A backend
