@@ -501,6 +501,15 @@
             "null"
           ]
         },
+        "reuse_unmet": {
+          "description": "For a scenario with `same_backend`: runs that passed, but where its clients\nweren't on one backend, so they tested nothing. Not in `runs` either.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "runs": {
           "default": 1,
           "description": "How many times the pooler side ran (the scenario's `repeat`) and how many of\nthose runs failed.",

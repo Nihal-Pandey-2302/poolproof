@@ -128,6 +128,10 @@ pub struct ResultRow {
     /// `runs` or `failures`, so runs + unmet is how many ran.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub precondition_unmet: Option<u32>,
+    /// For a scenario with `same_backend`: runs that passed, but where its clients
+    /// weren't on one backend, so they tested nothing. Not in `runs` either.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reuse_unmet: Option<u32>,
     /// Set on a FAIL the pooler's own documentation describes. It is still a FAIL.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected: Option<crate::limitations::Expected>,

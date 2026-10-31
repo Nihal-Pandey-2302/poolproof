@@ -137,7 +137,7 @@ async fn run_until_done<'s>(
             outcomes.resize(scenario.steps.len(), Outcome::NotRun);
             break;
         }
-        if step.precondition && baseline {
+        if (step.precondition || step.evidence) && baseline {
             outcomes.push(Outcome::NotRun);
             continue;
         }
@@ -177,8 +177,31 @@ async fn run_until_done<'s>(
                     }
                     Outcome::empty()
                 }
+                Action::Evidence => match raw.get_mut(step.client.as_str()) {
+                    None => Outcome::error("CLIENT", format!("client '{}' is not connected", step.client)),
+                    Some(conn) => {
+                        let ask = [super::RawMessage::Query("SELECT pg_backend_pid()".into())];
+                        match conn.exchange(&ask, &exchange_opts).await {
+                            Ok(messages) => {
+                                let pid = messages
+                                    .iter()
+                                    .find_map(|l| l.strip_prefix("DataRow "))
+                                    .map(str::to_string);
+                                match pid {
+                                    Some(pid) if !messages.iter().any(|l| l.starts_with("Error ")) => {
+                                        evidence(&pid, direct, t)
+                                            .await
+                                            .unwrap_or(Outcome::Messages { messages })
+                                    }
+                                    _ => Outcome::Messages { messages },
+                                }
+                            }
+                            Err(e) => Outcome::error("CLIENT", format!("{e:#}")),
+                        }
+                    }
+                },
                 _ => bail!(
-                    "client '{}' uses send, so its only other step can be disconnect",
+                    "client '{}' uses send, so its only other steps can be evidence and disconnect",
                     step.client
                 ),
             };
@@ -308,6 +331,20 @@ async fn run_until_done<'s>(
                     Ok(Ok(())) => Outcome::empty(),
                 }
             }
+            Action::Evidence => match timeout(t.step, conn.client.simple_query("SELECT pg_backend_pid()")).await {
+                Err(_) => Outcome::error("TIMEOUT", format!("no reply within {:?}", t.step)),
+                Ok(res) => {
+                    let outcome = simple_outcome(res);
+                    let pid = match &outcome {
+                        Outcome::Ok { rows, .. } if rows.len() == 1 && rows[0].len() == 1 => rows[0][0].clone(),
+                        _ => None,
+                    };
+                    match pid {
+                        Some(pid) => evidence(&pid, direct, t).await.unwrap_or(outcome),
+                        None => outcome,
+                    }
+                }
+            },
             Action::Notifications => {
                 let deadline = tokio::time::Instant::now() + t.notify;
                 while conn.notices.lock().unwrap().is_empty() && tokio::time::Instant::now() < deadline {
@@ -323,6 +360,38 @@ async fn run_until_done<'s>(
     }
 
     Ok(outcomes)
+}
+
+/// An evidence step's outcome for the backend `pid`, which the pooler named: one row of
+/// the pid and its start time, read on direct right away (inside the pooled session a
+/// leaked role can hide the backend's own row). The start is NULL when direct may not
+/// see it, and the row has the pid alone when the backend was already gone or the read
+/// failed. None if `pid` isn't a pid.
+async fn evidence(pid: &str, direct: &Endpoint, t: &Timeouts) -> Option<Outcome> {
+    let pid: i32 = pid.trim().parse().ok()?;
+    let read = async {
+        let (client, driver, _) = connect_with(direct, t, true).await?;
+        let sql = format!(
+            "SELECT to_char(backend_start AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS.US') FROM pg_stat_activity \
+             WHERE pid = {pid}"
+        );
+        let res = timeout(t.housekeeping, client.simple_query(&sql)).await;
+        drop(client);
+        let _ = timeout(t.housekeeping, driver).await;
+        let messages = res.map_err(|_| anyhow::anyhow!("timed out"))??;
+        Ok::<_, anyhow::Error>(messages.into_iter().find_map(|m| match m {
+            tokio_postgres::SimpleQueryMessage::Row(row) => Some(row.get(0).map(str::to_string)),
+            _ => None,
+        }))
+    };
+    let row = match read.await {
+        Ok(Some(start)) => vec![Some(pid.to_string()), start],
+        _ => vec![Some(pid.to_string())],
+    };
+    Some(Outcome::Ok {
+        rows: vec![row],
+        tags: vec![1],
+    })
 }
 
 /// A precondition step's outcome that lets the run go on: one row, true.

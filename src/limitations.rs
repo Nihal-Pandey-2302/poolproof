@@ -547,6 +547,7 @@ mod tests {
             failures: 1,
             varied: None,
             precondition_unmet: None,
+            reuse_unmet: None,
             expected: None,
         }
     }
@@ -689,6 +690,7 @@ quote = "SET/RESET | Yes | Never"
             failures: 1,
             varied: None,
             precondition_unmet: None,
+            reuse_unmet: None,
             expected: None,
         };
         let compare = s.compare_modes();

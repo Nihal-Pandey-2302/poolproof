@@ -113,6 +113,11 @@
           "description": "Close the client connection.",
           "type": "boolean"
         },
+        "evidence": {
+          "default": false,
+          "description": "Record which backend this pooled client is on: poolproof asks the pooler for\n`pg_backend_pid()` and reads the backend's start time on direct. Not run on\nPostgres and never compared; `same_backend` checks it.",
+          "type": "boolean"
+        },
         "execute": {
           "description": "Execute a statement this client prepared earlier.",
           "type": [
@@ -214,6 +219,21 @@
       "description": "Privileges the `direct` user needs; without them the scenario is skipped.",
       "items": {
         "$ref": "#/$defs/Requirement"
+      },
+      "type": "array"
+    },
+    "same_backend": {
+      "default": [],
+      "description": "Pairs of `evidence` steps (1-based) that must name the same backend for a run\nthrough the pooler to count: proof that the second client really reached the\nfirst one's server connection. A run where a pair differs doesn't count.",
+      "items": {
+        "items": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxItems": 2,
+        "minItems": 2,
+        "type": "array"
       },
       "type": "array"
     },

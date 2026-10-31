@@ -88,6 +88,18 @@ pub fn print_result(s: &scenario::Scenario, row: &ResultRow, style: Style) {
         };
         println!("      precondition met in {} of {ran} runs{rests}", row.runs);
     }
+    if let Some(apart) = row.reuse_unmet.filter(|u| *u > 0 || row.runs > 1) {
+        let ran = row.runs + apart + row.precondition_unmet.unwrap_or(0);
+        let rests = if row.runs == 1 && ran > 1 && matches!(row.verdict, Verdict::Pass) {
+            "; the PASS rests on one run"
+        } else {
+            ""
+        };
+        println!(
+            "      clients shared a server connection in {} of {ran} runs{rests}",
+            row.runs
+        );
+    }
     if row.runs > 1 && row.failures > 0 {
         println!(
             "      failed in {} of {} runs (timing-sensitive)",
