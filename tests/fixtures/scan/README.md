@@ -23,6 +23,8 @@ pending = "C11"                      # optional: scan gets it wrong today, TODO.
   replaces SET values with `$1`, 17 keeps them.
 - `log`: as it appears in a statement log (`log_statement`, `log_min_duration_statement`).
   Bound parameters stay `$n`, literals stay literal, multi-statement strings stay whole.
+- `log-lines`: log messages as they are, one per line (`parse S_1: ...`, `execute ...`),
+  each after a `LOG:  ` prefix. For statement names.
 - `sql`: a file such as a migration or a pg_dump script.
 
 The pgss and pgss-17/18 texts were captured from real pg_stat_statements on Postgres 17.11

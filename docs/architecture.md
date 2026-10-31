@@ -20,7 +20,8 @@ New to the code? [code-tour.md](code-tour.md) is a reading order through the cor
 ## Layout
 
 ```text
-build.rs                 embeds scenarios/*.toml and results/*.json into the binary
+build.rs                 embeds scenarios/*.toml and results/postgres-*.json into the binary,
+                         and the verdicts of results/drivers-postgres-*.json
 src/main.rs              entry point: SIGPIPE, exit code 2 on error
 src/lib.rs               the modules below, as a library for tests/ (no stable API)
 src/cli.rs               clap commands and flags; wires the modules together
@@ -56,8 +57,11 @@ src/report/
 src/scan/
   mod.rs                 Finding, Severity, rule list, rule -> scenario mapping
   input.rs               pg_stat_statements CSV, csvlog, stderr and jsonlog logs, .sql files;
-                         --input, stdin, read as a stream and merged by query text
+                         --input, stdin, read as a stream and merged by query text; from
+                         logs also prepared statement names
   rules.rs               the rules, on the parsed statement tree
+  statements.rs          statement names: which driver they look like, which pooler renamed
+                         them, and the driver results for --pooler
 src/drivers/mod.rs       `drivers`: drivers.toml and cases.toml as scenarios whose steps a
                          driver program runs, the docker run, its output checked and read
 src/output/
@@ -182,10 +186,14 @@ Details that matter when changing this:
 ## How `scan` works
 
 ```text
-file or stdin -> scan::input::load_queries -> Vec<Query> (SQL, calls, line)
-           -> scan::rules::scan -> findings (rule, severity, query)
+file or stdin -> scan::input::load_queries -> Input: Vec<Query> (SQL, calls, line)
+                                                   + statement names (logs only)
+           -> scan::rules::scan -> findings (rule, severity, query), and from the
+                                   names scan::statements: a finding per driver
            -> with --pooler: report::find_target + check_finding
-                             (rule -> scenarios -> that pooler's verdicts)
+                             (rule -> scenarios -> that pooler's verdicts);
+                             driver findings: scan::check_driver against
+                             report::driver_results, a list of its own
            -> output::scan (text), output::sarif, or JSON printed by cli.rs
 ```
 
