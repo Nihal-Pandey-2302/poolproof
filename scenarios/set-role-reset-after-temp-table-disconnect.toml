@@ -1,0 +1,38 @@
+name = "set-role-reset-after-temp-table-disconnect"
+description = "A client that created a temp table and ran SET ROLE must not pass its role to the next client."
+refs = ["https://github.com/pgdogdev/pgdog/issues/1341"]
+requires = ["createrole"]
+# SET ROLE needs membership with the SET option unless you are superuser. Since
+# Postgres 16 a CREATEROLE user gets only ADMIN on a role it creates
+# (createrole_self_grant is empty by default), so grant it explicitly.
+setup = ["DROP ROLE IF EXISTS pp_role", "CREATE ROLE pp_role", "GRANT pp_role TO CURRENT_USER"]
+teardown = ["DROP ROLE IF EXISTS pp_role"]
+# Counts when b got a's server connection, or when the pooler closed it instead.
+same_backend_or_closed = [[3, 6]]
+
+# Like set-role-reset-after-pinned-disconnect, but the temp table pins the server
+# connection instead of an advisory lock. A pooler that cleans up with DISCARD TEMP and
+# RESET ALL drops the table and keeps the role.
+[[step]]
+client = "a"
+simple = "CREATE TEMP TABLE pp_role_tmp (x int)"
+
+[[step]]
+client = "a"
+simple = "SET ROLE pp_role"
+
+[[step]]
+client = "a"
+evidence = true
+
+[[step]]
+client = "a"
+disconnect = true
+
+[[step]]
+client = "b"
+simple = "SELECT current_user::text"
+
+[[step]]
+client = "b"
+evidence = true
