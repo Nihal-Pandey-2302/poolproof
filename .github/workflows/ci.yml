@@ -110,11 +110,11 @@ jobs:
           PROXY_USER: postgres
           PROXY_PASSWORD: postgres
           PROXY_DATABASE: app
-          PROXY_LISTEN: 56471=none,56472=drop-pipelined,56473=swallow-error,56474=no-copydone,56475=wrong-tag,56476=shared-server
+          PROXY_LISTEN: 56471=none,56472=drop-pipelined,56473=swallow-error,56474=no-copydone,56475=wrong-tag,56476=shared-server,56477=refuse
         run: |
           nohup tools/pp-proxy/target/debug/pp-proxy > pp-proxy.log 2>&1 &
           echo $! > pp-proxy.pid
-          for _ in $(seq 50); do (exec 3<>/dev/tcp/127.0.0.1/56476) 2>/dev/null && exit 0; sleep 0.1; done
+          for _ in $(seq 50); do (exec 3<>/dev/tcp/127.0.0.1/56477) 2>/dev/null && exit 0; sleep 0.1; done
           cat pp-proxy.log
           exit 1
 
@@ -174,11 +174,14 @@ jobs:
         run: docker compose -f docker/compose.yml up -d --wait --wait-timeout 300
 
       - name: Run scenarios
+        id: run
         run: |
           cargo build --release
           # Exit 1 means some scenario failed, which is expected; 2 means poolproof itself broke.
+          # --check-scenarios runs each scenario twice on Postgres first: a scenario whose
+          # results change between runs tests timing, not the pooler.
           set +e
-          ./target/release/poolproof run --format json > new.json
+          ./target/release/poolproof run --check-scenarios --format json > new.json
           code=$?
           set -e
           if [ "$code" -gt 1 ]; then exit "$code"; fi
@@ -210,6 +213,16 @@ jobs:
             echo "::error::Verdicts changed on Postgres ${{ matrix.postgres }}. Run scripts/update-results.sh and commit."
             exit 1
           fi
+
+      # The comparison above skips timing-sensitive and known-flaky pairs, and a scenario
+      # added with its ERROR already committed would match too. So a scenario that isn't
+      # deterministic on Postgres fails here on its own, even when the comparison failed.
+      - name: Scenarios are deterministic on Postgres
+        if: ${{ !cancelled() && steps.run.outcome == 'success' }}
+        run: |
+          jq -r '.results[] | select(.result == "error" and (.reason | startswith("nondeterministic scenario")))
+                 | "::error::\(.scenario): \(.reason)"' new.json | sort -u | tee nondeterministic.txt
+          if [ -s nondeterministic.txt ]; then exit 1; fi
 
       # Tests marked #[ignore] need a real Postgres. They run after the scenarios so they
       # can't change a verdict, and even when the comparison failed. They get their own

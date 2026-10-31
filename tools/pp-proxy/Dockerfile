@@ -1,5 +1,5 @@
 # Self-test proxy for the docker test bed (compose profile "selftest").
-FROM rust:1.88-slim-bookworm AS build
+FROM rust:1.98-slim-bookworm AS build
 WORKDIR /src
 COPY . .
 # A debug build compiles faster, and speed doesn't matter for the self-test.

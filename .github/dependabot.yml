@@ -9,6 +9,9 @@ updates:
       # newer major doesn't compile until postgres-protocol moves.
       - dependency-name: fallible-iterator
         update-types: ["version-update:semver-major"]
+      # base64 comes in through postgres-protocol too; a newer major only duplicates it.
+      - dependency-name: base64
+        update-types: ["version-update:semver-major"]
     groups:
       cargo:
         patterns: ["*"]
@@ -36,3 +39,12 @@ updates:
       - dependency-name: "*pgbouncer"
       - dependency-name: "*pgdog"
       - dependency-name: "*supavisor"
+
+  # The self-test proxy image (tools/pp-proxy/Dockerfile).
+  - package-ecosystem: docker
+    directory: /tools/pp-proxy
+    schedule:
+      interval: weekly
+    groups:
+      proxy-images:
+        patterns: ["*"]

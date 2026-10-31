@@ -13,10 +13,10 @@ docker compose -f docker/compose.yml up -d --wait   # Postgres + every pooler in
 cargo run -- run                                    # all scenarios against targets.toml
 ```
 
-The test bed uses the password `postgres`, so keep it on a machine nobody else can
-reach. Each pooler has a pool of one server connection, so state leaks between clients
-every time instead of by luck.
-`POSTGRES_IMAGE=postgres:18.4` picks the Postgres version.
+The test bed listens on 127.0.0.1 only, with the password `postgres`. Each pooler has a
+pool of one server connection, so state leaks between clients every time instead of by
+luck. `POSTGRES_IMAGE=postgres:18.4` picks the Postgres version. `scripts/testbed.sh`
+runs a second test bed on shifted ports (see the README).
 
 ## Writing a scenario
 
@@ -36,11 +36,20 @@ The file format is in [README.md](README.md#writing-a-scenario). The workflow:
 4. Read the Postgres column first. A PASS only means something if Postgres did what you
    expected: if a step errored on Postgres too (wrong SQL, missing privilege), the pooler
    "matching" it proves nothing.
-5. Check the verdicts make sense on every pooler, and run the whole suite with `--reverse`
+5. Check that Postgres itself is deterministic for it:
+
+   ```sh
+   cargo run -- run --filter temp-table-isolated --check-scenarios
+   ```
+
+   This runs the Postgres side twice and gives ERROR if the two runs differ, e.g. a step
+   that returns a pid, a time or a random value. Use `compare = "status"` or `"ignore"`
+   on such steps.
+6. Check the verdicts make sense on every pooler, and run the whole suite with `--reverse`
    too. A verdict that changes with order means state leaks between scenarios.
-6. If the outcome depends on timing inside the pooler (pipelines, races), set `repeat`.
-7. Objects a scenario creates are named `pp_*` and dropped in `teardown`.
-8. Regenerate the committed results and add them to the same commit:
+7. If the outcome depends on timing inside the pooler (pipelines, races), set `repeat`.
+8. Objects a scenario creates are named `pp_*` and dropped in `teardown`.
+9. Regenerate the committed results and add them to the same commit:
 
    ```sh
    scripts/update-results.sh

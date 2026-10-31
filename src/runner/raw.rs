@@ -178,8 +178,7 @@ pub struct RawConn {
 }
 
 impl RawConn {
-    pub async fn connect(url: &str, connect_timeout: Duration) -> Result<Self> {
-        let config = tokio_postgres::Config::from_str(url).context("parsing connection URL")?;
+    pub async fn connect(config: &tokio_postgres::Config, connect_timeout: Duration) -> Result<Self> {
         let host = match config.get_hosts().first() {
             Some(Host::Tcp(host)) => host.clone(),
             _ => bail!("send steps need a TCP host"),
@@ -241,7 +240,7 @@ impl RawConn {
                         .finish(body.data())?;
                     continue;
                 }
-                Message::ErrorResponse(body) => bail!("startup failed: {}", error_summary(&body)),
+                Message::ErrorResponse(body) => return Err(ServerError::from(&body).into()),
                 _ => bail!("unexpected message during startup"),
             }
             conn.send(&out).await?;
@@ -321,17 +320,35 @@ impl RawConn {
     }
 }
 
-fn error_summary(body: &postgres_protocol::message::backend::ErrorResponseBody) -> String {
-    let mut fields = body.fields();
-    let (mut code, mut message) = (String::new(), String::new());
-    while let Ok(Some(field)) = fields.next() {
-        match field.type_() {
-            b'C' => code = String::from_utf8_lossy(field.value_bytes()).into_owned(),
-            b'M' => message = String::from_utf8_lossy(field.value_bytes()).into_owned(),
-            _ => {}
-        }
+/// An ErrorResponse's SQLSTATE and message; as an error, the server refusing a connection
+/// during startup.
+#[derive(Debug)]
+pub struct ServerError {
+    pub code: String,
+    pub message: String,
+}
+
+impl std::fmt::Display for ServerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "startup failed: {} {}", self.code, self.message)
     }
-    format!("{code} {message}")
+}
+
+impl std::error::Error for ServerError {}
+
+impl From<&postgres_protocol::message::backend::ErrorResponseBody> for ServerError {
+    fn from(body: &postgres_protocol::message::backend::ErrorResponseBody) -> Self {
+        let mut fields = body.fields();
+        let (mut code, mut message) = (String::new(), String::new());
+        while let Ok(Some(field)) = fields.next() {
+            match field.type_() {
+                b'C' => code = String::from_utf8_lossy(field.value_bytes()).into_owned(),
+                b'M' => message = String::from_utf8_lossy(field.value_bytes()).into_owned(),
+                _ => {}
+            }
+        }
+        ServerError { code, message }
+    }
 }
 
 /// One line per reply. Notices are skipped, and ParameterStatus unless asked for:
@@ -372,10 +389,7 @@ fn summary(message: &Message, parameter_status: bool) -> Result<Option<String>> 
         }
         // The code is stable across servers; the wording is not.
         Message::ErrorResponse(body) => {
-            format!(
-                "Error {}",
-                error_summary(body).split_whitespace().next().unwrap_or_default()
-            )
+            format!("Error {}", ServerError::from(body).code)
         }
         Message::ReadyForQuery(body) => format!("ReadyForQuery {}", body.status() as char),
         Message::ParameterStatus(body) if parameter_status => {
