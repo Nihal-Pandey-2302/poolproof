@@ -601,6 +601,7 @@ quote = "SET/RESET | Yes | Never"
             comparison: None,
             limitations: None,
             stale_expectations: vec![],
+            label: None,
         }
     }
 

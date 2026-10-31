@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 
 use crate::output::sarif::sarif;
@@ -83,8 +83,13 @@ enum Command {
     /// Render saved `run --format json` reports, e.g. one per Postgres version, as
     /// one table.
     Report {
-        #[arg(required = true)]
+        #[arg(required_unless_present = "labels")]
         files: Vec<PathBuf>,
+        /// Show one input's targets under a heading of their own, apart from the others:
+        /// `--label 'variant targets=results/variants.json'`. The file is read as an
+        /// input if it isn't one already. Repeat for several.
+        #[arg(long = "label", value_name = "LABEL=FILE", id = "labels")]
+        labels: Vec<String>,
         #[arg(long, value_enum, default_value_t = ReportFormat::Markdown)]
         format: ReportFormat,
         /// Directory of documented limitations (`<product>.toml`). Defaults to the ones
@@ -338,13 +343,16 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
         }
         Command::Report {
             files,
+            labels,
             format,
             limitations,
         } => {
-            let mut reports = files
-                .iter()
-                .map(|f| report::Report::load(f))
-                .collect::<Result<Vec<_>>>()?;
+            let mut reports = Vec::new();
+            for (file, label) in labeled_inputs(&files, &labels)? {
+                let mut r = report::Report::load(&file)?;
+                r.label = label;
+                reports.push(r);
+            }
             // Marks come from the current set, so editing it needs no new run.
             let scenarios = scenario::bundled()?;
             let limitations = crate::limitations::load(limitations.as_deref(), &scenarios)?;
@@ -499,6 +507,7 @@ async fn run_suite(
         comparison: None,
         limitations: None,
         stale_expectations: vec![],
+        label: None,
     };
     // Every scenario here records its compare modes.
     limitations.apply(&mut report, &[]);
@@ -627,6 +636,28 @@ fn man(command: Option<&str>, out: &mut dyn std::io::Write) -> Result<()> {
     Ok(())
 }
 
+/// `report`'s inputs in order, each with its label: the files as given, then any file
+/// a `--label LABEL=FILE` names that isn't one of them. The label is everything before
+/// the last `=`.
+fn labeled_inputs(files: &[PathBuf], labels: &[String]) -> Result<Vec<(PathBuf, Option<String>)>> {
+    let mut inputs: Vec<(PathBuf, Option<String>)> = files.iter().map(|f| (f.clone(), None)).collect();
+    for arg in labels {
+        let Some((label, file)) = arg
+            .rsplit_once('=')
+            .filter(|(l, f)| !l.trim().is_empty() && !f.is_empty())
+        else {
+            bail!("--label {arg:?}: expected LABEL=FILE");
+        };
+        let file = PathBuf::from(file);
+        match inputs.iter_mut().find(|(f, _)| *f == file) {
+            Some((_, Some(_))) => bail!("--label: {} has a label already", file.display()),
+            Some((_, slot)) => *slot = Some(label.trim().to_string()),
+            None => inputs.push((file, Some(label.trim().to_string()))),
+        }
+    }
+    Ok(inputs)
+}
+
 /// The targets file, or the one target `--pooler` and `--direct` describe.
 fn load_targets(
     file: &std::path::Path,
@@ -682,6 +713,30 @@ fn parse_duration(s: &str) -> Result<Duration, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn labels_name_inputs_or_add_them() {
+        let files = [PathBuf::from("core.json")];
+        let label = |s: &str| s.to_string();
+        let inputs = labeled_inputs(&files, &[label("variants (nightly)=v.json"), label(" a=b =core.json")]).unwrap();
+        assert_eq!(
+            inputs,
+            vec![
+                (PathBuf::from("core.json"), Some("a=b".to_string())),
+                (PathBuf::from("v.json"), Some("variants (nightly)".to_string())),
+            ]
+        );
+        assert_eq!(
+            labeled_inputs(&files, &[]).unwrap(),
+            vec![(PathBuf::from("core.json"), None)]
+        );
+        for bad in ["nolabel", "=v.json", " =v.json", "label="] {
+            let err = labeled_inputs(&files, &[label(bad)]).unwrap_err().to_string();
+            assert!(err.contains("expected LABEL=FILE"), "{bad}: {err}");
+        }
+        let twice = labeled_inputs(&files, &[label("a=core.json"), label("b=core.json")]);
+        assert!(twice.unwrap_err().to_string().contains("has a label already"));
+    }
 
     #[test]
     fn durations_take_ms_s_or_bare_seconds() {

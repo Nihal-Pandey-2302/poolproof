@@ -10,10 +10,12 @@ struct Column<'a> {
     label: String,
 }
 
+/// Labeled reports (`report --label`) come after the others, in the order given.
 fn columns(reports: &[Report]) -> Vec<Column<'_>> {
     let several = reports.len() > 1;
-    reports
-        .iter()
+    let unlabeled = reports.iter().filter(|r| r.label.is_none());
+    unlabeled
+        .chain(reports.iter().filter(|r| r.label.is_some()))
         .flat_map(|report| {
             report.targets.iter().map(move |target| {
                 let pg = target.postgres.as_deref().unwrap_or("?");
@@ -34,6 +36,19 @@ fn scenarios(reports: &[Report]) -> Vec<&ScenarioInfo> {
     all.sort_by(|a, b| a.name.cmp(&b.name));
     all.dedup_by(|a, b| a.name == b.name);
     all
+}
+
+/// Text from the command line, made inert in Markdown: no emphasis, links, code or
+/// HTML.
+fn escape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for ch in text.chars() {
+        if "\\`*_[]<>|#!~".contains(ch) {
+            out.push('\\');
+        }
+        out.push(ch);
+    }
+    out
 }
 
 /// For a scenario with a precondition, (runs that met it, runs in all), when there's
@@ -92,6 +107,21 @@ pub fn markdown(reports: &[Report]) -> String {
             let _ = write!(out, " {cell}{runs}{pre} |");
         }
         out.push('\n');
+    }
+
+    // Which columns each label covers.
+    let mut labels: Vec<(&str, Vec<&str>)> = Vec::new();
+    for c in &columns {
+        let Some(label) = c.report.label.as_deref() else {
+            continue;
+        };
+        match labels.iter_mut().find(|(l, _)| *l == label) {
+            Some((_, cols)) => cols.push(&c.label),
+            None => labels.push((label, vec![&c.label])),
+        }
+    }
+    for (label, cols) in &labels {
+        let _ = write!(out, "\n{}: {}.\n", escape(label), cols.join(", "));
     }
 
     // "built-in" without the poolproof version, so a version bump doesn't change RESULTS.md.
