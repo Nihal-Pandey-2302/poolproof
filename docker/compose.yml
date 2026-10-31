@@ -10,10 +10,26 @@ name: poolproof
 # throwaway: tmpfs instead, which is faster too. Both paths, so neither 17's VOLUME
 # (/var/lib/postgresql/data) nor 18's (/var/lib/postgresql) gets a volume. With a mount
 # at the old path, 18 starts only if PGDATA points there, so services that run Postgres
-# set PGDATA to it on every version.
+# set PGDATA to it on every version. Capped, so a runaway run can't fill RAM; Postgres
+# then fails with "No space left on device", which shows up as ERROR verdicts.
 x-postgres-tmpfs: &postgres-tmpfs
-  - /var/lib/postgresql
-  - /var/lib/postgresql/data
+  - /var/lib/postgresql:size=64m
+  - /var/lib/postgresql/data:size=1g
+
+# WAL is what grows: max_wal_size defaults to 1 GB, which a full run reached. Durability
+# means nothing on tmpfs, and none of these settings changes a query's result.
+x-postgres-command: &postgres-command
+  - postgres
+  - -c
+  - max_wal_size=128MB
+  - -c
+  - min_wal_size=32MB
+  - -c
+  - full_page_writes=off
+  - -c
+  - fsync=off
+  - -c
+  - synchronous_commit=off
 
 x-pgbouncer: &pgbouncer
   volumes:
@@ -91,6 +107,7 @@ services:
       POSTGRES_DB: app
       PGDATA: /var/lib/postgresql/data
     tmpfs: *postgres-tmpfs
+    command: *postgres-command
     ports:
       - "127.0.0.1:${PP_PORT_55432:-55432}:5432"
     healthcheck:
@@ -191,6 +208,7 @@ services:
       POSTGRES_PASSWORD: postgres
       PGDATA: /var/lib/postgresql/data
     tmpfs: *postgres-tmpfs
+    command: *postgres-command
     volumes:
       - ./supavisor/init.sh:/docker-entrypoint-initdb.d/init.sh:ro
     healthcheck:
