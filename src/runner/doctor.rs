@@ -258,8 +258,11 @@ async fn exact_reset(target: &Target, yes: bool, t: &Timeouts) -> Check {
     let n = target.pool_size.unwrap_or_default();
     let exact = Exact::new(target.pooler.clone(), target.direct.clone(), n);
     match exact.check_start(t).await {
-        Ok(detail) => Check::new("reset", Status::Ok, format!("exact: {detail}"))
-            .public(format!("exact: held {n} transactions, client {} waited", n + 1)),
+        Ok(detail) => Check::new("reset", Status::Ok, format!("exact: {detail}")).public(format!(
+            "exact: held {}, client {} waited",
+            super::exact::transactions(n as usize),
+            n + 1
+        )),
         Err(e) => fail(format!("exact: {e:#}")).public("exact: the pool check failed"),
     }
 }
