@@ -205,11 +205,9 @@ fn requirements(target: &Target, scenarios: &[Scenario], have: Privileges) -> Ch
     Check::new("privileges", Status::Warn, detail)
 }
 
-/// What reset would do, and whether the direct user can end those sessions. For a
-/// backend of a role whose privileges this user doesn't have, pg_terminate_backend
-/// needs pg_signal_backend, and the reset's own filter needs pg_read_all_stats:
-/// without it pg_stat_activity hides that backend's type and address, so it never
-/// matches. Only a superuser can end a superuser's backends, whatever else it has.
+/// What reset would do. resolve_reset refuses one that can't end the pooler's
+/// sessions (a FAIL here). For `all`, other sessions this user can't end are a WARN:
+/// the reset leaves them, with whatever they hold.
 async fn reset(
     target: &Target,
     yes: bool,
@@ -237,58 +235,47 @@ async fn reset(
         }
         Reset::All | Reset::Auto => resolve_reset(target, yes, t).await,
     };
-    let missing: Vec<&str> = [
-        (have.pg_signal_backend, "pg_signal_backend"),
-        (have.pg_read_all_stats, "pg_read_all_stats"),
-    ]
-    .into_iter()
-    .filter(|(has, _)| !has && !have.superuser)
-    .map(|(_, name)| name)
-    .collect();
-    let missing = missing.join(" and ");
-
     if let Reset::All = target.reset {
-        let counts = row(
-            direct,
-            &format!(
-                "SELECT ({OTHER_SESSIONS_COUNT}), ({OTHER_SESSIONS_COUNT} AND usesysid IS NOT NULL \
-                 AND NOT pg_has_role(current_user, usesysid, 'USAGE')), \
-                 ({OTHER_SESSIONS_COUNT} AND usesysid IN (SELECT oid FROM pg_roles WHERE rolsuper))"
-            ),
-            t,
-        )
-        .await;
-        let (total, others, superusers) = match counts {
-            Ok(r) => (cell(&r, 0), cell(&r, 1), cell(&r, 2)),
+        let line = match line {
+            Ok((_, line)) => line,
+            Err(ResetRefusal::CantEnd { text, public }) => {
+                return fail(format!("all: {text}")).public(format!("all: {public}"));
+            }
+            Err(reason @ ResetRefusal::CantTell(_)) => return fail(format!("all: {reason}")).public("all: refused"),
+            Err(reason @ ResetRefusal::NeedsYes(_)) => {
+                let now = match other_sessions(direct, have, t).await {
+                    Ok(left) => format!("other sessions now: {}", left.total),
+                    Err(e) => return query_failed(e),
+                };
+                return Check::new("reset", Status::Warn, format!("all: {reason}; {now}")).public(format!(
+                    "all: run needs --yes for a Postgres that isn't on this machine; {now}"
+                ));
+            }
+        };
+        let left = match other_sessions(direct, have, t).await {
+            Ok(left) => left,
             Err(e) => return query_failed(e),
         };
-        let now = format!("other sessions now: {total}");
-        // Privileges first: once those are fine, the only refusal left is `run --yes`.
-        if superusers != "0" && !have.superuser {
-            return fail(format!(
-                "all: {superusers} of the {total} other sessions belong to superusers, and only a superuser can \
-                 end them"
-            ));
+        let which = if have.superuser { "" } else { " that this user may end" };
+        let public = format!(
+            "all: ends every other session{which} on the database; other sessions now: {}",
+            left.total
+        );
+        let text = format!("{}; other sessions now: {}", summary(&line), left.total);
+        if left.unreachable == "0" {
+            return Check::new("reset", Status::Ok, text).public(public);
         }
-        if others != "0" && !missing.is_empty() {
-            return fail(format!(
-                "all: {others} of the {total} other sessions belong to roles whose sessions this user can't end \
-                 without {missing}"
-            ));
-        }
-        return match line {
-            Err(ResetRefusal::CantEnd { text, public }) => {
-                fail(format!("all: {text}")).public(format!("all: {public}"))
-            }
-            Err(reason @ ResetRefusal::NeedsYes(_)) => {
-                Check::new("reset", Status::Warn, format!("all: {reason}; {now}")).public(format!(
-                    "all: run needs --yes for a Postgres that isn't on this machine; {now}"
-                ))
-            }
-            Err(reason @ ResetRefusal::CantTell(_)) => fail(format!("all: {reason}")).public("all: refused"),
-            Ok((_, line)) => Check::new("reset", Status::Ok, format!("{}; {now}", summary(&line)))
-                .public(format!("all: ends every other session on the database; {now}")),
+        // Not the pooler's (resolve_reset checked those), but whatever they hold stays.
+        let superusers = match left.superusers.as_str() {
+            "0" => String::new(),
+            n => format!(" ({n} superusers')"),
         };
+        let stays = format!(
+            "but {} of the {} other sessions belong to roles this user can't end{superusers}; reset leaves them, \
+             and anything they hold (locks, pp_* objects) can change results",
+            left.unreachable, left.total
+        );
+        return Check::new("reset", Status::Warn, format!("{text}; {stays}")).public(format!("{public}; {stays}"));
     }
 
     let line = match line {
@@ -301,53 +288,55 @@ async fn reset(
                 .public("auto: refused: reset = \"auto\" can't tell the pooler's sessions apart");
         }
     };
+    // resolve_reset already checked that this user can end the pooler's sessions.
     let (Some(Some(addr)), Some(Some(user))) = (
         pooler_session.and_then(|r| r.first()),
         pooler_session.and_then(|r| r.get(1)),
     ) else {
         return Check::new("reset", Status::Ok, summary(&line)).public(AUTO_PUBLIC);
     };
-    let sql = format!(
-        "SELECT ({OTHER_SESSIONS_COUNT} AND host(client_addr) = $1 AND usename = $2)::text, \
-         pg_has_role(current_user, $2, 'USAGE')::text, \
-         coalesce((SELECT rolsuper FROM pg_roles WHERE rolname = $2), false)::text"
-    );
-    let checked = timeout(t.housekeeping, direct.query_one(&sql, &[addr, user])).await;
-    let (count, member, superuser) = match checked {
-        Ok(Ok(r)) => (
-            r.get::<_, String>(0),
-            r.get::<_, String>(1) == "true",
-            r.get::<_, String>(2) == "true",
-        ),
+    let sql = format!("SELECT ({OTHER_SESSIONS_COUNT} AND host(client_addr) = $1 AND usename = $2)::text");
+    let count = match timeout(t.housekeeping, direct.query_one(&sql, &[addr, user])).await {
+        Ok(Ok(r)) => r.get::<_, String>(0),
         Ok(Err(e)) => return query_failed(e.into()),
         Err(elapsed) => {
             return query_failed(anyhow::Error::from(elapsed).context(format!("no reply within {:?}", t.housekeeping)));
         }
     };
-    if superuser && !have.superuser {
-        return fail(format!(
-            "{}, but {user} is a superuser, and only a superuser can end its sessions",
-            summary(&line)
-        ))
-        .public(format!(
-            "{AUTO_PUBLIC}, but that user is a superuser, and only a superuser can end its sessions"
-        ));
-    }
-    if !member && !missing.is_empty() {
-        return fail(format!(
-            "{}, but this user can't end sessions of {user} without {missing}",
-            summary(&line)
-        ))
-        .public(format!(
-            "{AUTO_PUBLIC}, but this user can't end that user's sessions without {missing}"
-        ));
-    }
     Check::new(
         "reset",
         Status::Ok,
         format!("{}; matching sessions now: {count}", summary(&line)),
     )
     .public(format!("{AUTO_PUBLIC}; matching sessions now: {count}"))
+}
+
+/// The other sessions on the database, and how many of them `reset = "all"` leaves:
+/// those of roles this user has no privileges of, unless it has pg_signal_backend and
+/// pg_read_all_stats (without which their backend_type is hidden and the reset never
+/// matches them), and always those of superusers. A superuser leaves none.
+struct OtherSessions {
+    total: String,
+    unreachable: String,
+    superusers: String,
+}
+
+async fn other_sessions(direct: &Client, have: Privileges, t: &Timeouts) -> Result<OtherSessions> {
+    let can_end_others = have.pg_signal_backend && have.pg_read_all_stats;
+    let foreign =
+        format!("{OTHER_SESSIONS_COUNT} AND usesysid IS NOT NULL AND NOT pg_has_role(current_user, usesysid, 'USAGE')");
+    let superuser = "usesysid IN (SELECT oid FROM pg_roles WHERE rolsuper)";
+    let sql = format!(
+        "SELECT ({OTHER_SESSIONS_COUNT}), ({foreign} AND (NOT {can_end_others} OR {superuser})), \
+         ({foreign} AND {superuser})"
+    );
+    let r = row(direct, &sql, t).await?;
+    let none = || "0".to_string();
+    Ok(OtherSessions {
+        total: cell(&r, 0),
+        unreachable: if have.superuser { none() } else { cell(&r, 1) },
+        superusers: if have.superuser { none() } else { cell(&r, 2) },
+    })
 }
 
 /// "<what> failed: <class>", the JSON form of an error.
@@ -485,6 +474,67 @@ mod tests {
                 )
             );
         }
+    }
+
+    /// A direct user that isn't a superuser, and a pooler connecting as a role this user
+    /// has the privileges of, so resolve_reset accepts "all". `count` answers the
+    /// other-sessions query: total, how many reset leaves, how many are superusers'.
+    async fn all_reset_with(count: fn(&str) -> Vec<Option<&'static str>>) -> Check {
+        use super::super::pg::tests::{answering, target};
+        let t = Timeouts::default();
+        let port = answering(count).await;
+        let target = target(port, Reset::All);
+        let (client, _driver, _) = connect(&target.direct, &t).await.unwrap();
+        let plain = Privileges {
+            superuser: false,
+            createrole: false,
+            pg_signal_backend: false,
+            pg_read_all_stats: false,
+        };
+        reset(&target, false, plain, &client, None, &t).await
+    }
+
+    fn pooler_reachable(sql: &str) -> Option<Vec<Option<&'static str>>> {
+        if sql.contains("rolcreaterole") {
+            Some(vec![Some("f"), Some("f"), Some("f"), Some("f")])
+        } else if sql.contains("WHERE rolname = E'app'") {
+            Some(vec![Some("f"), Some("t"), Some("plain")])
+        } else if sql.contains("session_user") {
+            Some(vec![Some("app")])
+        } else {
+            None
+        }
+    }
+
+    #[tokio::test]
+    async fn all_says_which_sessions_a_plain_user_ends() {
+        let check =
+            all_reset_with(|sql| pooler_reachable(sql).unwrap_or_else(|| vec![Some("3"), Some("0"), Some("0")])).await;
+        assert_eq!(check.status, Status::Ok, "{}", check.detail);
+        assert!(
+            check
+                .detail
+                .contains(" that this user may end on database app at 127.0.0.1:"),
+            "{}",
+            check.detail
+        );
+        assert_eq!(
+            check.public.as_deref(),
+            Some("all: ends every other session that this user may end on the database; other sessions now: 3")
+        );
+    }
+
+    #[tokio::test]
+    async fn all_warns_about_sessions_it_leaves() {
+        let check =
+            all_reset_with(|sql| pooler_reachable(sql).unwrap_or_else(|| vec![Some("3"), Some("2"), Some("1")])).await;
+        assert_eq!(check.status, Status::Warn, "{}", check.detail);
+        let stays = "but 2 of the 3 other sessions belong to roles this user can't end (1 superusers'); reset leaves \
+                     them, and anything they hold (locks, pp_* objects) can change results";
+        assert!(check.detail.ends_with(stays), "{}", check.detail);
+        let public = check.public.unwrap();
+        assert!(public.ends_with(stays), "{public}");
+        assert!(!public.contains("127.0.0.1") && !public.contains("app"), "{public}");
     }
 
     #[test]
