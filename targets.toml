@@ -82,20 +82,20 @@ name = "pgcat-1.2.0"
 product = "pgcat"
 version = "1.2.0"
 config = "default"
-pooler = "postgres://postgres:postgres@127.0.0.1:56481/app"
-direct = "postgres://postgres:postgres@127.0.0.1:55432/app"
+pooler = "postgres://postgres:postgres@127.0.0.1:56481/app?sslmode=disable"
+direct = "postgres://postgres:postgres@127.0.0.1:55432/app?sslmode=disable"
 mode = "transaction"
-reset = ["SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'"]
+reset = "all"
 
 [[target]]
 name = "odyssey-1.5.2"
 product = "odyssey"
 version = "1.5.2"
 config = "default"
-pooler = "postgres://postgres:postgres@127.0.0.1:56491/app"
-direct = "postgres://postgres:postgres@127.0.0.1:55432/app"
+pooler = "postgres://postgres:postgres@127.0.0.1:56491/app?sslmode=disable"
+direct = "postgres://postgres:postgres@127.0.0.1:55432/app?sslmode=disable"
 mode = "transaction"
-reset = ["SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'"]
+reset = "all"
 
 # Supavisor finds the tenant from the user name: <user>.<tenant>.
 [[target]]
