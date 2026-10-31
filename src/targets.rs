@@ -61,10 +61,18 @@ impl Reset {
 
 /// `reset` as written: "auto", "all", or a list of statements.
 #[derive(Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(untagged)]
 enum ResetFile {
+    #[cfg_attr(test, schemars(extend("enum" = ["auto", "all"])))]
     Kind(String),
     Statements(Vec<String>),
+}
+
+/// The targets file's JSON Schema, for `schemas/`.
+#[cfg(test)]
+pub(crate) fn file_schema() -> schemars::Schema {
+    schemars::schema_for!(TargetsFile)
 }
 
 /// A SQL statement to run on Postgres. Errors show it as written, with `${NAME}`
@@ -122,6 +130,7 @@ impl fmt::Debug for Statement {
 
 /// A target as written in the file, before `${VAR}` substitution and URL parsing.
 #[derive(Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct TargetsFile {
     #[serde(rename = "target")]
@@ -129,6 +138,7 @@ struct TargetsFile {
 }
 
 #[derive(Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct TargetFile {
     name: String,

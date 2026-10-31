@@ -229,6 +229,15 @@ format than it reads. In these formats, a progress line per result goes to stder
 output is colored on a terminal unless `NO_COLOR` is set; `FORCE_COLOR` or
 `CLICOLOR_FORCE` colors it anywhere.
 
+JSON Schemas for the report, scenario files and targets files are published at
+`https://nihal-pandey-2302.github.io/poolproof/schemas/v1/` as `report.schema.json`,
+`scenario.schema.json` and `targets.schema.json`. A report names its schema in `$schema`,
+so editors validate it. For a TOML file, put `#:schema` and the schema's URL on the first
+line, and Even Better TOML (taplo) checks it as you type and shows what each field means.
+This repo's `.taplo.toml` does that for its own scenarios and targets files. The schemas
+check the shape of a file, not the rules poolproof applies when it loads one: one action
+per step, unique names, `execute` after `prepare`, one side per client.
+
 Scenarios create and drop their own objects (prefixed `pp_`), so use a scratch database.
 That matters even more with `reset = "all"`, which kills every session on it.
 `--reverse` runs the scenarios in reverse order; verdicts should not change.

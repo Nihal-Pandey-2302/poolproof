@@ -12,6 +12,8 @@ use crate::scenario::PoolMode;
 pub mod compare;
 mod html;
 mod markdown;
+#[cfg(test)]
+mod schema;
 
 pub use html::html;
 pub use markdown::markdown;
@@ -20,10 +22,21 @@ pub use markdown::markdown;
 /// change would make an older poolproof misread a report; a new optional field doesn't.
 pub const SCHEMA_VERSION: u32 = 1;
 
+/// Where the JSON Schemas are published (the site, from `schemas/`). `v1` follows
+/// SCHEMA_VERSION.
+pub const SCHEMAS_URL: &str = "https://nihal-pandey-2302.github.io/poolproof/schemas/v1";
+
+/// The report's JSON Schema, which `run` names in `$schema` so editors validate it.
+pub const REPORT_SCHEMA: &str = "https://nihal-pandey-2302.github.io/poolproof/schemas/v1/report.schema.json";
+
 /// Self-describing results of one `run`. Connection URLs are left out because they
 /// hold credentials.
 #[derive(Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 pub struct Report {
+    /// The report's JSON Schema. Missing in reports from before it was recorded.
+    #[serde(rename = "$schema", default, skip_serializing_if = "Option::is_none")]
+    pub schema: Option<String>,
     /// Reports from before it was recorded are version 1.
     #[serde(default = "one")]
     pub schema_version: u32,
@@ -41,6 +54,7 @@ pub struct Report {
 }
 
 #[derive(Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 pub struct TargetInfo {
     pub name: String,
     pub product: Option<String>,
@@ -56,6 +70,7 @@ pub struct TargetInfo {
 }
 
 #[derive(Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 pub struct ScenarioInfo {
     pub name: String,
     pub description: String,
@@ -67,6 +82,7 @@ pub struct ScenarioInfo {
 }
 
 #[derive(Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 pub struct ResultRow {
     pub target: String,
     pub scenario: String,
@@ -116,6 +132,7 @@ fn rfc3339(secs: u64) -> String {
 }
 
 #[derive(Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 pub struct StepOutcomes {
     pub postgres: Outcome,
     pub pooler: Outcome,
