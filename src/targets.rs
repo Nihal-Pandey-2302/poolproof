@@ -763,7 +763,9 @@ mod tests {
         // Several poolers share the test bed's Postgres, so one pooler's leak can only
         // be cleared by ending every session, not just that pooler's.
         // Loads without a test bed: the TLS target's CA file is only read when connecting.
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("targets.toml");
+        let Some(path) = crate::repo_file("targets.toml") else {
+            return;
+        };
         let targets = Targets::load(&path).unwrap();
         assert!(targets.targets.iter().all(|t| matches!(t.reset, Reset::All)));
     }

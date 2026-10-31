@@ -149,7 +149,7 @@
           ]
         },
         "send": {
-          "description": "Write these protocol messages directly (e.g. `parse s1 SELECT 1`, `bind - s1`,\n`execute -`, `sync`) and record every reply. A client that uses `send` talks\nraw protocol for its whole life; `disconnect` is its only other step.",
+          "description": "Write these protocol messages directly (e.g. `parse s1 SELECT 1`, `bind - s1`,\n`execute -`, `sync`) and record every reply. A client that uses `send` talks\nraw protocol for its whole life; `evidence` and `disconnect` are its only other steps.",
           "items": {
             "type": "string"
           },

@@ -279,7 +279,8 @@ fn bundled_scenarios_and_targets_files_match() {
         check("scenario.schema.json", &value).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     }
     for path in ["targets.toml", "selftest/targets.toml"] {
-        let text = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(path)).unwrap();
+        let Some(file) = crate::repo_file(path) else { continue };
+        let text = std::fs::read_to_string(file).unwrap();
         check("targets.schema.json", &toml_value(&text)).unwrap_or_else(|e| panic!("{path}: {e}"));
     }
 }

@@ -165,9 +165,8 @@ struct SuiteArgs {
     /// With --pooler: the pooler's mode.
     #[arg(long, value_enum, default_value_t = PoolMode::Transaction)]
     mode: PoolMode,
-    /// With --pooler: what to run on --direct before every run. `auto` ends only
-    /// the pooler's own sessions; `all` ends every other session on the database.
-    /// Without it, nothing is reset.
+    /// With --pooler: what to run on --direct before every run. Without it, nothing
+    /// is reset. A targets file's `reset` can also be a list of your own statements.
     #[arg(long, value_enum, requires = "pooler")]
     reset: Option<ResetArg>,
     /// With --pooler: the pooler's pool size for this database and user, as
@@ -257,7 +256,11 @@ enum DoctorFormat {
 /// `run --reset`.
 #[derive(Clone, Copy, clap::ValueEnum)]
 pub enum ResetArg {
+    /// End the sessions of the pooler's user from the pooler's address; refused when
+    /// the pooler connects from poolproof's own address.
     Auto,
+    /// End every other session on the database; needs --yes unless Postgres runs on
+    /// this machine.
     All,
     /// End only the pooler's own server connections; needs --pool-size.
     Exact,
@@ -274,7 +277,8 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
             if reverse {
                 scenarios.reverse();
             }
-            run_suite(suite, &scenarios, &scenarios).await
+            let targets = suite.load_targets()?;
+            run_suite(suite, targets, &scenarios, &scenarios).await
         }
         Command::Drivers { suite, drivers } => {
             let scenarios = crate::drivers::scenarios(&drivers)?;
@@ -283,11 +287,13 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
             } else {
                 drivers
             };
+            // A missing targets file is the more basic mistake, so it's reported first.
+            let targets = suite.load_targets()?;
             crate::drivers::check_images(&selected)?;
             // Limitations name built-in scenarios, never driver cases, so they apply to
             // none here. A --limitations directory is checked against the built-in
             // scenarios too, so a pooler's own set loads as it does for `run`.
-            run_suite(suite, &scenarios, &scenario::bundled()?).await
+            run_suite(suite, targets, &scenarios, &scenario::bundled()?).await
         }
         Command::Scan {
             input,
@@ -424,17 +430,11 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
 /// `checked_against`.
 async fn run_suite(
     suite: SuiteArgs,
+    targets: Targets,
     scenarios: &[scenario::Scenario],
     checked_against: &[scenario::Scenario],
 ) -> Result<ExitCode> {
     let SuiteArgs {
-        targets,
-        pooler,
-        direct,
-        mode,
-        reset,
-        pool_size,
-        ignore_server_requirements,
         yes,
         filter,
         only,
@@ -446,11 +446,8 @@ async fn run_suite(
         compare_to,
         ignore_expected,
         limitations,
+        ..
     } = suite;
-    let mut targets = load_targets(&targets, pooler, direct, mode, reset, pool_size)?;
-    if ignore_server_requirements {
-        targets.targets[0].ignore_server_requirements = true;
-    }
     // Before the run, so a bad baseline fails fast.
     let mut baseline = compare_to.as_deref().map(report::Report::load).transpose()?;
     if let Some(baseline) = &baseline {
@@ -666,6 +663,24 @@ fn labeled_inputs(files: &[PathBuf], labels: &[String]) -> Result<Vec<(PathBuf, 
     Ok(inputs)
 }
 
+impl SuiteArgs {
+    /// The targets file, or the one target `--pooler` and `--direct` describe.
+    fn load_targets(&self) -> Result<Targets> {
+        let mut targets = load_targets(
+            &self.targets,
+            self.pooler.clone(),
+            self.direct.clone(),
+            self.mode,
+            self.reset,
+            self.pool_size,
+        )?;
+        if self.ignore_server_requirements {
+            targets.targets[0].ignore_server_requirements = true;
+        }
+        Ok(targets)
+    }
+}
+
 /// The targets file, or the one target `--pooler` and `--direct` describe.
 fn load_targets(
     file: &std::path::Path,
@@ -690,6 +705,10 @@ fn load_targets(
             let mut targets = Targets::single(&pooler, &direct, mode, reset)?;
             targets.targets[0].pool_size = pool_size;
             Ok(targets)
+        }
+        // What a new user types first, outside the repository.
+        _ if file == std::path::Path::new("targets.toml") && !file.exists() => {
+            anyhow::bail!("no targets.toml here: pass --targets FILE, or --pooler URL --direct URL for one pooler")
         }
         _ => Targets::load(file),
     }

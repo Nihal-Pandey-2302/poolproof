@@ -162,7 +162,7 @@ pub struct Step {
     pub notifications: bool,
     /// Write these protocol messages directly (e.g. `parse s1 SELECT 1`, `bind - s1`,
     /// `execute -`, `sync`) and record every reply. A client that uses `send` talks
-    /// raw protocol for its whole life; `disconnect` is its only other step.
+    /// raw protocol for its whole life; `evidence` and `disconnect` are its only other steps.
     pub send: Option<Vec<String>>,
     /// With `send`: record ParameterStatus replies too and compare them, ignoring where
     /// in the reply they come. For poolers that drop or fake them, e.g. after a SET.
