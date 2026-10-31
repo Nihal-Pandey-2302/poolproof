@@ -1,0 +1,31 @@
+name = "set-local-default-after-set-local"
+description = "SET LOCAL ... TO DEFAULT after an earlier SET LOCAL in the same transaction, then COMMIT, must leave the session value."
+refs = ["https://github.com/pgdogdev/pgdog/issues/1770"]
+
+[[step]]
+client = "a"
+simple = "SET statement_timeout = '5s'"
+
+[[step]]
+client = "a"
+simple = "BEGIN"
+
+[[step]]
+client = "a"
+simple = "SET LOCAL statement_timeout = '1s'"
+
+[[step]]
+client = "a"
+simple = "SET LOCAL statement_timeout TO DEFAULT"
+
+[[step]]
+client = "a"
+simple = "SHOW statement_timeout"
+
+[[step]]
+client = "a"
+simple = "COMMIT"
+
+[[step]]
+client = "a"
+simple = "SHOW statement_timeout"
