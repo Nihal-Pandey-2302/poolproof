@@ -234,6 +234,7 @@ fn check(statements: &[&NodeEnum], scoped: &[String]) -> Vec<Hit> {
                         "role" | "session_authorization" => Some(vec![
                             "set-role-isolated-between-clients",
                             "set-role-reset-after-pinned-disconnect",
+                            "set-role-reset-after-temp-table-disconnect",
                             "set-survives-server-change",
                         ]),
                         "search_path" => Some(vec![
@@ -1053,6 +1054,7 @@ mod tests {
             vec![
                 "set-role-isolated-between-clients",
                 "set-role-reset-after-pinned-disconnect",
+                "set-role-reset-after-temp-table-disconnect",
                 "set-survives-server-change"
             ]
         );
@@ -1372,6 +1374,7 @@ mod tests {
             vec![
                 "set-role-isolated-between-clients",
                 "set-role-reset-after-pinned-disconnect",
+                "set-role-reset-after-temp-table-disconnect",
                 "set-survives-server-change"
             ]
         );
