@@ -100,7 +100,14 @@ mod tests {
     fn long_probe_details_are_cut_in_the_column_tooltip_only() {
         assert!(TEMPLATE.contains("const probe = probeText(c.t, 120);"));
         assert!(TEMPLATE.contains("probeText(c.t) ? el(\"p\", {}, probeText(c.t)) : null"));
-        assert!(TEMPLATE.contains(r#"text.slice(0, max - 1) + "…""#));
+        // Code points, not UTF-16 units: an emoji at the cut stays whole. (Checked with a
+        // run of clip() on 118 letters and an emoji; this pins the code that counts.)
+        assert!(
+            TEMPLATE.contains(
+                r#"const cs = [...text]; return cs.length > max ? cs.slice(0, max - 1).join("") + "…" : text;"#
+            )
+        );
+        assert!(!TEMPLATE.contains("text.slice("));
     }
 
     #[test]
