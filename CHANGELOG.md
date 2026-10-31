@@ -61,8 +61,18 @@ First release.
   makes the target ERROR. Scenarios can require `one_server_connection` or
   `several_server_connections`, and session pools of one skip scenarios that need two
   connections at once. `doctor` shows the second probe as "server connections".
+  `ignore_server_requirements = true` on a target (`run --ignore-server-requirements`
+  with `--pooler`) runs those scenarios anyway, for Postgres standing in for its own
+  pooler.
 - Scenario steps can be a `precondition`: a boolean query that decides whether a run
-  through the pooler counts.
+  through the pooler counts. Reports say in how many runs it held ("pass (precondition
+  1/5)"), and the HTML trace marks steps that never ran and why. The HTML report shows
+  what the pool probes saw.
+- `poolproof drivers`: runs small programs for real drivers (psycopg 3, pgx,
+  node-postgres, pgjdbc) through each target, with each driver's defaults and with the
+  settings its docs give for poolers, and compares every step with the same program
+  against Postgres. Each driver runs in a pinned container (needs Docker). It takes the
+  same flags as `run`. Results on Postgres 17.11 are in DRIVERS.md.
 - Documented limitations (`limitations/<product>.toml`): a FAIL that exactly matches a
   limitation in the pooler's own docs is marked expected, with the doc link and quote.
   It stays a FAIL. Entries that no longer match are reported as stale.
