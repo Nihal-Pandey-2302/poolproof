@@ -20,6 +20,7 @@ src/main.rs              entry point: SIGPIPE, exit code 2 on error
 src/lib.rs               the modules below, as a library for tests/ (no stable API)
 src/cli.rs               clap commands and flags; wires the modules together
 src/scenario.rs          scenario TOML format: Scenario, Step, Action, Compare, PoolMode
+src/doctor.rs            `doctor`: the checks, their order and output (text and JSON)
 src/targets.rs           targets TOML format, and the single target from --pooler/--direct;
                          Endpoint (a parsed URL: ${VAR}, password sources, sslmode, one
                          host only; prints without the password), Reset
@@ -36,11 +37,15 @@ src/runner/
                          (socket options, TLS, drain on close), cancel, wait_ready after a
                          reset, privileges, resolve_reset, server version
   raw.rs                 raw protocol clients for `send` steps
+  doctor.rs              the live side of `doctor`: connects to one target, read-only
   tls.rs                 sslmode and sslrootcert as in libpq (except prefer, which never
                          checks): one rustls config per Endpoint
   compare.rs             outcome matching, Verdict, Mismatch, FailKind (silent/error/hang)
 src/report/
-  mod.rs                 the JSON report, bundled results, lookups for scan --pooler
+  mod.rs                 the JSON report (schema_version), bundled results, lookups for
+                         scan --pooler
+  compare.rs             run --compare-to: regressions against a saved report
+  schema.rs              tests that keep schemas/v1 in sync with the Rust types
   markdown.rs            RESULTS.md-style table
   html.rs, report.html   the self-contained results page
 src/scan/
@@ -53,6 +58,8 @@ src/output/
   scan.rs, sarif.rs      `scan` results as text and SARIF (cli.rs prints JSON directly)
 scenarios/               one TOML file per scenario
 results/                 committed `run --format json` reports, one per Postgres version
+schemas/v1/              JSON Schemas for reports, scenario and targets files, generated from
+                         the Rust types and published with the site
 docker/compose.yml       the test bed: Postgres and every pooler version in the matrix
 targets.toml             the test bed's targets
 scripts/update-results.sh  regenerates results/ and RESULTS.md from a fresh test bed
@@ -60,6 +67,8 @@ scripts/testbed.sh       a second test bed with shifted ports, to run several si
 tools/pp-proxy/          self-test proxies (own crate, not shipped): a passthrough that must
                          pass every scenario, and fault injectors that must fail known ones
 selftest/expected.toml   the verdict each self-test target must get
+fuzz/                    cargo-fuzz targets for raw replies and `send` lines (own crate,
+                         not shipped, not in CI)
 ```
 
 ## How `run` works
@@ -76,7 +85,8 @@ cli ─ targets.toml or --pooler/--direct ─┐
                                                  `requires` -> SKIP
                                                  for each scenario:
                                                    [--check-scenarios: baseline twice,
-                                                    once per scenario and direct URL]
+                                                    once per scenario, direct URL and
+                                                    reset]
                                                    runner::check
                                                      1. reset, setup        (direct)
                                                      2. run_steps baseline  (all direct)
@@ -93,6 +103,8 @@ cli ─ targets.toml or --pooler/--direct ─┐
                                                -> text as it goes, or report::Report
                                                   -> JSON, markdown or HTML (progress
                                                   on stderr)
+                                               -> with --compare-to: report::compare
+                                                  against the saved report
 ```
 
 Details that matter when changing this:
@@ -170,7 +182,9 @@ report given with `--results`.
 | A targets file field | `targets.rs`, README's targets example |
 | Connections, TLS or socket options | `runner/pg.rs` (`connect`, `tcp_connect`), `runner/raw.rs` (`RawConn::connect`), `runner/tls.rs`, URL checks in `targets.rs` |
 | A privilege for `requires` | `scenario.rs` (the names), `privileges` in `runner/pg.rs`, `before_run` in `runner/suite.rs` |
-| A field in the JSON report | `report/mod.rs`; it's a stable format, see the versioning policy in CHANGELOG.md |
+| A field in the JSON report | `report/mod.rs`; it's a stable format, see the versioning policy in CHANGELOG.md. A change old readers would misread bumps `SCHEMA_VERSION` |
+| What `--compare-to` counts as a regression | `report/compare.rs` |
+| Any field of a report, scenario or targets file | also regenerate `schemas/v1` with `UPDATE_SCHEMAS=1 cargo test schema`; a test fails until it matches |
 | The results table or page | `report/markdown.rs`, `report/html.rs` and `report/report.html` |
 | A `scan` rule | `scan/rules.rs`, `RULES` and the rule -> scenario map in `scan/mod.rs`, README's rule list, expected findings in the corpus (`tests/fixtures/scan/*.toml`, run by `tests/scan_corpus.rs`) |
 | A `scan` input format | `scan/input.rs` (`InputFormat` is also the list of `--input` values) |
@@ -178,4 +192,5 @@ report given with `--results`.
 | A command or flag | `cli.rs`, README |
 | A pooler or version in the matrix | `docker/compose.yml`, `targets.toml` (with `product`, `version`, `config`), the version list in README.md, the Docker ignore list in `.github/dependabot.yml`, then regenerate `results/` |
 | A harness self-test fault | `tools/pp-proxy/src/fault.rs` (the fault and its name), `main.rs` (`PROXY_LISTEN` parsing) and `shared.rs` (the shared-server fault) there, the table in `tools/pp-proxy/README.md`, `selftest/expected.toml` |
+| A `doctor` check | `doctor.rs` (the check and its output), `runner/doctor.rs` (the queries); it must stay read-only |
 | CI or releases | `.github/workflows/`, `docs/releasing.md` |
