@@ -1,0 +1,15 @@
+# GitGuardian false positives. These are throwaway passwords, not secrets: the test
+# bed's Postgres password (local containers on 127.0.0.1 only) and a made-up password
+# in a unit test. Only these exact values are ignored, not whole files, so a real
+# secret in the same files is still reported.
+version: 2
+secret:
+  ignored_matches:
+    # PROXY_PASSWORD for the self-test proxy, in docker/compose.yml and ci.yml.
+    - name: test-bed postgres password
+      match: postgres
+    # src/targets.rs, password_precedence test: postgres://u:inline@h/db.
+    - name: unit test inline password
+      match: inline
+    - name: unit test connection URL
+      match: postgres://u:inline@h/db

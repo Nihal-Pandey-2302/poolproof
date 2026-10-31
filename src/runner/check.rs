@@ -1,13 +1,14 @@
 use std::time::Duration;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use tokio::time::{Instant, timeout};
 
 use super::compare::{FailKind, Mismatch, Verdict, baseline_failure};
-use super::pg::{connect, wait_ready};
+use super::pg::{connect, connect_with, wait_ready};
 use super::steps::run_steps;
 use super::{Outcome, Timeouts};
 use crate::scenario::Scenario;
+use crate::targets::{Endpoint, Statement};
 
 /// Start of the ERROR reason when a target's pooler URL doesn't answer before the run.
 /// The self-test matches on it, so keep it stable.
@@ -15,41 +16,56 @@ pub const POOLER_UNREACHABLE: &str = "target unreachable: pooler:";
 /// Same for the target's direct (plain Postgres) URL.
 pub const DIRECT_UNREACHABLE: &str = "target unreachable: direct:";
 
-async fn run_direct(url: &str, statements: &[String], t: &Timeouts) -> Result<()> {
+async fn run_direct(direct: &Endpoint, statements: &[Statement], t: &Timeouts) -> Result<()> {
     if statements.is_empty() {
         return Ok(());
     }
-    let (client, driver, _) = connect(url, t).await?;
-    let limits = format!(
+    // Waits for the backend to exit on close, so a setup that ends holding a lock or a
+    // temp table is fully gone before the steps start.
+    let (client, driver, _) = connect_with(direct, t, true).await?;
+    let limits = Statement::plain(&format!(
         "SET lock_timeout = '{}ms'; SET statement_timeout = '{}ms'",
         t.direct_lock.as_millis(),
         t.direct_statement.as_millis()
-    );
+    ));
     let mut res = execute(&client, &limits, t).await;
-    for sql in statements {
+    for s in statements {
         if res.is_err() {
             break;
         }
-        res = execute(&client, sql, t).await;
+        res = execute(&client, s, t).await;
     }
     // Close the session even after an error, so it's gone before the next phase
-    // (e.g. a failed setup's session while teardown runs).
+    // (e.g. a failed setup's session while teardown runs). The first error wins.
     drop(client);
-    let _ = timeout(t.housekeeping, driver).await;
-    res
+    let exited = timeout(t.housekeeping, driver).await.is_ok();
+    res?;
+    if !exited {
+        bail!("the backend did not exit within {:?} of the disconnect", t.housekeeping);
+    }
+    Ok(())
 }
 
-async fn execute(client: &tokio_postgres::Client, sql: &str, t: &Timeouts) -> Result<()> {
+/// Errors show the statement as written. The server's message can quote the executed
+/// text, so with substituted values only its SQLSTATE is kept.
+async fn execute(client: &tokio_postgres::Client, s: &Statement, t: &Timeouts) -> Result<()> {
     let limit = t.direct_statement + t.direct_grace;
-    match timeout(limit, client.batch_execute(sql)).await {
-        Ok(res) => res.with_context(|| format!("running `{sql}`")),
-        Err(_) => Err(anyhow!("running `{sql}`: no reply within {limit:?}")),
+    match timeout(limit, client.batch_execute(s.sql())).await {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(e)) if s.has_substitutions() => {
+            let code = e.code().map_or("an error without SQLSTATE", |c| c.code());
+            Err(anyhow!(
+                "running `{s}`: {code} (details hidden: the statement has substituted values)"
+            ))
+        }
+        Ok(Err(e)) => Err(anyhow::Error::from(e).context(format!("running `{s}`"))),
+        Err(_) => Err(anyhow!("running `{s}`: no reply within {limit:?}")),
     }
 }
 
 /// Connect and run `SELECT 1` once.
-async fn probe(url: &str, t: &Timeouts) -> Result<()> {
-    let (client, driver, _) = connect(url, t).await?;
+async fn probe(endpoint: &Endpoint, t: &Timeouts) -> Result<()> {
+    let (client, driver, _) = connect(endpoint, t).await?;
     let res = timeout(t.housekeeping, client.simple_query("SELECT 1")).await;
     drop(client);
     let _ = timeout(t.housekeeping, driver).await;
@@ -58,10 +74,10 @@ async fn probe(url: &str, t: &Timeouts) -> Result<()> {
 }
 
 /// Probe until it works or `within` has passed.
-async fn probe_until(url: &str, within: Duration, t: &Timeouts) -> Result<()> {
+async fn probe_until(endpoint: &Endpoint, within: Duration, t: &Timeouts) -> Result<()> {
     let deadline = Instant::now() + within;
     loop {
-        match probe(url, t).await {
+        match probe(endpoint, t).await {
             Ok(()) => return Ok(()),
             Err(e) if Instant::now() >= deadline => return Err(e.context(format!("no answer within {within:?}"))),
             Err(_) => tokio::time::sleep(Duration::from_millis(200)).await,
@@ -72,7 +88,7 @@ async fn probe_until(url: &str, within: Duration, t: &Timeouts) -> Result<()> {
 /// Check that a target's direct and pooler URLs both answer, before running any
 /// scenario on it. The error is the ERROR reason for each of its scenarios. A pooler
 /// gets a few tries: it may still be starting, or reconnecting after an earlier reset.
-pub async fn preflight(pooled: &str, direct: &str, t: &Timeouts) -> Result<(), String> {
+pub async fn preflight(pooled: &Endpoint, direct: &Endpoint, t: &Timeouts) -> Result<(), String> {
     probe(direct, t)
         .await
         .map_err(|e| format!("{DIRECT_UNREACHABLE} {e:#}"))?;
@@ -136,7 +152,14 @@ impl Run {
 
 /// One run of a scenario's steps with reset, setup and teardown around it. Teardown
 /// runs even when setup or a step fails.
-async fn run_once(scenario: &Scenario, pooled: &str, direct: &str, reset: &[String], side: Side, t: &Timeouts) -> Run {
+async fn run_once(
+    scenario: &Scenario,
+    pooled: &Endpoint,
+    direct: &Endpoint,
+    reset: &[Statement],
+    side: Side,
+    t: &Timeouts,
+) -> Run {
     let failed = |reason| Run {
         outcomes: Err(reason),
         teardown: Ok(()),
@@ -152,13 +175,13 @@ async fn run_once(scenario: &Scenario, pooled: &str, direct: &str, reset: &[Stri
     {
         return failed(format!("{e:#}"));
     }
-    let outcomes = match run_direct(direct, &scenario.setup, t).await {
+    let outcomes = match run_direct(direct, &Statement::plain_all(&scenario.setup), t).await {
         Ok(()) => run_steps(scenario, pooled, direct, t)
             .await
             .map_err(|e| format!("steps ({side}): {e:#}")),
         Err(e) => Err(format!("setup ({side}): {e:#}")),
     };
-    let teardown = run_direct(direct, &scenario.teardown, t)
+    let teardown = run_direct(direct, &Statement::plain_all(&scenario.teardown), t)
         .await
         .map_err(|e| format!("teardown ({side}): {e:#}"));
     Run { outcomes, teardown }
@@ -168,7 +191,13 @@ async fn run_once(scenario: &Scenario, pooled: &str, direct: &str, reset: &[Stri
 /// `reset` runs on `direct` before each run so state leaked on the pooler's server
 /// connections by an earlier scenario can't change this one's result. Anything that
 /// stops the comparison is a `Verdict::Error` for this scenario only.
-pub async fn check(scenario: &Scenario, pooled: &str, direct: &str, reset: &[String], t: &Timeouts) -> Checked {
+pub async fn check(
+    scenario: &Scenario,
+    pooled: &Endpoint,
+    direct: &Endpoint,
+    reset: &[Statement],
+    t: &Timeouts,
+) -> Checked {
     let expected = match run_once(scenario, direct, direct, reset, Side::Baseline, t).await.all() {
         Ok(expected) => expected,
         Err(reason) => return Checked::error(reason),
@@ -226,7 +255,12 @@ fn baseline_diff(scenario: &Scenario, first: &[Outcome], second: &[Outcome]) -> 
 /// timing, not the pooler, and the error says where. Back-to-back runs catch random
 /// values, clocks and pids in results; they don't catch effects of the order scenarios
 /// run in (`run --reverse` is for that).
-pub async fn deterministic(scenario: &Scenario, direct: &str, reset: &[String], t: &Timeouts) -> Result<(), String> {
+pub async fn deterministic(
+    scenario: &Scenario,
+    direct: &Endpoint,
+    reset: &[Statement],
+    t: &Timeouts,
+) -> Result<(), String> {
     let first = run_once(scenario, direct, direct, reset, Side::Baseline, t)
         .await
         .all()?;
@@ -287,7 +321,9 @@ mod tests {
 
     use super::*;
 
-    const CLOSED_PORT: &str = "postgres://x:y@127.0.0.1:1/app";
+    fn closed_port() -> Endpoint {
+        Endpoint::parse("postgres://x:y@127.0.0.1:1/app").unwrap()
+    }
 
     fn scenario(toml_text: &str) -> Scenario {
         toml::from_str(toml_text).unwrap()
@@ -303,7 +339,7 @@ mod tests {
     #[tokio::test]
     async fn unreachable_postgres_is_an_error_not_a_pass() {
         let s = scenario("name = 't'\ndescription = 't'\n[[step]]\nclient = 'a'\nsimple = 'SELECT 1'\n");
-        let checked = check(&s, CLOSED_PORT, CLOSED_PORT, &[], &Timeouts::default()).await;
+        let checked = check(&s, &closed_port(), &closed_port(), &[], &Timeouts::default()).await;
         let reason = reason(&checked);
         assert!(
             reason.starts_with("baseline failed at step 1: error CONNECT"),
@@ -316,7 +352,7 @@ mod tests {
         let s = scenario(
             "name = 't'\ndescription = 't'\nsetup = ['SELECT 1']\n[[step]]\nclient = 'a'\nsimple = 'SELECT 1'\n",
         );
-        let checked = check(&s, CLOSED_PORT, CLOSED_PORT, &[], &Timeouts::default()).await;
+        let checked = check(&s, &closed_port(), &closed_port(), &[], &Timeouts::default()).await;
         let reason = reason(&checked);
         assert!(reason.starts_with("setup (baseline): "), "{reason}");
     }
@@ -327,7 +363,7 @@ mod tests {
         let mut s = scenario("name = 't'\ndescription = 't'\nrepeat = 3\nstep = []\n");
         s.steps.clear();
         let started = Instant::now();
-        let checked = check(&s, CLOSED_PORT, CLOSED_PORT, &[], &Timeouts::default()).await;
+        let checked = check(&s, &closed_port(), &closed_port(), &[], &Timeouts::default()).await;
         assert!(matches!(checked.verdict, Verdict::Pass));
         assert!(
             started.elapsed() < Duration::from_secs(2),
@@ -405,6 +441,72 @@ mod tests {
         to.replace(&format!(":{}/", pg.get_ports()[0]), &format!(":{port}/"))
     }
 
+    /// A server that accepts any login, answers SET, and never answers anything else.
+    fn silent_server() -> Endpoint {
+        use std::io::{Read, Write};
+        fn message(tag: u8, body: &[u8]) -> Vec<u8> {
+            [&[tag][..], &(body.len() as u32 + 4).to_be_bytes(), body].concat()
+        }
+        fn serve(mut s: std::net::TcpStream) -> std::io::Result<()> {
+            let read = |s: &mut std::net::TcpStream, n: usize| -> std::io::Result<Vec<u8>> {
+                let mut buf = vec![0; n];
+                s.read_exact(&mut buf)?;
+                Ok(buf)
+            };
+            loop {
+                let len = u32::from_be_bytes(read(&mut s, 4)?.try_into().unwrap()) as usize;
+                // SSLRequest: refuse TLS, the startup message follows.
+                if read(&mut s, len - 4)? != [0x04, 0xd2, 0x16, 0x2f] {
+                    break;
+                }
+                s.write_all(b"N")?;
+            }
+            let ready = message(b'Z', b"I");
+            s.write_all(&[message(b'R', &[0; 4]), ready.clone()].concat())?;
+            loop {
+                let head = read(&mut s, 5)?;
+                let body = read(&mut s, u32::from_be_bytes(head[1..].try_into().unwrap()) as usize - 4)?;
+                if head[0] == b'X' {
+                    return Ok(());
+                }
+                if body.starts_with(b"SET ") {
+                    s.write_all(&[message(b'C', b"SET\0"), ready.clone()].concat())?;
+                }
+            }
+        }
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                std::thread::spawn(move || serve(stream));
+            }
+        });
+        Endpoint::parse(&format!("postgres://u@127.0.0.1:{port}/app")).unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_reset_with_substituted_values_that_times_out_is_shown_as_written() {
+        let t = Timeouts {
+            direct_statement: Duration::from_millis(200),
+            direct_grace: Duration::from_millis(100),
+            housekeeping: Duration::from_millis(500),
+            ..Timeouts::default()
+        };
+        let reset = Statement::substituted(
+            "ALTER ROLE app PASSWORD 'canary-1c9e'",
+            "ALTER ROLE app PASSWORD '${P}'",
+        );
+        let started = Instant::now();
+        let err = run_direct(&silent_server(), &[reset], &t).await.unwrap_err();
+        let err = format!("{err:#}");
+        assert_eq!(err, "running `ALTER ROLE app PASSWORD '${P}'`: no reply within 300ms");
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "took {:?}",
+            started.elapsed()
+        );
+    }
+
     /// A Postgres URL for tests that need a real server, e.g. a throwaway container.
     fn test_pg() -> String {
         std::env::var("POOLPROOF_TEST_PG").expect("set POOLPROOF_TEST_PG to a Postgres URL")
@@ -415,13 +517,19 @@ mod tests {
     async fn preflight_waits_for_a_pooler_that_is_still_starting() {
         let url = test_pg();
         let pooled = late_forwarder(url.clone(), Duration::from_secs(2)).await;
-        preflight(&pooled, &url, &Timeouts::default()).await.unwrap();
+        preflight(
+            &Endpoint::parse(&pooled).unwrap(),
+            &Endpoint::parse(&url).unwrap(),
+            &Timeouts::default(),
+        )
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
     #[ignore = "needs POOLPROOF_TEST_PG"]
     async fn teardown_blocked_by_a_held_lock_is_an_error() {
-        let url = test_pg();
+        let url = Endpoint::parse(&test_pg()).unwrap();
         let (holder, driver, _) = connect(&url, &Timeouts::default()).await.unwrap();
         // Separate queries: a BEGIN later in the same string would take the CREATE
         // into its transaction, and the table wouldn't exist for anyone else.
@@ -479,7 +587,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "needs POOLPROOF_TEST_PG"]
     async fn check_scenarios_flags_a_random_baseline() {
-        let url = test_pg();
+        let url = Endpoint::parse(&test_pg()).unwrap();
         let toml = |compare: &str| {
             scenario(&format!(
                 "name = 't'\ndescription = 't'\n[[step]]\nclient = 'a'\nsimple = 'SELECT random()'\ncompare = '{compare}'\n"
@@ -515,7 +623,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "needs POOLPROOF_TEST_PG"]
     async fn the_step_timeout_is_configurable() {
-        let url = test_pg();
+        let url = Endpoint::parse(&test_pg()).unwrap();
         let s = scenario("name = 't'\ndescription = 't'\n[[step]]\nclient = 'a'\nsimple = 'SELECT pg_sleep(2)'\n");
         let short = Timeouts {
             step: Duration::from_secs(1),
@@ -532,8 +640,27 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "needs POOLPROOF_TEST_PG"]
+    async fn send_steps_record_parameter_status_when_asked() {
+        let url = Endpoint::parse(&test_pg()).unwrap();
+        let s = scenario(
+            "name = 't'\ndescription = 't'\n[[step]]\nclient = 'a'\n\
+             send = [\"query SET application_name = 'pp_c10'\"]\ncompare_parameter_status = true\n",
+        );
+        let checked = check(&s, &url, &url, &[], &Timeouts::default()).await;
+        assert!(matches!(checked.verdict, Verdict::Pass));
+        let Outcome::Messages { messages } = &checked.steps[0].0 else {
+            panic!("expected send replies")
+        };
+        assert!(
+            messages.contains(&"ParameterStatus application_name=pp_c10".to_string()),
+            "{messages:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn preflight_names_the_unreachable_side() {
-        let reason = preflight(CLOSED_PORT, CLOSED_PORT, &Timeouts::default())
+        let reason = preflight(&closed_port(), &closed_port(), &Timeouts::default())
             .await
             .unwrap_err();
         assert!(reason.starts_with(DIRECT_UNREACHABLE), "{reason}");

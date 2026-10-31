@@ -8,13 +8,15 @@ use serde::{Deserialize, Serialize};
 mod check;
 mod compare;
 mod pg;
-pub mod raw;
+pub(crate) mod raw;
 mod steps;
 pub mod suite;
+pub(crate) mod tls;
 
 pub use check::{Checked, DIRECT_UNREACHABLE, POOLER_UNREACHABLE, check, deterministic, preflight};
 pub use compare::{FailKind, Mismatch, Verdict};
-pub use pg::server_version;
+pub use pg::{Privileges, privileges, resolve_reset, server_version};
+pub use raw::RawMessage;
 
 /// How long the harness waits for each kind of thing. `Default` holds the values
 /// every run used before these were configurable.
@@ -76,13 +78,16 @@ pub enum Outcome {
     Error {
         code: String,
         message: String,
+        /// The server refused the connection (e.g. 53300 too many connections). On the
+        /// Postgres side that is a harness failure, not something to compare. Left out
+        /// of JSON when false, so stored results don't change.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        connect: bool,
     },
     /// The client dropped the connection before the reply came.
     Abandoned,
     /// Every reply to a `send` step, one line each.
-    Messages {
-        messages: Vec<String>,
-    },
+    Messages { messages: Vec<String> },
 }
 
 impl Outcome {
@@ -97,6 +102,7 @@ impl Outcome {
         Outcome::Error {
             code: code.to_string(),
             message: message.into(),
+            connect: false,
         }
     }
 }
@@ -114,7 +120,7 @@ impl std::fmt::Display for Outcome {
                     .collect();
                 write!(f, "ok rows=[{}] tags={tags:?}", rows.join(" "))
             }
-            Outcome::Error { code, message } => write!(f, "error {code}: {message}"),
+            Outcome::Error { code, message, .. } => write!(f, "error {code}: {message}"),
             Outcome::Abandoned => write!(f, "abandoned"),
             Outcome::Messages { messages } => write!(f, "{}", messages.join(", ")),
         }

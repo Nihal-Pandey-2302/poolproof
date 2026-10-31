@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 
-use crate::runner::raw::RawMessage;
+use crate::runner::RawMessage;
 use serde::{Deserialize, Serialize};
 
 /// Pooling mode of a target. Scenarios list the modes they apply to.
@@ -23,6 +23,28 @@ impl std::fmt::Display for PoolMode {
             PoolMode::Statement => "statement",
         };
         f.write_str(name)
+    }
+}
+
+/// A privilege a scenario's setup or steps need on Postgres. A target whose `direct`
+/// user lacks one skips the scenario instead of failing it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Requirement {
+    /// Create, drop and grant roles.
+    Createrole,
+    Superuser,
+    /// Cancel or terminate other users' sessions.
+    PgSignalBackend,
+}
+
+impl std::fmt::Display for Requirement {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Requirement::Createrole => "createrole",
+            Requirement::Superuser => "superuser",
+            Requirement::PgSignalBackend => "pg_signal_backend",
+        })
     }
 }
 
@@ -51,6 +73,9 @@ pub struct Scenario {
     /// whose outcome depends on timing inside the pooler, such as pipelines.
     #[serde(default = "one")]
     pub repeat: u32,
+    /// Privileges the `direct` user needs; without them the scenario is skipped.
+    #[serde(default)]
+    pub requires: Vec<Requirement>,
     /// How long each step may take, overriding `run --step-timeout`.
     pub timeout_ms: Option<u64>,
     /// Statements run directly on Postgres before each run.
@@ -100,6 +125,10 @@ pub struct Step {
     /// `execute -`, `sync`) and record every reply. A client that uses `send` talks
     /// raw protocol for its whole life; `disconnect` is its only other step.
     pub send: Option<Vec<String>>,
+    /// With `send`: record ParameterStatus replies too and compare them, ignoring where
+    /// in the reply they come. For poolers that drop or fake them, e.g. after a SET.
+    #[serde(default)]
+    pub compare_parameter_status: bool,
     /// Sleep this long before the step, e.g. so a cancel lands while a query runs.
     pub delay_ms: Option<u64>,
     #[serde(default)]
@@ -221,6 +250,20 @@ impl Step {
     }
 }
 
+impl Scenario {
+    /// Every client connects either straight to Postgres or through the pooler, never
+    /// both, so all of a client's steps must agree on `direct`.
+    pub fn check_clients(&self) -> Result<()> {
+        let mut direct = std::collections::HashMap::new();
+        for step in &self.steps {
+            if *direct.entry(step.client.as_str()).or_insert(step.direct) != step.direct {
+                bail!("client '{}' mixes direct and pooled steps", step.client);
+            }
+        }
+        Ok(())
+    }
+}
+
 /// The scenarios in `scenarios/`, embedded at build time as (file name, contents).
 const BUNDLED: &[(&str, &str)] = include!(concat!(env!("OUT_DIR"), "/bundled.rs"));
 
@@ -228,6 +271,16 @@ fn parse(origin: &str, text: &str) -> Result<Scenario> {
     let scenario: Scenario = toml::from_str(text).with_context(|| format!("parsing {origin}"))?;
     if scenario.repeat == 0 {
         bail!("{origin}: repeat must be at least 1");
+    }
+    if let Some(step) = scenario
+        .steps
+        .iter()
+        .find(|s| s.compare_parameter_status && s.send.is_none())
+    {
+        bail!(
+            "{origin}: compare_parameter_status needs a send step (client '{}')",
+            step.client
+        );
     }
     if scenario.timeout_ms == Some(0) {
         bail!("{origin}: timeout_ms must be at least 1");
@@ -250,12 +303,16 @@ fn parse(origin: &str, text: &str) -> Result<Scenario> {
             _ => {}
         }
     }
+    scenario.check_clients().with_context(|| format!("in {origin}"))?;
     Ok(scenario)
 }
 
 /// The scenarios built into the binary.
 pub fn bundled() -> Result<Vec<Scenario>> {
-    BUNDLED.iter().map(|(name, text)| parse(name, text)).collect()
+    let parsed = BUNDLED
+        .iter()
+        .map(|(name, text)| Ok((name.to_string(), parse(name, text)?)));
+    unique_names(parsed.collect::<Result<_>>()?)
 }
 
 pub fn load_dir(dir: &Path) -> Result<Vec<Scenario>> {
@@ -269,9 +326,23 @@ pub fn load_dir(dir: &Path) -> Result<Vec<Scenario>> {
     let mut scenarios = Vec::with_capacity(paths.len());
     for path in paths {
         let text = std::fs::read_to_string(&path)?;
-        scenarios.push(parse(&path.display().to_string(), &text)?);
+        let origin = path.display().to_string();
+        let scenario = parse(&origin, &text)?;
+        scenarios.push((origin, scenario));
     }
-    Ok(scenarios)
+    unique_names(scenarios)
+}
+
+/// Results, reports, deep links, `--filter` and the determinism cache all go by name,
+/// so two files with the same name would mix up their results.
+fn unique_names(scenarios: Vec<(String, Scenario)>) -> Result<Vec<Scenario>> {
+    let mut seen = std::collections::HashMap::new();
+    for (origin, s) in &scenarios {
+        if let Some(first) = seen.insert(s.name.as_str(), origin.as_str()) {
+            bail!("{origin}: scenario name '{}' is already used by {first}", s.name);
+        }
+    }
+    Ok(scenarios.into_iter().map(|(_, s)| s).collect())
 }
 
 #[cfg(test)]
@@ -285,6 +356,68 @@ mod tests {
         let bundled = names(bundled().unwrap());
         assert!(!bundled.is_empty());
         assert_eq!(bundled, names(load_dir(&dir).unwrap()));
+    }
+
+    #[test]
+    fn role_scenarios_declare_createrole() {
+        for (name, text) in BUNDLED {
+            let scenario = parse(name, text).unwrap();
+            let declared = scenario
+                .requires
+                .iter()
+                .any(|r| matches!(r, Requirement::Createrole | Requirement::Superuser));
+            let text = text.to_lowercase();
+            let grants = text.contains("grant ") && text.contains(" to ");
+            let roles = ["pp_role", "create role", "alter role", "drop role", "create user"]
+                .iter()
+                .any(|s| text.contains(s));
+            if roles || grants {
+                assert!(declared, "{name} manages roles but doesn't require createrole");
+            }
+        }
+    }
+
+    #[test]
+    fn parses_requirements() {
+        let s: Scenario = toml::from_str(
+            "name = 'r'\ndescription = ''\nrequires = ['createrole', 'superuser', 'pg_signal_backend']\nstep = []\n",
+        )
+        .unwrap();
+        assert_eq!(
+            s.requires,
+            [
+                Requirement::Createrole,
+                Requirement::Superuser,
+                Requirement::PgSignalBackend
+            ]
+        );
+        assert!(toml::from_str::<Scenario>("name = 'r'\ndescription = ''\nrequires = ['root']\nstep = []\n").is_err());
+    }
+
+    #[test]
+    fn loading_rejects_a_client_on_both_sides() {
+        let text = "name = 'm'\ndescription = ''\n[[step]]\nclient = 'a'\nsimple = 'SELECT 1'\n\
+                    [[step]]\nclient = 'a'\ndirect = true\nsimple = 'SELECT 1'\n";
+        let err = parse("m.toml", text).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("client 'a' mixes direct and pooled steps"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn scenario_names_are_unique() {
+        let dir = std::env::temp_dir().join(format!("pp-unique-names-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let one = "name = 'x'\ndescription = 't'\nstep = []\n";
+        std::fs::write(dir.join("a.toml"), one).unwrap();
+        std::fs::write(dir.join("b.toml"), one.replace("'x'", "'y'")).unwrap();
+        assert_eq!(load_dir(&dir).unwrap().len(), 2);
+        std::fs::write(dir.join("c.toml"), one).unwrap();
+        let err = format!("{:#}", load_dir(&dir).unwrap_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(err.contains("c.toml: scenario name 'x' is already used by"), "{err}");
+        assert!(err.contains("a.toml"), "{err}");
     }
 
     #[test]
@@ -308,6 +441,14 @@ mod tests {
         let text = |ms: u64| format!("name = 't'\ndescription = 't'\ntimeout_ms = {ms}\nstep = []\n");
         assert_eq!(parse("t", &text(1500)).unwrap().timeout_ms, Some(1500));
         assert!(parse("t", &text(0)).is_err());
+    }
+
+    #[test]
+    fn compare_parameter_status_needs_send() {
+        let head = "name = 't'\ndescription = 't'\n[[step]]\nclient = 'a'\ncompare_parameter_status = true\n";
+        let send = parse("t", &format!("{head}send = ['query SET application_name = 1']\n")).unwrap();
+        assert!(send.steps[0].compare_parameter_status);
+        assert!(parse("t", &format!("{head}simple = 'SELECT 1'\n")).is_err());
     }
 
     #[test]
