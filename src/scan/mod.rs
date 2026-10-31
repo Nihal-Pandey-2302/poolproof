@@ -49,7 +49,8 @@ pub struct PoolerCheck {
 pub enum PoolerStatus {
     /// A related scenario fails silently: wrong results, no error.
     Breaks,
-    /// The pooler refuses the pattern with an error (or hangs), so it fails loudly.
+    /// A related scenario fails with an error or hangs: the pooler refuses the pattern,
+    /// or another client's query fails because of it.
     Rejected,
     /// The pooler passes every related scenario.
     Ok,
@@ -75,6 +76,8 @@ fn scenarios_for(rule: &str) -> Vec<&'static str> {
         "sql-prepare" => vec!["sql-prepare-isolated-between-clients"],
         "discard" => vec!["discard-all-resets-settings"],
         "multi-statement-transaction" => vec!["multi-statement-begin"],
+        "deallocate-all" => vec!["deallocate-all-isolated"],
+        "load" => vec!["load-isolated-between-clients"],
         _ => vec![],
     }
 }

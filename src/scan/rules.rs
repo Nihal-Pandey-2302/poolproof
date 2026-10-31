@@ -1218,6 +1218,8 @@ mod tests {
             ]
         );
         assert_eq!(scenarios("LISTEN a"), vec!["listen-notify-delivered"]);
+        assert_eq!(scenarios("DEALLOCATE ALL"), vec!["deallocate-all-isolated"]);
+        assert_eq!(scenarios("LOAD 'auto_explain'"), vec!["load-isolated-between-clients"]);
         // Every scenario a rule points to must exist.
         let names: Vec<String> = crate::scenario::bundled()
             .unwrap()

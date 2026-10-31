@@ -11,7 +11,11 @@ use super::{
 use crate::output::text::{Style, print_progress, print_result};
 use crate::report::{ResultRow, StepOutcomes, TargetInfo};
 use crate::scenario::Scenario;
-use crate::targets::{Endpoint, Reset, Target};
+use crate::targets::{Endpoint, Reset, Statement, Target};
+
+/// A --check-scenarios verdict, by scenario, direct endpoint (compared in full: options
+/// and password too) and resolved reset.
+type Determinism<'a> = (&'a str, &'a Endpoint, Vec<Statement>, Result<(), String>);
 
 /// How `run` goes about it.
 #[derive(Default)]
@@ -45,9 +49,8 @@ pub async fn run(
     let total = targets.len() * scenarios.iter().filter(wanted).count();
     let mut results = Vec::new();
     let mut target_infos = Vec::new();
-    // --check-scenarios verdicts by scenario and direct endpoint, compared in full
-    // (options and password too). Few enough to search in order.
-    let mut determinism: Vec<(&str, &Endpoint, Result<(), String>)> = Vec::new();
+    // Few enough to search in order.
+    let mut determinism: Vec<Determinism> = Vec::new();
     for target in targets {
         target_infos.push(TargetInfo {
             name: target.name.clone(),
@@ -120,13 +123,15 @@ pub async fn run(
             let (verdict, steps, runs, failures) = match before_run(s, target, unreachable.as_deref(), &privs) {
                 Some(verdict) => (verdict, vec![], 0, 0),
                 None => {
-                    let seen = |(name, direct, _): &&(&str, &Endpoint, _)| *name == s.name && *direct == &target.direct;
+                    let seen = |(name, direct, statements, _): &&Determinism| {
+                        *name == s.name && *direct == &target.direct && *statements == reset
+                    };
                     if opts.check_scenarios && !determinism.iter().any(|d| seen(&d)) {
                         let result = deterministic(s, &target.direct, &reset, &for_scenario(&timeouts, s)).await;
-                        determinism.push((&s.name, &target.direct, result));
+                        determinism.push((&s.name, &target.direct, reset.clone(), result));
                     }
                     match determinism.iter().find(seen) {
-                        Some((_, _, Err(reason))) => (Verdict::Error { reason: reason.clone() }, vec![], 0, 0),
+                        Some((_, _, _, Err(reason))) => (Verdict::Error { reason: reason.clone() }, vec![], 0, 0),
                         _ => {
                             let checked =
                                 check(s, &target.pooler, &target.direct, &reset, &for_scenario(&timeouts, s)).await;
@@ -364,6 +369,13 @@ mod tests {
             .targets;
         third[0].name = "c".into();
         targets.append(&mut third);
+        // Same direct as a, but a reset: also checked again.
+        let reset = Reset::Statements(vec![Statement::plain("SELECT 1")]);
+        let mut fourth = Targets::single(&url, &url, PoolMode::Transaction, reset)
+            .unwrap()
+            .targets;
+        fourth[0].name = "d".into();
+        targets.append(&mut fourth);
         let opts = RunOptions {
             check_scenarios: true,
             ..RunOptions::default()
@@ -371,9 +383,9 @@ mod tests {
         let (_, results) = run(&targets, std::slice::from_ref(&s), &opts).await.unwrap();
         assert!(results.iter().all(|r| matches!(r.verdict, Verdict::Pass)));
         let rows = client.query_one("SELECT count(*) FROM pp_runs", &[]).await.unwrap();
-        // 2 for the check shared by a and b, 2 for c's, then baseline + target run on
-        // each target.
-        assert_eq!(rows.get::<_, i64>(0), 2 + 2 + 3 * 2);
+        // 2 for the check shared by a and b, 2 each for c's and d's, then baseline +
+        // target run on each target.
+        assert_eq!(rows.get::<_, i64>(0), 2 + 2 + 2 + 4 * 2);
         client.batch_execute("DROP TABLE pp_runs").await.unwrap();
     }
 

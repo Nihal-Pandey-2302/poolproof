@@ -259,7 +259,7 @@ pub(super) async fn connect_with(
             drain: wait_for_exit,
             write_closed: false,
         };
-        let connected = match (&endpoint.tls().config, host.is_empty()) {
+        let connected = match (endpoint.tls().client_config()?, host.is_empty()) {
             // A Unix socket never uses TLS, as in libpq.
             (None, _) | (Some(_), true) => {
                 let mut config = endpoint.config().clone();
@@ -270,7 +270,7 @@ pub(super) async fn connect_with(
                 (client, spawn_driver(connection, notices.clone()))
             }
             (Some(tls), false) => {
-                let mut make = MakeRustlsConnect::new((**tls).clone());
+                let mut make = MakeRustlsConnect::new((*tls).clone());
                 let tls = MakeTlsConnect::<DrainOnShutdown<Box<dyn Io>>>::make_tls_connect(&mut make, &host)?;
                 let (client, connection) = match endpoint.config().connect_raw(stream, tls).await {
                     Ok(connected) => connected,
@@ -293,10 +293,10 @@ pub(super) async fn connect_with(
 /// when the endpoint uses it.
 pub(super) async fn cancel(token: &CancelToken, endpoint: &Endpoint) -> Result<()> {
     let (stream, host) = open(endpoint).await?;
-    match (&endpoint.tls().config, host.is_empty()) {
+    match (endpoint.tls().client_config()?, host.is_empty()) {
         (None, _) | (Some(_), true) => token.cancel_query_raw(stream, NoTls).await?,
         (Some(tls), false) => {
-            let mut make = MakeRustlsConnect::new((**tls).clone());
+            let mut make = MakeRustlsConnect::new((*tls).clone());
             let tls = MakeTlsConnect::<Box<dyn Io>>::make_tls_connect(&mut make, &host)?;
             token.cancel_query_raw(stream, tls).await?
         }
