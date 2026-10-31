@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use anyhow::{Result, bail};
 
+use super::probe::{ProbeResult, Probes, probe_target};
 use super::{
     DIRECT_UNREACHABLE, FailKind, Privileges, Timeouts, Verdict, check, deterministic, preflight, privileges,
     resolve_reset, server_version,
@@ -11,7 +12,7 @@ use super::{
 use crate::limitations::Limitations;
 use crate::output::text::{Style, print_progress, print_result};
 use crate::report::{ResultRow, StepOutcomes, TargetInfo};
-use crate::scenario::Scenario;
+use crate::scenario::{PoolMode, Scenario};
 use crate::targets::{Endpoint, Reset, Statement, Target};
 
 /// A --check-scenarios verdict, by scenario, direct endpoint (compared in full: options
@@ -63,6 +64,8 @@ pub async fn run(
             mode: target.mode,
             postgres: server_version(&target.direct, &timeouts).await.ok(),
             reset: Some(target.reset.kind().to_string()),
+            idle_probe: None,
+            busy_probe: None,
         });
         if matches!(target.reset, Reset::None) {
             eprintln!(
@@ -132,9 +135,44 @@ pub async fn run(
                 missing.join(" and ")
             );
         }
+        // What a second client gets, for the mode check and the server-connection
+        // requirements. Same gate as preflight.
+        let mut unreachable = unreachable;
+        let probes = match &unreachable {
+            None if any_applies => {
+                match probe_target(&target.pooler, &target.direct, &reset, target.mode, &timeouts).await {
+                    Ok(probes) => Some(probes),
+                    Err(reason) => {
+                        eprintln!("error: target '{}': {reason}", target.name);
+                        unreachable = Some(reason);
+                        None
+                    }
+                }
+            }
+            _ => None,
+        };
+        if let Some(probes) = &probes {
+            for (which, probe) in [("idle", &probes.idle), ("busy", &probes.busy)] {
+                if let (ProbeResult::Unknown, Some(detail)) = (probe.result, &probe.detail)
+                    && target.mode != PoolMode::Statement
+                {
+                    eprintln!("warning: target '{}': {which} probe: {detail}", target.name);
+                }
+            }
+            if let Some(reason) = probes.mode_error(target.mode) {
+                eprintln!("error: target '{}': {reason}", target.name);
+                unreachable = Some(reason);
+            }
+            if let Some(info) = target_infos.last_mut() {
+                info.idle_probe = Some(probes.idle.clone());
+                info.busy_probe = Some(probes.busy.clone());
+            }
+        }
+        let has_precondition = |s: &Scenario| s.steps.iter().any(|st| st.precondition);
         for s in scenarios.iter().filter(wanted) {
-            let (verdict, steps, runs, failures, varied) = match before_run(s, target, unreachable.as_deref(), &privs) {
-                Some(verdict) => (verdict, vec![], 0, 0, false),
+            let checks = before_run(s, target, unreachable.as_deref(), &privs, probes.as_ref());
+            let (verdict, steps, runs, failures, varied, unmet) = match checks {
+                Some(verdict) => (verdict, vec![], 0, 0, false, 0),
                 None => {
                     let seen = |(name, direct, statements, _): &&Determinism| {
                         *name == s.name && *direct == &target.direct && *statements == reset
@@ -145,18 +183,11 @@ pub async fn run(
                     }
                     match determinism.iter().find(seen) {
                         Some((_, _, _, Err(reason))) => {
-                            (Verdict::Error { reason: reason.clone() }, vec![], 0, 0, false)
+                            (Verdict::Error { reason: reason.clone() }, vec![], 0, 0, false, 0)
                         }
                         _ => {
-                            let checked =
-                                check(s, &target.pooler, &target.direct, &reset, &for_scenario(&timeouts, s)).await;
-                            (
-                                checked.verdict,
-                                checked.steps,
-                                checked.runs,
-                                checked.failures,
-                                checked.varied,
-                            )
+                            let c = check(s, &target.pooler, &target.direct, &reset, &for_scenario(&timeouts, s)).await;
+                            (c.verdict, c.steps, c.runs, c.failures, c.varied, c.unmet)
                         }
                     }
                 }
@@ -173,6 +204,7 @@ pub async fn run(
                 runs,
                 failures,
                 varied: (runs > 1).then_some(varied),
+                precondition_unmet: has_precondition(s).then_some(unmet),
                 expected: None,
             };
             if let (Some(limitations), Some(info)) = (opts.limitations, target_infos.last()) {
@@ -196,6 +228,7 @@ fn before_run(
     target: &Target,
     unreachable: Option<&str>,
     privs: &Result<Privileges, String>,
+    probes: Option<&Probes>,
 ) -> Option<Verdict> {
     if !s.modes.contains(&target.mode) {
         let reason = format!("not applicable to {} mode", target.mode);
@@ -206,13 +239,18 @@ fn before_run(
             reason: reason.to_string(),
         });
     }
-    if s.requires.is_empty() {
-        return None;
+    if s.requires.iter().any(|r| !r.is_server()) {
+        match privs {
+            Ok(privs) => {
+                if let Some(reason) = privs.missing(&s.requires) {
+                    return Some(Verdict::Skip { reason });
+                }
+            }
+            Err(reason) => return Some(Verdict::Error { reason: reason.clone() }),
+        }
     }
-    match privs {
-        Ok(privs) => privs.missing(&s.requires).map(|reason| Verdict::Skip { reason }),
-        Err(reason) => Some(Verdict::Error { reason: reason.clone() }),
-    }
+    let reason = probes?.unmet(s, target.mode, target.ignore_server_requirements)?;
+    Some(Verdict::Skip { reason })
 }
 
 /// Which results make `run` exit 1. Each level includes the ones before it. An ERROR
@@ -338,7 +376,7 @@ mod tests {
             createrole: true,
             ..plain
         };
-        let verdict = |s: &Scenario, privs: Result<Privileges, String>| before_run(s, &target, None, &privs);
+        let verdict = |s: &Scenario, privs: Result<Privileges, String>| before_run(s, &target, None, &privs, None);
 
         let roles = scenario("'createrole'");
         assert!(matches!(
@@ -354,7 +392,7 @@ mod tests {
         assert!(verdict(&scenario(""), Err("no answer".into())).is_none());
         // Unreachable wins over requirements.
         assert!(matches!(
-            before_run(&roles, &target, Some("down"), &Ok(creator)),
+            before_run(&roles, &target, Some("down"), &Ok(creator), None),
             Some(Verdict::Error { reason }) if reason == "down"
         ));
     }

@@ -45,6 +45,11 @@ enum Command {
         /// Without it, nothing is reset.
         #[arg(long, value_enum, requires = "pooler")]
         reset: Option<ResetArg>,
+        /// With --pooler: run scenarios that need one server connection (or several) even
+        /// when the probes say otherwise, as ignore_server_requirements in a targets file.
+        /// For Postgres standing in for its own pooler.
+        #[arg(long, requires = "pooler")]
+        ignore_server_requirements: bool,
         /// Allow reset = "all" against a Postgres that isn't on this machine. It gates
         /// nothing else.
         #[arg(long)]
@@ -230,6 +235,7 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
             direct,
             mode,
             reset,
+            ignore_server_requirements,
             yes,
             scenarios,
             filter,
@@ -244,7 +250,10 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
             ignore_expected,
             limitations,
         } => {
-            let targets = load_targets(&targets, pooler, direct, mode, reset)?;
+            let mut targets = load_targets(&targets, pooler, direct, mode, reset)?;
+            if ignore_server_requirements {
+                targets.targets[0].ignore_server_requirements = true;
+            }
             // Before the run, so a bad baseline fails fast.
             let mut baseline = compare_to.as_deref().map(report::Report::load).transpose()?;
             if let Some(baseline) = &baseline {
@@ -292,7 +301,7 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
                     refs: s.refs.clone(),
                     steps: s.steps.iter().map(|step| step.describe()).collect(),
                     repeat: s.repeat,
-                    compare: s.steps.iter().map(|step| step.compare).collect(),
+                    compare: s.compare_modes(),
                 })
                 .collect();
             let mut report = report::Report {
@@ -353,6 +362,17 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
                     n => format!(" ({n} documented)"),
                 };
                 println!("\n{passed} passed, {failed} failed{documented}, {errors} errors, {skipped} skipped");
+                for r in results
+                    .iter()
+                    .filter(|r| r.runs == 0 && r.precondition_unmet.is_some_and(|u| u > 0))
+                {
+                    println!(
+                        "precondition never met: {} / {} ({} runs); the scenario tested nothing there",
+                        r.target,
+                        r.scenario,
+                        r.precondition_unmet.unwrap_or(0)
+                    );
+                }
                 for stale in &report.stale_expectations {
                     println!(
                         "stale expectation: {} / {}: {} ({})",

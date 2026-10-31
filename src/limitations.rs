@@ -260,8 +260,8 @@ fn check(product: &str, e: Entry, scenarios: &[Scenario]) -> Result<Limitation> 
             bail!("differs must list steps in order, each once (step {n})");
         }
         let step = &scenario.steps[n - 1];
-        if step.compare == Compare::Ignore {
-            bail!("step {n} has compare = \"ignore\", so it never differs");
+        if step.compare_mode() == Compare::Ignore {
+            bail!("step {n} is never compared (compare = \"ignore\", or a precondition), so it never differs");
         }
         let outcome = Outcome::from(d.pooler);
         // Hangs, timeouts and dropped connections are never a documented limitation.
@@ -282,7 +282,7 @@ fn check(product: &str, e: Entry, scenarios: &[Scenario]) -> Result<Limitation> 
     Ok(Limitation {
         product: product.to_string(),
         steps: scenario.steps.iter().map(|st| st.describe()).collect(),
-        compare: scenario.steps.iter().map(|st| st.compare).collect(),
+        compare: scenario.compare_modes(),
         scenario: e.scenario,
         mode: e.mode,
         config,
@@ -412,7 +412,7 @@ impl Limitations {
                 }
                 let s = scenarios.iter().find(|s| s.name == info.name)?;
                 let same = s.steps.iter().map(|st| st.describe()).eq(info.steps.iter().cloned());
-                same.then(|| (info.name.clone(), s.steps.iter().map(|st| st.compare).collect()))
+                same.then(|| (info.name.clone(), s.compare_modes()))
             })
             .collect();
         let mut stale = Vec::new();
@@ -455,7 +455,7 @@ impl Limitations {
 
     /// The mark for one row as it comes in, before the report exists.
     pub fn expected_for(&self, target: &TargetInfo, scenario: &Scenario, row: &ResultRow) -> Option<Expected> {
-        let compare: Vec<Compare> = scenario.steps.iter().map(|s| s.compare).collect();
+        let compare = scenario.compare_modes();
         let steps: Vec<String> = scenario.steps.iter().map(|s| s.describe()).collect();
         self.entries
             .iter()
@@ -484,6 +484,8 @@ mod tests {
             mode: PoolMode::Transaction,
             postgres: Some(postgres.into()),
             reset: None,
+            idle_probe: None,
+            busy_probe: None,
         }
     }
 
@@ -543,6 +545,7 @@ mod tests {
             runs: 1,
             failures: 1,
             varied: None,
+            precondition_unmet: None,
             expected: None,
         }
     }
@@ -684,9 +687,10 @@ quote = "SET/RESET | Yes | Never"
             runs: 1,
             failures: 1,
             varied: None,
+            precondition_unmet: None,
             expected: None,
         };
-        let compare: Vec<Compare> = s.steps.iter().map(|st| st.compare).collect();
+        let compare = s.compare_modes();
         assert!(set.entries[0].mismatch(&compare, &r).is_none());
         r.steps[direct_step].pooler = ok(&["1"]);
         let reason = set.entries[0].mismatch(&compare, &r).unwrap();

@@ -221,6 +221,22 @@ mode = "transaction"
 reset = "auto"
 ```
 
+Before its first scenario, each target is probed twice: a second client connects while
+the first is connected and idle, and again while the first is inside a transaction. The
+results are in the JSON report (`idle_probe`, `busy_probe`) and in `doctor`. A probe
+that contradicts the declared `mode` makes the target ERROR: in transaction or statement
+mode the second client must not wait for the first (or be refused while it's
+connected), and in session mode it must not get the first one's server connection.
+Neither may ever get it inside an open transaction. A pool with room for both fits every
+mode. In session mode with one server connection, a scenario whose pooled clients hold
+two connections at once is skipped: it would only show the pool waiting. So is it when
+the probe can't tell. A second client counts as waiting only if, once the first client
+closes, it gets the first one's backend; a late answer from another backend is unknown.
+`ignore_server_requirements = true` on a target (`--ignore-server-requirements` with
+`run --pooler`) runs scenarios whose `one_server_connection` or
+`several_server_connections` isn't met anyway, for Postgres standing in for its own
+pooler.
+
 `reset` decides how much each run is isolated from the one before:
 
 - `"auto"` ends the sessions from the address and user Postgres sees the pooler connect
@@ -257,14 +273,15 @@ flags as `run`) checks a target before you run anything:
 
 ```text
 $ poolproof doctor --target prod-like-pgbouncer
-ok    prod-like-pgbouncer direct       connected to postgres://user@postgres-host:5432/db
-ok    prod-like-pgbouncer direct tls   TLS (TLSv1.3, sslmode=verify-full)
-ok    prod-like-pgbouncer pooler       connected to postgres://user@pooler-host:6432/db
-warn  prod-like-pgbouncer pooler tls   plaintext: sslmode=prefer and the server declined TLS; set sslmode=require to insist
-ok    prod-like-pgbouncer same server  database db, port 5432, started 2026-10-31 07:59:09.418230, 17.11 (addr 10.0.0.5 via pooler, 10.0.0.5 direct)
-ok    prod-like-pgbouncer privileges   every scenario's requirements are met
-ok    prod-like-pgbouncer reset        ends every session of user app from 10.0.0.7 (not only the pooler's) on database db at postgres-host:5432 (auto); matching sessions now: 1
-ok    prod-like-pgbouncer mode         transaction or statement pooling (b got a's server connection)
+ok    prod-like-pgbouncer direct             connected to postgres://user@postgres-host:5432/db
+ok    prod-like-pgbouncer direct tls         TLS (TLSv1.3, sslmode=verify-full)
+ok    prod-like-pgbouncer pooler             connected to postgres://user@pooler-host:6432/db
+warn  prod-like-pgbouncer pooler tls         plaintext: sslmode=prefer and the server declined TLS; set sslmode=require to insist
+ok    prod-like-pgbouncer same server        database db, port 5432, started 2026-10-31 07:59:09.418230, 17.11 (addr 10.0.0.5 via pooler, 10.0.0.5 direct)
+ok    prod-like-pgbouncer privileges         every scenario's requirements are met
+ok    prod-like-pgbouncer reset              ends every session of user app from 10.0.0.7 (not only the pooler's) on database db at postgres-host:5432 (auto); matching sessions now: 1
+ok    prod-like-pgbouncer mode               transaction or statement pooling (b got a's server connection)
+ok    prod-like-pgbouncer server connections one (b waited while a was in a transaction)
 ```
 
 It checks that both URLs answer and reach the same Postgres (database, start time, version
@@ -272,7 +289,9 @@ and port; the addresses are only shown, since the pooler often reaches Postgres 
 network), TLS on each side, which scenarios would SKIP for missing privileges, what reset
 would end and whether the direct user can end it, and the pooling mode: a second client
 gets the first one's server connection (transaction pooling), or waits for it (session
-mode with a full pool). A user that isn't a superuser needs `pg_signal_backend` and
+mode with a full pool), and how many server connections the pool has: whether a second
+client waits (or is refused) while the first is inside a transaction, as `run`'s probes
+see it (below). A user that isn't a superuser needs `pg_signal_backend` and
 `pg_read_all_stats` to end other roles' sessions, and can never end a superuser's. If that
 rules out the pooler's own sessions, the reset check fails; other sessions that
 `reset = "all"` would leave are a warning, since whatever they hold (locks, `pp_*`
@@ -496,7 +515,19 @@ pipelines: reports then show how many runs failed, and CI doesn't treat a change
 verdicts as a regression, because the worst case can differ between machines.
 `requires` lists privileges the `direct` user needs (`createrole`, `superuser`,
 `pg_signal_backend`); on a target without them the scenario is skipped, with the reason.
-If the privileges can't be read, it is ERROR instead.
+If the privileges can't be read, it is ERROR instead. It can also name what the pool must
+look like: `one_server_connection` for a scenario that only means something when two
+clients share one server connection, `several_server_connections` for the opposite.
+Those are judged by the target's probes (below): unmet, the scenario is skipped, e.g.
+"needs one server connection (probe: several)". In statement mode the probe can't tell,
+so both are skipped.
+
+A step with `precondition = true` is a `simple` query of a pooled client (not the first
+step) that returns one boolean: whether this run tests what the scenario means to, e.g.
+that this client got a given backend. It doesn't run on Postgres and is never compared.
+Through the pooler, `t` goes on; `f` stops the run, which then doesn't count (a SKIP if
+no run met it); anything else (an error, a hang, no row) is a FAIL like any other step.
+With `repeat`, only the runs that met it count, and the output says how many did.
 
 `poolproof run -v --filter <name>` prints every step's result on Postgres and through the
 pooler. Use it on a new scenario: a PASS only means something if Postgres did what you
