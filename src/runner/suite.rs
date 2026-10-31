@@ -93,7 +93,7 @@ pub async fn run(
                 }
                 Err(reason) => {
                     eprintln!("error: target '{}': {reason}", target.name);
-                    (vec![], Some(reason))
+                    (vec![], Some(reason.to_string()))
                 }
             },
         };

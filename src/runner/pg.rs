@@ -458,17 +458,10 @@ fn literal(text: &str) -> String {
     format!("E'{}'", text.replace('\\', "\\\\").replace('\'', "''"))
 }
 
-/// A role name as an identifier for GRANT, quoted unless it doesn't need to be.
+/// A role name as a quoted identifier for GRANT: quoted always, so a reserved word like
+/// `user` works too.
 fn ident(name: &str) -> String {
-    let plain = name.starts_with(|c: char| c.is_ascii_lowercase() || c == '_')
-        && name
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
-    if plain {
-        name.to_string()
-    } else {
-        format!("\"{}\"", name.replace('"', "\"\""))
-    }
+    format!("\"{}\"", name.replace('"', "\"\""))
 }
 
 /// What the `direct` user can do about the sessions of the pooler's user.
@@ -488,11 +481,14 @@ struct Reach {
 /// see them (pg_stat_activity hides another role's client address and backend type, so
 /// the reset would match nothing) and pg_signal_backend to end them. Only a superuser
 /// can end a superuser's sessions.
-fn cannot_end(user: &str, reach: &Reach) -> Option<String> {
+fn cannot_end(user: &str, reach: &Reach) -> Option<(String, String)> {
     if reach.superuser {
-        return Some(format!(
-            "{user} is a superuser, and only a superuser can end its sessions; connect direct as a \
-             superuser, or let the pooler connect as a role that isn't one"
+        return Some((
+            format!(
+                "{user} is a superuser, and only a superuser can end its sessions; connect direct as a \
+                 superuser, or let the pooler connect as a role that isn't one"
+            ),
+            "the pooler's user is a superuser".into(),
         ));
     }
     if reach.privileges_of {
@@ -506,20 +502,55 @@ fn cannot_end(user: &str, reach: &Reach) -> Option<String> {
     .flatten()
     .collect();
     (!missing.is_empty()).then(|| {
-        format!(
-            "this user can't end sessions of {user} without {}; as a superuser: GRANT {} TO {}",
-            missing.join(" and "),
-            missing.join(", "),
-            ident(&reach.me)
+        (
+            format!(
+                "this user can't end sessions of {user} without {}; as a superuser: GRANT {} TO {}",
+                missing.join(" and "),
+                missing.join(", "),
+                ident(&reach.me)
+            ),
+            format!("missing {}", missing.join(" and ")),
         )
     })
+}
+
+/// Why resolve_reset won't run a reset. Displays as the target's ERROR reason.
+#[derive(Debug)]
+pub enum ResetRefusal {
+    /// `all` against a Postgres that isn't on this machine, without `run --yes`.
+    NeedsYes(String),
+    /// `auto` can't tell which sessions are the pooler's.
+    CantTell(String),
+    /// The direct user can't see or end the pooler's sessions. `public` says why
+    /// without naming roles: "... missing pg_signal_backend", "... the pooler's user is
+    /// a superuser", or that the check failed.
+    CantEnd { text: String, public: String },
+}
+
+impl std::fmt::Display for ResetRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ResetRefusal::NeedsYes(text) | ResetRefusal::CantTell(text) | ResetRefusal::CantEnd { text, .. } => {
+                f.write_str(text)
+            }
+        }
+    }
 }
 
 /// For "all" and "auto": whether the direct user can end the pooler's sessions, asking
 /// the pooler which user it connects as unless `pooler_user` says. Ok(true) for a
 /// superuser, who can end every session.
-async fn check_reach(target: &Target, kind: &str, pooler_user: Option<&str>, t: &Timeouts) -> Result<bool, String> {
-    let refuse = |why: String| format!("reset = \"{kind}\" can't end the pooler's sessions: {why}");
+async fn check_reach(
+    target: &Target,
+    kind: &str,
+    pooler_user: Option<&str>,
+    t: &Timeouts,
+) -> Result<bool, ResetRefusal> {
+    let refuse_as = |why: String, public: &str| ResetRefusal::CantEnd {
+        text: format!("reset = \"{kind}\" can't end the pooler's sessions: {why}"),
+        public: format!("can't end the pooler's sessions: {public}"),
+    };
+    let refuse = |why: String| refuse_as(why, "the check failed");
     let privs = privileges(&target.direct, t)
         .await
         .map_err(|e| refuse(format!("checking the direct user's privileges failed: {e:#}")))?;
@@ -552,7 +583,7 @@ async fn check_reach(target: &Target, kind: &str, pooler_user: Option<&str>, t: 
         me: row.get(2).cloned().flatten().unwrap_or_default(),
     };
     match cannot_end(&user, &reach) {
-        Some(why) => Err(refuse(why)),
+        Some((why, public)) => Err(refuse_as(why, &public)),
         None => Ok(false),
     }
 }
@@ -587,7 +618,11 @@ async fn query_row(endpoint: &Endpoint, sql: &str, t: &Timeouts) -> Result<Vec<O
 /// Turns a target's `reset` into the statements to run before each run, plus the line
 /// that says what they touch (empty for no reset). The error is the target's ERROR
 /// reason. `yes` allows `all` against a Postgres that isn't on this machine.
-pub async fn resolve_reset(target: &Target, yes: bool, t: &Timeouts) -> Result<(Vec<TargetStatement>, String), String> {
+pub async fn resolve_reset(
+    target: &Target,
+    yes: bool,
+    t: &Timeouts,
+) -> Result<(Vec<TargetStatement>, String), ResetRefusal> {
     let config = target.direct.config();
     let db = config.get_dbname().or(config.get_user()).unwrap_or_default();
     let host = target.direct.host();
@@ -601,9 +636,9 @@ pub async fn resolve_reset(target: &Target, yes: bool, t: &Timeouts) -> Result<(
                 statements.len()
             ),
         )),
-        Reset::All if !yes && !is_local(config) => Err(format!(
+        Reset::All if !yes && !is_local(config) => Err(ResetRefusal::NeedsYes(format!(
             "reset = \"all\" ends every other session on database {db} at {host}; pass --yes to allow it"
-        )),
+        ))),
         Reset::All => {
             let superuser = check_reach(target, "all", None, t).await?;
             // Without superuser, sessions of roles this user may not end stay.
@@ -615,9 +650,9 @@ pub async fn resolve_reset(target: &Target, yes: bool, t: &Timeouts) -> Result<(
         }
         Reset::Auto => {
             let refuse = |why: String| {
-                format!(
+                ResetRefusal::CantTell(format!(
                     "reset = \"auto\" can't tell the pooler's sessions apart: {why}; use reset = \"all\" or your own statements"
-                )
+                ))
             };
             let pooler = query_row(&target.pooler, "SELECT host(inet_client_addr()), session_user", t)
                 .await
@@ -779,7 +814,7 @@ async fn settle(client: &Client, t: &Timeouts) -> Settle {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// How the stand-in pooler answers the n-th `SELECT pg_backend_pid()`.
@@ -858,7 +893,7 @@ mod tests {
 
     /// A Postgres stand-in that answers each simple query with one row of text values
     /// from `answer` (None = NULL).
-    async fn answering(answer: fn(&str) -> Vec<Option<&'static str>>) -> u16 {
+    pub(crate) async fn answering(answer: fn(&str) -> Vec<Option<&'static str>>) -> u16 {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         fn message(tag: u8, body: &[u8]) -> Vec<u8> {
             [&[tag][..], &(body.len() as u32 + 4).to_be_bytes(), body].concat()
@@ -914,7 +949,7 @@ mod tests {
         port
     }
 
-    fn target(port: u16, reset: Reset) -> Target {
+    pub(crate) fn target(port: u16, reset: Reset) -> Target {
         let url = format!("postgres://u@127.0.0.1:{port}/app?sslmode=disable");
         crate::targets::Targets::single(&url, &url, crate::scenario::PoolMode::Transaction, reset)
             .unwrap()
@@ -964,7 +999,7 @@ mod tests {
             target.direct = Endpoint::parse("postgres://u@db.example.com/app").unwrap();
             target
         };
-        let err = resolve_reset(&remote, false, &t).await.unwrap_err();
+        let err = resolve_reset(&remote, false, &t).await.unwrap_err().to_string();
         assert!(err.contains("pass --yes"), "{err}");
         // On this machine, no --yes needed.
         let port = answering(superuser).await;
@@ -994,20 +1029,21 @@ mod tests {
             pg_read_all_stats: false,
             me: "plain".into(),
         };
+        let (text, public) = cannot_end("app", &reach).unwrap();
         assert_eq!(
-            cannot_end("app", &reach).unwrap(),
+            text,
             "this user can't end sessions of app without pg_signal_backend and pg_read_all_stats; as a \
-             superuser: GRANT pg_signal_backend, pg_read_all_stats TO plain"
+             superuser: GRANT pg_signal_backend, pg_read_all_stats TO \"plain\""
         );
+        // The public form names no role.
+        assert_eq!(public, "missing pg_signal_backend and pg_read_all_stats");
         let signal = Reach {
             pg_signal_backend: true,
             ..reach
         };
-        assert!(
-            cannot_end("app", &signal)
-                .unwrap()
-                .contains("without pg_read_all_stats; as a")
-        );
+        let (text, public) = cannot_end("app", &signal).unwrap();
+        assert!(text.contains("without pg_read_all_stats; as a"), "{text}");
+        assert_eq!(public, "missing pg_read_all_stats");
         let both = Reach {
             pg_read_all_stats: true,
             ..signal
@@ -1021,16 +1057,19 @@ mod tests {
         assert_eq!(cannot_end("app", &own), None);
         // A superuser's sessions: no privilege short of superuser helps.
         let root = Reach { superuser: true, ..own };
+        let (text, public) = cannot_end("postgres", &root).unwrap();
         assert!(
-            cannot_end("postgres", &root)
-                .unwrap()
-                .starts_with("postgres is a superuser, and only a superuser can end its sessions")
+            text.starts_with("postgres is a superuser, and only a superuser can end its sessions"),
+            "{text}"
         );
+        assert_eq!(public, "the pooler's user is a superuser");
     }
 
     #[test]
-    fn grant_names_are_quoted_when_needed() {
-        assert_eq!(ident("app_1"), "app_1");
+    fn grant_names_are_always_quoted() {
+        assert_eq!(ident("app_1"), "\"app_1\"");
+        // A reserved word: GRANT ... TO user is a syntax error.
+        assert_eq!(ident("user"), "\"user\"");
         assert_eq!(ident("App"), "\"App\"");
         assert_eq!(ident("a\"b; DROP"), "\"a\"\"b; DROP\"");
     }
@@ -1054,13 +1093,16 @@ mod tests {
         })
         .await;
         for (reset, kind) in [(Reset::All, "all"), (Reset::Auto, "auto")] {
-            let err = resolve_reset(&target(port, reset), false, &t).await.unwrap_err();
+            let err = resolve_reset(&target(port, reset), false, &t)
+                .await
+                .unwrap_err()
+                .to_string();
             assert_eq!(
                 err,
                 format!(
                     "reset = \"{kind}\" can't end the pooler's sessions: this user can't end sessions of app \
                      without pg_signal_backend and pg_read_all_stats; as a superuser: GRANT pg_signal_backend, \
-                     pg_read_all_stats TO plain"
+                     pg_read_all_stats TO \"plain\""
                 )
             );
         }
@@ -1077,7 +1119,10 @@ mod tests {
             }
         })
         .await;
-        let err = resolve_reset(&target(port, Reset::All), false, &t).await.unwrap_err();
+        let err = resolve_reset(&target(port, Reset::All), false, &t)
+            .await
+            .unwrap_err()
+            .to_string();
         assert!(
             err.contains("postgres is a superuser, and only a superuser can end its sessions"),
             "{err}"
@@ -1131,13 +1176,13 @@ mod tests {
             .await
             .unwrap();
         assert!(hidden.iter().any(|m| matches!(m, SimpleQueryMessage::Row(_))));
-        let err = resolve_reset(&target, false, &t).await.unwrap_err();
-        assert!(err.ends_with("without pg_signal_backend and pg_read_all_stats; as a superuser: GRANT pg_signal_backend, pg_read_all_stats TO pp_reset_plain"), "{err}");
+        let err = resolve_reset(&target, false, &t).await.unwrap_err().to_string();
+        assert!(err.ends_with("without pg_signal_backend and pg_read_all_stats; as a superuser: GRANT pg_signal_backend, pg_read_all_stats TO \"pp_reset_plain\""), "{err}");
         admin
             .batch_execute("GRANT pg_read_all_stats TO pp_reset_plain")
             .await
             .unwrap();
-        let err = resolve_reset(&target, false, &t).await.unwrap_err();
+        let err = resolve_reset(&target, false, &t).await.unwrap_err().to_string();
         assert!(err.contains("without pg_signal_backend;"), "{err}");
         admin
             .batch_execute("GRANT pg_signal_backend TO pp_reset_plain")
@@ -1160,12 +1205,12 @@ mod tests {
         let mut noinherit = super::tests::target(1, Reset::All);
         noinherit.direct = as_user("pp_reset_noinherit");
         noinherit.pooler = pooler.clone();
-        let err = resolve_reset(&noinherit, false, &t).await.unwrap_err();
+        let err = resolve_reset(&noinherit, false, &t).await.unwrap_err().to_string();
         assert!(err.contains("without pg_signal_backend and pg_read_all_stats"), "{err}");
 
         // A pooler connecting as a superuser: refused, whatever was granted.
         target.pooler = root.clone();
-        let err = resolve_reset(&target, false, &t).await.unwrap_err();
+        let err = resolve_reset(&target, false, &t).await.unwrap_err().to_string();
         assert!(
             err.contains("is a superuser, and only a superuser can end its sessions"),
             "{err}"
@@ -1211,7 +1256,10 @@ mod tests {
             }
         })
         .await;
-        let err = resolve_reset(&target(unix, Reset::Auto), false, &t).await.unwrap_err();
+        let err = resolve_reset(&target(unix, Reset::Auto), false, &t)
+            .await
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("no client address"), "{err}");
 
         let same = answering(|sql| {
@@ -1222,7 +1270,10 @@ mod tests {
             }
         })
         .await;
-        let err = resolve_reset(&target(same, Reset::Auto), false, &t).await.unwrap_err();
+        let err = resolve_reset(&target(same, Reset::Auto), false, &t)
+            .await
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("the same address as poolproof"), "{err}");
 
         // The same host written as an IPv4-mapped IPv6 address.
@@ -1236,7 +1287,8 @@ mod tests {
         .await;
         let err = resolve_reset(&target(mapped, Reset::Auto), false, &t)
             .await
-            .unwrap_err();
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("the same address as poolproof"), "{err}");
 
         let not_ip = answering(|sql| {
@@ -1249,7 +1301,8 @@ mod tests {
         .await;
         let err = resolve_reset(&target(not_ip, Reset::Auto), false, &t)
             .await
-            .unwrap_err();
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("isn't an IP address"), "{err}");
     }
 

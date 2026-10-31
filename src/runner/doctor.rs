@@ -13,7 +13,7 @@ use tokio_postgres::config::Host;
 
 use super::Timeouts;
 use super::check::{DIRECT_UNREACHABLE, POOLER_UNREACHABLE};
-use super::pg::{Privileges, connect, privileges, resolve_reset, tcp_connect};
+use super::pg::{Privileges, ResetRefusal, connect, privileges, resolve_reset, tcp_connect};
 use super::tls::SslMode;
 use crate::doctor::{
     Check, Connected, Status, TargetReport, first_row, mode_check, probe_mode, same_server, server_facts,
@@ -237,19 +237,9 @@ async fn reset(
         }
         Reset::All | Reset::Auto => resolve_reset(target, yes, t).await,
     };
-    let sees = row(
-        direct,
-        "SELECT pg_has_role(current_user, 'pg_read_all_stats', 'USAGE')",
-        t,
-    )
-    .await;
-    let sees = match sees {
-        Ok(r) => have.superuser || cell(&r, 0) == "t",
-        Err(e) => return query_failed(e),
-    };
     let missing: Vec<&str> = [
         (have.pg_signal_backend, "pg_signal_backend"),
-        (sees, "pg_read_all_stats"),
+        (have.pg_read_all_stats, "pg_read_all_stats"),
     ]
     .into_iter()
     .filter(|(has, _)| !has && !have.superuser)
@@ -287,9 +277,15 @@ async fn reset(
             ));
         }
         return match line {
-            Err(reason) => Check::new("reset", Status::Warn, format!("all: {reason}; {now}")).public(format!(
-                "all: run needs --yes for a Postgres that isn't on this machine; {now}"
-            )),
+            Err(ResetRefusal::CantEnd { text, public }) => {
+                fail(format!("all: {text}")).public(format!("all: {public}"))
+            }
+            Err(reason @ ResetRefusal::NeedsYes(_)) => {
+                Check::new("reset", Status::Warn, format!("all: {reason}; {now}")).public(format!(
+                    "all: run needs --yes for a Postgres that isn't on this machine; {now}"
+                ))
+            }
+            Err(reason @ ResetRefusal::CantTell(_)) => fail(format!("all: {reason}")).public("all: refused"),
             Ok((_, line)) => Check::new("reset", Status::Ok, format!("{}; {now}", summary(&line)))
                 .public(format!("all: ends every other session on the database; {now}")),
         };
@@ -297,6 +293,9 @@ async fn reset(
 
     let line = match line {
         Ok((_, line)) => line,
+        Err(ResetRefusal::CantEnd { text, public }) => {
+            return fail(format!("auto: {text}")).public(format!("auto: {public}"));
+        }
         Err(reason) => {
             return fail(format!("auto: {reason}"))
                 .public("auto: refused: reset = \"auto\" can't tell the pooler's sessions apart");
@@ -438,6 +437,54 @@ mod tests {
         let io = std::io::Error::new(std::io::ErrorKind::InvalidData, name);
         assert_eq!(error_class(&anyhow::Error::from(io)), "TLS certificate");
         assert_eq!(error_class(&anyhow::anyhow!("internal.host.example")), "other");
+    }
+
+    #[tokio::test]
+    async fn a_reset_that_cannot_end_the_poolers_sessions_fails() {
+        use super::super::pg::tests::{answering, target};
+        let t = Timeouts::default();
+        // A plain direct user, and a pooler connecting from 10.0.0.7 as another plain role.
+        let port = answering(|sql| {
+            if sql.contains("count(*)") {
+                vec![Some("2"), Some("0"), Some("0")]
+            } else if sql.contains("rolcreaterole") {
+                vec![Some("f"), Some("f"), Some("f"), Some("f")]
+            } else if sql.contains("inet_client_addr()), session_user") {
+                vec![Some("10.0.0.7"), Some("app")]
+            } else if sql.contains("session_user") {
+                vec![Some("app")]
+            } else if sql.contains("WHERE rolname = E'app'") {
+                vec![Some("f"), Some("f"), Some("plain")]
+            } else {
+                vec![Some("10.0.0.1")]
+            }
+        })
+        .await;
+        let plain = Privileges {
+            superuser: false,
+            createrole: false,
+            pg_signal_backend: false,
+            pg_read_all_stats: false,
+        };
+        for (reset_kind, kind) in [(Reset::All, "all"), (Reset::Auto, "auto")] {
+            let target = target(port, reset_kind);
+            let (client, _driver, _) = connect(&target.direct, &t).await.unwrap();
+            let check = reset(&target, false, plain, &client, None, &t).await;
+            assert!(matches!(check.status, Status::Fail), "{kind}: {}", check.detail);
+            assert!(
+                check.detail.contains("without pg_signal_backend and pg_read_all_stats"),
+                "{kind}: {}",
+                check.detail
+            );
+            // JSON names neither role.
+            assert_eq!(
+                check.public.as_deref(),
+                Some(
+                    format!("{kind}: can't end the pooler's sessions: missing pg_signal_backend and pg_read_all_stats")
+                        .as_str()
+                )
+            );
+        }
     }
 
     #[test]
