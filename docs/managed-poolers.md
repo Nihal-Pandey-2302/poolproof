@@ -14,12 +14,14 @@ poolproof's CI, so check it against your provider's docs if something doesn't ma
    with, so it owns the `public` schema and can create tables in it (Postgres 15 and later
    don't let other users create objects there).
 2. **Use one role for both URLs, and not a superuser.** The pooler URL and the `direct`
-   URL should log in as the same role. A role can always see and end its own sessions, so
-   the reset needs no extra privileges. With two different roles, the `direct` one needs
+   URL should log in as the same role (or the `direct` role should be a member of the
+   pooler's). A role can always see and end the sessions of roles whose privileges it
+   has, so the reset needs no extra privileges. Otherwise the `direct` role needs
    `pg_signal_backend` and `pg_read_all_stats` to see and end the pooler's sessions;
-   without them, `run` resets nothing and marks every scenario ERROR. It can never end a
-   superuser's sessions, so a pooler that logs in as a superuser can't be reset by a user
-   that isn't one.
+   without them, `run` resets nothing and marks every scenario ERROR. Not a superuser,
+   because a superuser's reset ends every session on the database, other superusers'
+   included. And only a superuser can end a superuser's sessions, so a pooler that logs
+   in as one can't be reset by a role that isn't one.
 3. **Pick `reset = "all"` and pass `--yes`.** A managed pooler usually reaches Postgres
    from several addresses (one per node or zone), and `"auto"` only ends the sessions
    from the one address it sees when it asks through the pooler. `"all"` ends every other
@@ -71,15 +73,16 @@ Not tested in poolproof's CI.
   `sslrootcert=system`, which implies `verify-full`.
 - **Reset.** RDS has no superuser you can log in as. The master user is a member of
   `rds_superuser`, which is not a superuser to Postgres, so poolproof treats it like any
-  other role. With the same user on both URLs, `reset = "all"` works without extra
-  privileges and ends that user's other sessions on the scratch database (and other
-  roles' too, where the user has `pg_signal_backend`). If the proxy logs in as a
+  other role. On RDS the master user (`rds_superuser`) usually holds both
+  `pg_signal_backend` and `pg_read_all_stats` (through `pg_monitor`); check with
+  `doctor`. Otherwise use one role on both URLs: then `reset = "all"` needs neither, and
+  ends that role's other sessions on the scratch database. If the proxy logs in as a
   different role and the `direct` user lacks either privilege, every scenario is an
   ERROR with a reason like `reset = "all" can't end the pooler's sessions: this user
   can't end sessions of proxy_user without pg_signal_backend and pg_read_all_stats; as a
   superuser: GRANT pg_signal_backend, pg_read_all_stats TO "app"` (naming only what is
-  missing). There is no superuser to run that `GRANT` on RDS, so use one role on both
-  URLs instead. `doctor` shows the same refusal as a failed `reset` check.
+  missing). There is no superuser on RDS to run that `GRANT`. `doctor` shows the same
+  refusal as a failed `reset` check.
 - **SKIP.** `load-isolated-between-clients` needs a superuser, so it always SKIPs. The two
   `SET ROLE` scenarios need `CREATEROLE` on the `direct` user.
 
@@ -132,7 +135,9 @@ seen through each URL, and fails when they differ.
   reset. `-v` prints every step's outcome on both sides.
 - **Exit code.** 1 on any FAIL or ERROR, else 0. `--fail-on silent` or `--fail-on error`
   counts only those kinds of FAIL (ERROR verdicts still count), `--fail-on none` never
-  fails.
+  fails. With `--compare-to last.json` (a saved `--format json` report), only
+  regressions against that run count, so a scheduled run can fail on new problems and
+  not on ones you already know.
 - **Sessions ending.** Every reset ends the `direct` user's other sessions on the scratch
   database, and the pooler's server connections with them. The pooler reconnects, and
   poolproof waits for it to answer before each run.
