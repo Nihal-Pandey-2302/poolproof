@@ -15,9 +15,10 @@ use crate::scenario::{PoolMode, Requirement, Scenario};
 use crate::targets::{Endpoint, Statement};
 
 /// How long a probe's second client waits before the first one closes. On a pool of
-/// one it always waits this long, so it stays short. A pooler slower than this to open
-/// a second server connection answers after the first closes with another backend,
-/// which reads as unknown, not as one connection.
+/// one it always waits this long, twice (a wait is probed again, to rule out a pool
+/// that was still opening its second server), so about 6 s per probe; it stays short
+/// for that. A pooler slower than this to open a second server connection reads as
+/// unknown, not as one connection.
 pub const BUSY_WAIT: Duration = Duration::from_secs(3);
 
 /// One probe's result, as reports record it.

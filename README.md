@@ -231,7 +231,9 @@ Neither may ever get it inside an open transaction. A pool with room for both fi
 mode. In session mode with one server connection, a scenario whose pooled clients hold
 two connections at once is skipped: it would only show the pool waiting. So is it when
 the probe can't tell. A second client counts as waiting only if, once the first client
-closes, it gets the first one's backend; a late answer from another backend is unknown.
+closes, it gets the first one's backend, and does again in a second round right after
+(a pool still opening its second server can hand the first one's over once); anything
+else is unknown.
 `ignore_server_requirements = true` on a target (`--ignore-server-requirements` with
 `run --pooler`) runs scenarios whose `one_server_connection` or
 `several_server_connections` isn't met anyway, for Postgres standing in for its own
