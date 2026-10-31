@@ -105,6 +105,11 @@ mod tests {
         // Expected failures get their own look, and hidden ones are labeled.
         assert!(TEMPLATE.contains(".exp-silent {") && TEMPLATE.contains(".exp-error {"));
         assert!(TEMPLATE.contains(r#"what = "expected failure, hidden""#));
+        // The hidden count comes from the scenarios the search matches, before "Only
+        // scenarios with failures" drops rows whose only failures are hidden: with both on,
+        // the banner still says how many are hidden. (Checked by hand in a browser; this
+        // pins the code that counts.)
+        assert!(TEMPLATE.contains("matching.map(s => results.get(c.key + \"/\" + s.name))).filter(expected)"));
     }
 
     #[test]

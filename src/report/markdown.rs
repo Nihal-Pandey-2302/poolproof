@@ -87,6 +87,7 @@ pub fn markdown(reports: &[Report]) -> String {
         .filter_map(|r| r.limitations.as_deref())
         .map(|l| if l.starts_with("built-in") { "built-in" } else { l })
         .collect();
+    sources.sort_unstable();
     sources.dedup();
     if !sources.is_empty() {
         let _ = write!(out, "\nDocumented limitations: {}.\n", sources.join(", "));
@@ -106,7 +107,9 @@ pub fn markdown(reports: &[Report]) -> String {
     }
 
     let mut details = String::new();
-    let mut documented = String::new();
+    // Expected differences that read the same (same scenario, doc and outcome) are listed
+    // once, with every target they apply to: (scenario, kind, text, targets).
+    let mut documented: Vec<(&str, FailKind, String, Vec<&str>)> = Vec::new();
     for s in &scenarios {
         for c in &columns {
             let Some(row) = c.report.row(&c.target.name, &s.name) else {
@@ -114,32 +117,37 @@ pub fn markdown(reports: &[Report]) -> String {
             };
             match &row.verdict {
                 Verdict::Fail { mismatch: m } => {
-                    let out = if row.expected.is_some() {
-                        &mut documented
-                    } else {
-                        &mut details
-                    };
-                    let _ = write!(
-                        out,
-                        "\n### {} / {} ({})\n\n{}\n\n",
-                        c.label, s.name, m.kind, s.description
-                    );
+                    let mut text = String::new();
                     if let Some(e) = &row.expected {
-                        let _ = write!(out, "- documented: \"{}\", {}", e.quote, e.doc);
+                        let _ = write!(text, "- documented: \"{}\", {}", e.quote, e.doc);
                         if let Some(v) = &e.doc_version {
                             let product = c.target.product.as_deref().unwrap_or(&c.target.name);
-                            let _ = write!(out, " (documentation for {product} {v})");
+                            let _ = write!(text, " (documentation for {product} {v})");
                         }
-                        out.push('\n');
+                        text.push('\n');
                         if let Some(note) = &e.note {
-                            let _ = writeln!(out, "- note: {note}");
+                            let _ = writeln!(text, "- note: {note}");
                         }
                     }
-                    let _ = writeln!(out, "- step {}: `{}`", m.step, m.action);
-                    let _ = writeln!(out, "- postgres: `{}`", m.expected);
-                    let _ = writeln!(out, "- pooler: `{}`", m.actual);
+                    let _ = writeln!(text, "- step {}: `{}`", m.step, m.action);
+                    let _ = writeln!(text, "- postgres: `{}`", m.expected);
+                    let _ = writeln!(text, "- pooler: `{}`", m.actual);
                     for r in &s.refs {
-                        let _ = writeln!(out, "- from {r}");
+                        let _ = writeln!(text, "- from {r}");
+                    }
+                    if row.expected.is_none() {
+                        let _ = write!(
+                            details,
+                            "\n### {} / {} ({})\n\n{}\n\n{text}",
+                            c.label, s.name, m.kind, s.description
+                        );
+                    } else if let Some(group) = documented
+                        .iter_mut()
+                        .find(|g| g.0 == s.name && g.1 == m.kind && g.2 == text)
+                    {
+                        group.3.push(&c.label);
+                    } else {
+                        documented.push((&s.name, m.kind, text, vec![&c.label]));
                     }
                 }
                 Verdict::Error { reason } => {
@@ -155,7 +163,17 @@ pub fn markdown(reports: &[Report]) -> String {
     }
     if !documented.is_empty() {
         out.push_str("\n## Expected differences (documented limitations)\n");
-        out.push_str(&documented);
+        for (name, kind, text, targets) in &documented {
+            let description = scenarios
+                .iter()
+                .find(|s| s.name == *name)
+                .map_or("", |s| &s.description);
+            let _ = write!(
+                out,
+                "\n### {name} ({kind})\n\n{description}\n\n- on {}\n{text}",
+                targets.join(", ")
+            );
+        }
     }
     out
 }
