@@ -301,7 +301,7 @@ services:
     <<: *supavisor-tenants
     environment:
       SUPAVISOR: supavisor-2.10.0-rc.1:4000
-      TENANTS: pp:default.json ppstrict:strict.json ppsession:session.json pppool4:pool4.json
+      TENANTS: pp:default.json ppstrict:strict.json ppsession:session.json pppool4:pool4.json ppnamed:named-prepared.json
     depends_on: [supavisor-2.10.0-rc.1]
 
   # Self-test targets (selftest/targets.toml, selftest/expected.toml): one port per

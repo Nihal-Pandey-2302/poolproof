@@ -60,7 +60,9 @@ poolproof man > ~/.local/share/man/man1/poolproof.1   # `poolproof man run`: poo
 PgBouncer 1.24 to 1.26 (1.26 also over TLS), PgDog 0.1.50 to 0.1.62, Supavisor 2.9 and
 2.10, PgCat 1.2 and Odyssey 1.5, on Postgres 17 and 18, with the full step-by-step trace
 for each cell. Where a behavior changed between tested versions, it names both, e.g.
-"fails from 0.1.56 (passed in 0.1.50)".
+"fails from 0.1.56 (passed in 0.1.50)". Supavisor runs with its defaults:
+named_prepared_statements off. Its FAQ says transaction mode needs the flag for named
+prepared statements; the named-prepared variant column shows Supavisor with it on.
 [RESULTS.md](RESULTS.md) has the same data as a table. Both are built from `results/`,
 which `scripts/update-results.sh` regenerates and CI checks.
 
@@ -321,7 +323,7 @@ database and user, extra pools included:
 | PgDog | `default_pool_size` (or the user's `pool_size`) | |
 | PgCat | the pool's `pool_size` | |
 | Odyssey | the route's `pool_size` | |
-| Supavisor | the tenant user's `pool_size` | 2.10.0-rc.1 can open a second server connection when the only one isn't back in the pool yet; the start check then fails, so exact is an ERROR on that target |
+| Supavisor | the tenant user's `pool_size` + 1 | Supavisor's pool allows one extra server connection, so set `pool_size` to the tenant's `pool_size` + 1 |
 
 A user that isn't a superuser needs `pg_signal_backend` and `pg_read_all_stats` to end
 other roles' sessions, and can never end a superuser's. Without `pg_read_all_stats`,

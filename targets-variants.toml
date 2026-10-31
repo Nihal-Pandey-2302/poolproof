@@ -40,8 +40,8 @@ reset = "all"
 # pool_size = 4, transaction mode. Pools open connections only when needed, so a lone
 # client still stays on one; the *-survives-server-change scenarios make one client
 # move. Scenarios that need a pool of one SKIP. PgBouncer and PgDog hold four (doctor
-# --reset exact --pool-size 4: "held 4 transactions, client 5 waited"); Supavisor may
-# open more than pool_size (there, client 5 got its own server connection).
+# --reset exact --pool-size 4: "held 4 transactions, client 5 waited"); Supavisor's pool
+# holds pool_size + 1 (doctor --pool-size 5: "held 5 transactions, client 6 waited").
 
 [[target]]
 name = "pgbouncer-1.26.1-pool4"
@@ -87,6 +87,8 @@ reset = "all"
 #   a server and PgDog answers 58000 "all replicas down"; with a bigger pool it gets
 #   Postgres's own 42P01.
 # - prepcache: prepared_statements_cache_size = 500, PgCat caches protocol statements
+# - named-prepared: Supavisor's named_prepared_statements feature flag on (tenant
+#   ppnamed); its FAQ says transaction mode needs it for named prepared statements
 
 [[target]]
 name = "pgbouncer-1.26.1-noprep"
@@ -124,6 +126,16 @@ product = "pgcat"
 version = "1.2.0"
 config = "prepcache"
 pooler = "postgres://postgres:postgres@127.0.0.1:56482/app?sslmode=disable"
+direct = "postgres://postgres:postgres@127.0.0.1:55432/app?sslmode=disable"
+mode = "transaction"
+reset = "all"
+
+[[target]]
+name = "supavisor-2.10.0-rc.1-named-prepared"
+product = "supavisor"
+version = "2.10.0-rc.1"
+config = "named-prepared"
+pooler = "postgres://postgres.ppnamed:postgres@127.0.0.1:56462/app?sslmode=disable"
 direct = "postgres://postgres:postgres@127.0.0.1:55432/app?sslmode=disable"
 mode = "transaction"
 reset = "all"
