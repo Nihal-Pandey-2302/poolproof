@@ -154,6 +154,11 @@ when `schemas/v1` no longer matches the Rust types.
 
 ## After the tour
 
+The tour leaves out what decides whether a run counts at all: the pool probes
+(`runner/probe.rs`), evidence and preconditions (in `check.rs`), the exact reset
+(`runner/exact.rs`) and documented limitations (`limitations.rs`). architecture.md has
+a short section on each; read it next, before changing a verdict.
+
 What's left is reference rather than core: `targets.rs` (URL parsing, passwords,
 `${VAR}`), `tls.rs` (sslmode as in libpq), `doctor.rs` and `runner/doctor.rs`, and
 `scan/`, which shares nothing with `run` but the report. architecture.md's last table

@@ -23,7 +23,8 @@ about or sessions you can't lose.
   so the connecting user is a member of that role until teardown drops it. Scenarios
   that need a privilege say so in `requires`, and targets without it skip them;
 - takes session advisory locks, runs `LISTEN`/`NOTIFY`, `SET`, `SET ROLE`, `DISCARD ALL`,
-  `COPY FROM STDIN`, prepared statements and cursors;
+  `COPY FROM STDIN`, prepared statements and cursors, and, as a superuser only,
+  `LOAD 'auto_explain'` into its own sessions;
 - runs `pg_sleep` for up to 15 seconds and sends CancelRequests for its own queries;
 - drops connections mid-query on purpose, to test abandoned clients;
 - runs each scenario's `setup` and `teardown` SQL, and a target's `reset`. `reset = "all"`
@@ -31,8 +32,19 @@ about or sessions you can't lose.
   a superuser's unless it is one (against a Postgres on another machine only with
   `run --yes`); `reset = "auto"` terminates every session from the address and user the
   pooler connects as, which can include other applications behind the same NAT or pooler.
+  `reset = "exact"` holds `pool_size` transactions through the pooler to find its server
+  connections, then terminates exactly those backends (by pid, start time, user and
+  address), and none of its neighbours; `doctor` holds the same transactions and
+  terminates nothing.
   `run` prints what a reset will end before it runs. Scenario and targets files are code:
   only run ones you trust.
+
+`poolproof drivers` does the same through real drivers. It runs each driver program in a
+Docker container you built (`--pull never`), with `--network host`, so the program can
+reach everything this machine can. The connection settings, password included, go to
+the container as environment variables, never as arguments: anyone who can run
+`docker inspect` (Docker access is root-equivalent anyway) sees them while it runs, and
+the container is removed when it ends.
 
 `poolproof scan` and `poolproof report` only read the files they are given. They don't
 connect to anything.

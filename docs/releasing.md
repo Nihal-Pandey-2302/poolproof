@@ -1,8 +1,8 @@
 # Releasing
 
-## Once, before the first release (owner)
+## Once, before the first release (repository admin)
 
-These are repository and crates.io settings, so only the owner can do them.
+These are repository and crates.io settings, so only a repository admin can do them.
 
 1. Done: the repository is public, and GitHub Pages is enabled with GitHub Actions as
    the source. The `pages` job in `ci.yml` deploys the results site on every push to
@@ -70,7 +70,7 @@ it is out.
 Running `release.yml` by hand (Actions > release > Run workflow) only builds, which is
 the way to check the build matrix without releasing.
 
-## Later: a Homebrew tap (owner)
+## Later: a Homebrew tap (repository admin)
 
 A tap is a separate public repository named `homebrew-poolproof`; then
 `brew install Nihal-Pandey-2302/poolproof/poolproof` works. It needs one file,
