@@ -18,6 +18,11 @@ pool of one server connection, so state leaks between clients every time instead
 luck. `POSTGRES_IMAGE=postgres:18.4` picks the Postgres version. `scripts/testbed.sh`
 runs a second test bed on shifted ports (see the README).
 
+The test bed keeps Postgres data in tmpfs, so it leaves no volumes behind. A Postgres
+container you start yourself does: the image declares a volume for its data, and
+`docker rm -f` (even of a `--rm` container) leaves it. Remove throwaway containers with
+`docker rm -fv`, or start them with `--rm` and stop them with `docker stop`.
+
 ## Writing a scenario
 
 The file format is in [README.md](README.md#writing-a-scenario). The workflow:
