@@ -1,0 +1,20 @@
+name: drivers label
+
+# Adding the `drivers` label to a PR runs the drivers workflow on it. This is its own
+# workflow so that other labels only ever show up as a skipped "drivers label" check, never
+# as a skipped "drivers" check that hides the real drivers result on the PR.
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  drivers-label:
+    name: drivers label
+    if: github.event.label.name == 'drivers'
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: ./.github/workflows/drivers.yml
