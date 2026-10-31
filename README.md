@@ -84,7 +84,10 @@ stale expectation and listed under `stale_expectations` in JSON.
 Expected FAILs count for the exit code like any other: for an app, a documented SET leak
 still breaks it. `--ignore-expected` leaves them out, for a pooler's own CI. With
 `--compare-to`, an expected FAIL that no longer matches its entry is a regression.
-`--limitations DIR` (on `run`, `report` and `scan`) uses your own entries. `report`
+`--limitations DIR` (on `run`, `report` and `scan`) uses your own entries, checked
+against the scenarios the run uses. An entry only applies to a scenario with the same
+steps it was checked against, so a scenario of your own with a built-in name isn't judged
+by the built-in entries. `report`
 applies the current entries to saved runs, so a new entry needs no new run.
 
 ```toml

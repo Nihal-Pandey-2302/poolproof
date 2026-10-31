@@ -63,6 +63,8 @@ struct Limitation {
     fixed_in: Option<Version>,
     postgres_since: Option<Version>,
     postgres_fixed_in: Option<Version>,
+    /// The scenario's steps as `describe()` gives them, when the entry was checked.
+    steps: Vec<String>,
     /// Every step (from 0) where the pooler differs, with what it returns there.
     differs: Vec<(usize, Outcome)>,
     expected: Expected,
@@ -132,14 +134,22 @@ impl From<Pooler> for Outcome {
     }
 }
 
-/// The built-in set, or the one in `dir`. `scenarios` are the ones entries may name.
+/// The built-in set, or the one in `dir`. Built-in entries are checked against the
+/// built-in scenarios; entries in `dir` against `scenarios`, the ones the run uses.
+/// Either way an entry only applies to a scenario with the same steps as the one it
+/// was checked against, so a custom scenario with a built-in name isn't judged by it.
 pub fn load(dir: Option<&Path>, scenarios: &[Scenario]) -> Result<Limitations> {
-    let (files, source) = match dir {
-        None => (
-            BUNDLED.iter().map(|(n, t)| (n.to_string(), t.to_string())).collect(),
-            format!("built-in from poolproof {}", env!("CARGO_PKG_VERSION")),
-        ),
-        Some(dir) => (read_dir(dir)?, "custom".to_string()),
+    let bundled;
+    let (files, source, scenarios) = match dir {
+        None => {
+            bundled = crate::scenario::bundled()?;
+            (
+                BUNDLED.iter().map(|(n, t)| (n.to_string(), t.to_string())).collect(),
+                format!("built-in from poolproof {}", env!("CARGO_PKG_VERSION")),
+                bundled.as_slice(),
+            )
+        }
+        Some(dir) => (read_dir(dir)?, "custom".to_string(), scenarios),
     };
     let mut entries: Vec<Limitation> = Vec::new();
     for (name, text) in files {
@@ -269,6 +279,7 @@ fn check(product: &str, e: Entry, scenarios: &[Scenario]) -> Result<Limitation> 
     }
     Ok(Limitation {
         product: product.to_string(),
+        steps: scenario.steps.iter().map(|st| st.describe()).collect(),
         scenario: e.scenario,
         mode: e.mode,
         config,
@@ -317,6 +328,12 @@ impl Limitation {
             &other.fixed_in,
             &other.differs,
         ) && (&self.postgres_since, &self.postgres_fixed_in) == (&other.postgres_since, &other.postgres_fixed_in)
+    }
+
+    /// Whether the entry is about this scenario, with the steps it was checked against,
+    /// on this target.
+    fn about(&self, scenario: &str, steps: &[String], t: &TargetInfo) -> bool {
+        self.scenario == scenario && self.steps == steps && self.applies(t)
     }
 
     /// Whether the entry is about this target: product, mode, config, pooler version
@@ -398,31 +415,36 @@ impl Limitations {
         let mut stale = Vec::new();
         for row in &mut report.results {
             row.expected = None;
-            let (Some(target), Some(compare)) = (
+            let (Some(target), Some(compare), Some(info)) = (
                 report.targets.iter().find(|t| t.name == row.target),
                 modes.get(&row.scenario),
+                report.scenarios.iter().find(|s| s.name == row.scenario),
             ) else {
                 continue;
             };
+            let mut missed = Vec::new();
             for entry in self
                 .entries
                 .iter()
-                .filter(|e| e.scenario == row.scenario && e.applies(target))
+                .filter(|e| e.about(&row.scenario, &info.steps, target))
             {
                 match entry.mismatch(compare, row) {
                     None if row.expected.is_none() => row.expected = Some(entry.expected.clone()),
                     None => {}
-                    Some(reason) if !matches!(row.verdict, Verdict::Skip { .. } | Verdict::Error { .. }) => {
-                        stale.push(Stale {
-                            target: row.target.clone(),
-                            scenario: row.scenario.clone(),
-                            doc: entry.expected.doc.clone(),
-                            reason,
-                        })
-                    }
-                    Some(_) => {}
+                    Some(reason) => missed.push((entry, reason)),
                 }
             }
+            // An entry is stale only if no other one explains the row, and only for a
+            // row that was compared at all.
+            if row.expected.is_some() || matches!(row.verdict, Verdict::Skip { .. } | Verdict::Error { .. }) {
+                continue;
+            }
+            stale.extend(missed.into_iter().map(|(entry, reason)| Stale {
+                target: row.target.clone(),
+                scenario: row.scenario.clone(),
+                doc: entry.expected.doc.clone(),
+                reason,
+            }));
         }
         report.limitations = Some(self.source.clone());
         report.stale_expectations = stale;
@@ -431,9 +453,10 @@ impl Limitations {
     /// The mark for one row as it comes in, before the report exists.
     pub fn expected_for(&self, target: &TargetInfo, scenario: &Scenario, row: &ResultRow) -> Option<Expected> {
         let compare: Vec<Compare> = scenario.steps.iter().map(|s| s.compare).collect();
+        let steps: Vec<String> = scenario.steps.iter().map(|s| s.describe()).collect();
         self.entries
             .iter()
-            .filter(|e| e.scenario == row.scenario && e.applies(target))
+            .filter(|e| e.about(&row.scenario, &steps, target))
             .find(|e| e.mismatch(&compare, row).is_none())
             .map(|e| e.expected.clone())
     }
@@ -741,14 +764,71 @@ quote = "SET/RESET | Yes | Never"
     fn apply_needs_compare_modes_from_the_report_or_the_same_steps() {
         let set = set(SET_LEAK);
         let t = target("pgbouncer", "1.26.1", "default", "17.11");
+        let mut old = report(vec![t.clone()], vec![row(&t, ok(&["9MB"]))]);
+        // No modes recorded and no scenario to take them from.
+        set.apply(&mut old, &[]);
+        assert!(old.results[0].expected.is_none());
+        set.apply(&mut old, &scenarios());
+        assert!(old.results[0].expected.is_some());
+        // Recorded modes don't need the scenario at all.
+        old.scenarios[0].compare = vec![Compare::Full; 3];
+        set.apply(&mut old, &[]);
+        assert!(old.results[0].expected.is_some());
+    }
+
+    #[test]
+    fn a_scenario_with_other_steps_is_not_judged_by_the_entry() {
+        let set = set(SET_LEAK);
+        let t = target("pgbouncer", "1.26.1", "default", "17.11");
         let mut changed = report(vec![t.clone()], vec![row(&t, ok(&["9MB"]))]);
         changed.scenarios[0].steps[0] = "[a] simple: SET work_mem = '1MB'".into();
-        set.apply(&mut changed, &scenarios());
-        assert!(changed.results[0].expected.is_none());
-        // Recorded modes don't need the scenario at all.
         changed.scenarios[0].compare = vec![Compare::Full; 3];
         set.apply(&mut changed, &[]);
-        assert!(changed.results[0].expected.is_some());
+        // Neither expected nor stale: the entry is about another scenario.
+        assert!(changed.results[0].expected.is_none());
+        assert!(changed.stale_expectations.is_empty());
+        // The same as the run sees it.
+        let custom: Scenario = toml::from_str(
+            "name = 'set-isolated-between-clients'\ndescription = ''\n\
+             [[step]]\nclient = 'a'\nsimple = 'SET work_mem = \"1MB\"'\n\
+             [[step]]\nclient = 'b'\nsimple = 'SET work_mem = \"9MB\"'\n\
+             [[step]]\nclient = 'a'\nsimple = 'SHOW work_mem'\n",
+        )
+        .unwrap();
+        assert!(set.expected_for(&t, &custom, &row(&t, ok(&["9MB"]))).is_none());
+    }
+
+    #[test]
+    fn built_in_entries_load_whatever_scenarios_the_run_uses() {
+        let only: Vec<Scenario> = scenarios()
+            .into_iter()
+            .filter(|s| s.name == "multi-statement-begin")
+            .collect();
+        let set = load(None, &only).unwrap();
+        assert!(!set.entries.is_empty());
+        // A custom set is checked against the run's scenarios.
+        let dir = std::env::temp_dir().join(format!("pp-limitations-run-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("pgbouncer.toml"), SET_LEAK).unwrap();
+        let err = load(Some(&dir), &only).err().map(|e| format!("{e:#}"));
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(err.unwrap().contains("no such scenario"));
+    }
+
+    #[test]
+    fn an_entry_explained_by_another_is_not_stale() {
+        let other = SET_LEAK
+            .replace("[[\"9MB\"]]", "[[\"8MB\"]]")
+            .replace("fixed_in = \"1.30\"", "fixed_in = \"1.31\"");
+        let set = set(&format!("{SET_LEAK}\n{other}"));
+        let t = target("pgbouncer", "1.26.1", "default", "17.11");
+        let mut r = report(vec![t.clone()], vec![row(&t, ok(&["9MB"]))]);
+        set.apply(&mut r, &scenarios());
+        assert!(r.results[0].expected.is_some());
+        assert!(r.stale_expectations.is_empty());
+        let mut r = report(vec![t.clone()], vec![row(&t, ok(&["7.5MB"]))]);
+        set.apply(&mut r, &scenarios());
+        assert_eq!(r.stale_expectations.len(), 2);
     }
 
     #[test]
@@ -828,7 +908,9 @@ quote = "SET/RESET | Yes | Never"
     fn a_duplicate_entry_is_refused() {
         let dir = std::env::temp_dir().join(format!("pp-limitations-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("pgbouncer.toml"), format!("{SET_LEAK}\n{SET_LEAK}")).unwrap();
+        // The same versions written two ways are the same scope.
+        let again = SET_LEAK.replace("since = \"1.24.1\"", "since = \"1.24.1.0\"");
+        std::fs::write(dir.join("pgbouncer.toml"), format!("{SET_LEAK}\n{again}")).unwrap();
         let err = load(Some(&dir), &scenarios()).err().map(|e| format!("{e:#}"));
         std::fs::remove_dir_all(&dir).unwrap();
         assert!(err.unwrap().contains("same scope and steps"));
