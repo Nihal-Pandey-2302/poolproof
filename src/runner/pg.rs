@@ -7,7 +7,7 @@ use tokio::task::JoinHandle;
 use tokio::time::timeout;
 use tokio_postgres::{AsyncMessage, Client, NoTls, SimpleQueryMessage, Statement};
 
-use super::{Outcome, READY_TIMEOUT, STEP_TIMEOUT};
+use super::{Outcome, Timeouts};
 
 /// NOTIFY messages received on a connection, as (channel, payload) rows.
 pub(super) type Notices = Arc<Mutex<Vec<Vec<Option<String>>>>>;
@@ -15,7 +15,6 @@ pub(super) type Notices = Arc<Mutex<Vec<Vec<Option<String>>>>>;
 pub(super) struct Conn {
     pub(super) client: Arc<Client>,
     pub(super) driver: JoinHandle<()>,
-    pub(super) direct: bool,
     pub(super) statements: HashMap<String, Statement>,
     /// The query started by a `background` step, if not yet waited for.
     pub(super) pending: Option<JoinHandle<Outcome>>,
@@ -26,8 +25,8 @@ pub(super) struct Conn {
 }
 
 /// The backend pid of a direct connection.
-pub(super) async fn backend_pid(client: &Client) -> Option<i32> {
-    let messages = timeout(STEP_TIMEOUT, client.simple_query("SELECT pg_backend_pid()"))
+pub(super) async fn backend_pid(client: &Client, t: &Timeouts) -> Option<i32> {
+    let messages = timeout(t.step, client.simple_query("SELECT pg_backend_pid()"))
         .await
         .ok()?
         .ok()?;
@@ -40,11 +39,11 @@ pub(super) async fn backend_pid(client: &Client) -> Option<i32> {
 /// Waits until a Postgres backend has exited. Closing the socket returns before the
 /// backend is gone, and until then its session state (locks, temp tables) is still
 /// visible, which would make the baseline racy.
-pub(super) async fn wait_backend_gone(direct: &str, pid: i32) {
-    let Ok((client, driver, _)) = connect(direct).await else {
+pub(super) async fn wait_backend_gone(direct: &str, pid: i32, t: &Timeouts) {
+    let Ok((client, driver, _)) = connect(direct, t).await else {
         return;
     };
-    let deadline = tokio::time::Instant::now() + STEP_TIMEOUT;
+    let deadline = tokio::time::Instant::now() + t.step;
     let sql = format!("SELECT 1 FROM pg_stat_activity WHERE pid = {pid}");
     while tokio::time::Instant::now() < deadline {
         match client.simple_query(&sql).await {
@@ -55,23 +54,23 @@ pub(super) async fn wait_backend_gone(direct: &str, pid: i32) {
         }
     }
     drop(client);
-    let _ = timeout(STEP_TIMEOUT, driver).await;
+    let _ = timeout(t.step, driver).await;
 }
 
 impl Conn {
     /// Close the connection and wait for Terminate to go out, so the pooler sees the
     /// disconnect before the next step runs.
-    pub(super) async fn close(self) {
+    pub(super) async fn close(self, t: &Timeouts) {
         if let Some(pending) = self.pending {
             pending.abort();
         }
         drop(self.client);
-        let _ = timeout(STEP_TIMEOUT, self.driver).await;
+        let _ = timeout(t.step, self.driver).await;
     }
 }
 
-pub(super) async fn connect(url: &str) -> Result<(Client, JoinHandle<()>, Notices)> {
-    let (client, mut connection) = timeout(STEP_TIMEOUT, tokio_postgres::connect(url, NoTls))
+pub(super) async fn connect(url: &str, t: &Timeouts) -> Result<(Client, JoinHandle<()>, Notices)> {
+    let (client, mut connection) = timeout(t.connect, tokio_postgres::connect(url, NoTls))
         .await
         .context("connect timed out")??;
     let notices = Notices::default();
@@ -125,11 +124,11 @@ pub(super) fn row_value(row: &tokio_postgres::Row, idx: usize) -> Option<String>
 }
 
 /// The server's version number, e.g. `17.11`.
-pub async fn server_version(url: &str) -> Result<String> {
-    let (client, driver, _) = connect(url).await?;
-    let res = timeout(STEP_TIMEOUT, client.simple_query("SHOW server_version")).await;
+pub async fn server_version(url: &str, t: &Timeouts) -> Result<String> {
+    let (client, driver, _) = connect(url, t).await?;
+    let res = timeout(t.step, client.simple_query("SHOW server_version")).await;
     drop(client);
-    let _ = timeout(STEP_TIMEOUT, driver).await;
+    let _ = timeout(t.step, driver).await;
     let version = res
         .context("SHOW server_version timed out")??
         .into_iter()
@@ -144,14 +143,14 @@ pub async fn server_version(url: &str) -> Result<String> {
 
 /// Retry `SELECT 1` through the pooler until it answers. A reset kills the pooler's
 /// server connections, and it needs a moment to notice and open new ones.
-pub(super) async fn wait_ready(url: &str) -> Result<()> {
-    let deadline = tokio::time::Instant::now() + READY_TIMEOUT;
+pub(super) async fn wait_ready(url: &str, t: &Timeouts) -> Result<()> {
+    let deadline = tokio::time::Instant::now() + t.ready;
     loop {
-        let err = match connect(url).await {
+        let err = match connect(url, t).await {
             Ok((client, driver, _)) => {
-                let res = timeout(STEP_TIMEOUT, client.simple_query("SELECT 1")).await;
+                let res = timeout(t.step, client.simple_query("SELECT 1")).await;
                 drop(client);
-                let _ = timeout(STEP_TIMEOUT, driver).await;
+                let _ = timeout(t.step, driver).await;
                 match res {
                     Ok(Ok(_)) => return Ok(()),
                     Ok(Err(e)) => anyhow::Error::from(e),
@@ -161,7 +160,7 @@ pub(super) async fn wait_ready(url: &str) -> Result<()> {
             Err(e) => e,
         };
         if tokio::time::Instant::now() >= deadline {
-            return Err(err.context(format!("pooler not ready {READY_TIMEOUT:?} after reset")));
+            return Err(err.context(format!("pooler not ready {:?} after reset", t.ready)));
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
     }

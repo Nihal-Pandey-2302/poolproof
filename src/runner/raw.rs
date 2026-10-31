@@ -15,7 +15,7 @@ use postgres_protocol::message::backend::Message;
 use postgres_protocol::message::frontend;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
-use tokio::time::{Instant, timeout};
+use tokio::time::{Instant, timeout_at};
 use tokio_postgres::config::Host;
 
 /// One frontend message, written in a scenario as e.g. `parse s1 SELECT 1`.
@@ -131,6 +131,39 @@ impl RawMessage {
     }
 }
 
+/// The largest backend message accepted on a `send` connection. A server can claim
+/// any length up to 4 GB, and parsing reserves that much before reading it.
+/// tokio-postgres clients use their own codec and are not covered by this cap.
+const MAX_MESSAGE: usize = 64 << 20;
+
+/// Rejects a message header whose length is impossible or above `MAX_MESSAGE`.
+fn check_header(buf: &[u8]) -> Result<()> {
+    let Some(len) = buf.get(1..5) else {
+        return Ok(());
+    };
+    let len = u32::from_be_bytes([len[0], len[1], len[2], len[3]]) as usize;
+    if len < 4 {
+        bail!("server sent a message with invalid length {len}");
+    }
+    if len > MAX_MESSAGE {
+        bail!("server sent a {len}-byte message, the limit is {MAX_MESSAGE} bytes");
+    }
+    Ok(())
+}
+
+/// How `exchange` waits for replies and what it records.
+#[derive(Debug, Clone, Copy)]
+pub struct ExchangeOpts {
+    /// How long to wait for all replies.
+    pub step: Duration,
+    /// Without a Sync, how long the server must be quiet before the replies count as
+    /// complete.
+    pub quiet: Duration,
+    /// Record each ParameterStatus as `ParameterStatus name=value`. Off by default,
+    /// since poolers add, drop and reorder them.
+    pub parameter_status: bool,
+}
+
 enum Next {
     Message(Message),
     Timeout,
@@ -140,7 +173,6 @@ enum Next {
 pub struct RawConn {
     stream: TcpStream,
     buf: BytesMut,
-    pub url: String,
     /// From BackendKeyData: the backend pid, or the pooler's stand-in for it.
     pub pid: Option<i32>,
 }
@@ -157,20 +189,20 @@ impl RawConn {
         let password = config.get_password().unwrap_or_default().to_vec();
         let dbname = config.get_dbname().unwrap_or(&user).to_string();
 
-        let stream = timeout(connect_timeout, TcpStream::connect((host.as_str(), port)))
+        // One deadline for TCP connect and startup, as for tokio-postgres clients.
+        let deadline = Instant::now() + connect_timeout;
+        let stream = timeout_at(deadline, TcpStream::connect((host.as_str(), port)))
             .await
             .context("connect timed out")??;
         let mut conn = RawConn {
             stream,
             buf: BytesMut::new(),
-            url: url.to_string(),
             pid: None,
         };
         let mut out = BytesMut::new();
         frontend::startup_message([("user", user.as_str()), ("database", dbname.as_str())], &mut out)?;
         conn.send(&out).await?;
 
-        let deadline = Instant::now() + connect_timeout;
         let mut scram: Option<ScramSha256> = None;
         loop {
             let message = match conn.next(deadline).await? {
@@ -223,6 +255,7 @@ impl RawConn {
 
     async fn next(&mut self, deadline: Instant) -> Result<Next> {
         loop {
+            check_header(&self.buf)?;
             if let Some(message) = Message::parse(&mut self.buf)? {
                 return Ok(Next::Message(message));
             }
@@ -236,14 +269,9 @@ impl RawConn {
 
     /// Send the messages and record the replies, one line each. Reads until one
     /// ReadyForQuery per Sync/Query/CopyDone. Without any of those (e.g. only Flush)
-    /// it reads until the server has been quiet for `quiet`. Ends with TIMEOUT or
+    /// it reads until the server has been quiet for `opts.quiet`. Ends with TIMEOUT or
     /// CLOSED if the replies stop early.
-    pub async fn exchange(
-        &mut self,
-        messages: &[RawMessage],
-        step_timeout: Duration,
-        quiet: Duration,
-    ) -> Result<Vec<String>> {
+    pub async fn exchange(&mut self, messages: &[RawMessage], opts: &ExchangeOpts) -> Result<Vec<String>> {
         let mut out = BytesMut::new();
         for m in messages {
             m.write(&mut out)?;
@@ -252,11 +280,11 @@ impl RawConn {
 
         let mut cycles = messages.iter().filter(|m| m.ends_cycle()).count();
         let wait_for_quiet = cycles == 0;
-        let deadline = Instant::now() + step_timeout;
+        let deadline = Instant::now() + opts.step;
         let mut lines = Vec::new();
         while wait_for_quiet || cycles > 0 {
             let until = if wait_for_quiet {
-                (Instant::now() + quiet).min(deadline)
+                (Instant::now() + opts.quiet).min(deadline)
             } else {
                 deadline
             };
@@ -278,7 +306,7 @@ impl RawConn {
             if let Message::ReadyForQuery(_) | Message::CopyInResponse(_) = message {
                 cycles = cycles.saturating_sub(1);
             }
-            if let Some(line) = summary(&message)? {
+            if let Some(line) = summary(&message, opts.parameter_status)? {
                 lines.push(line);
             }
         }
@@ -306,9 +334,9 @@ fn error_summary(body: &postgres_protocol::message::backend::ErrorResponseBody) 
     format!("{code} {message}")
 }
 
-/// One line per reply. Notices and ParameterStatus are skipped: poolers add,
-/// drop and reorder those, and they don't change what the client gets.
-fn summary(message: &Message) -> Result<Option<String>> {
+/// One line per reply. Notices are skipped, and ParameterStatus unless asked for:
+/// poolers add, drop and reorder those, and they rarely change what the client gets.
+fn summary(message: &Message, parameter_status: bool) -> Result<Option<String>> {
     let line = match message {
         Message::ParseComplete => "ParseComplete".to_string(),
         Message::BindComplete => "BindComplete".to_string(),
@@ -317,6 +345,17 @@ fn summary(message: &Message) -> Result<Option<String>> {
         Message::PortalSuspended => "PortalSuspended".to_string(),
         Message::EmptyQueryResponse => "EmptyQueryResponse".to_string(),
         Message::CopyInResponse(_) => "CopyInResponse".to_string(),
+        Message::CopyOutResponse(_) => "CopyOutResponse".to_string(),
+        Message::CopyData(body) => match std::str::from_utf8(body.data()) {
+            // Escaped so a row's trailing newline doesn't split the line.
+            Ok(text) => format!("CopyData {}", text.escape_debug()),
+            // Binary COPY: lossy text would hide differences.
+            Err(_) => {
+                let hex: String = body.data().iter().map(|b| format!("{b:02x}")).collect();
+                format!("CopyData hex:{hex}")
+            }
+        },
+        Message::CopyDone => "CopyDone".to_string(),
         Message::CommandComplete(body) => format!("CommandComplete {}", body.tag()?),
         Message::ParameterDescription(body) => format!("ParameterDescription {}", body.parameters().count()?),
         Message::RowDescription(body) => {
@@ -339,6 +378,9 @@ fn summary(message: &Message) -> Result<Option<String>> {
             )
         }
         Message::ReadyForQuery(body) => format!("ReadyForQuery {}", body.status() as char),
+        Message::ParameterStatus(body) if parameter_status => {
+            format!("ParameterStatus {}={}", body.name()?, body.value()?)
+        }
         _ => return Ok(None),
     };
     Ok(Some(line))
@@ -347,6 +389,53 @@ fn summary(message: &Message) -> Result<Option<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A backend message as the server would send it.
+    fn backend(tag: u8, body: &[u8]) -> Message {
+        let mut buf = BytesMut::new();
+        buf.extend_from_slice(&[tag]);
+        buf.extend_from_slice(&(body.len() as u32 + 4).to_be_bytes());
+        buf.extend_from_slice(body);
+        Message::parse(&mut buf).unwrap().unwrap()
+    }
+
+    #[test]
+    fn caps_message_size() {
+        let header = |len: u32| [&b"D"[..], &len.to_be_bytes()].concat();
+        assert!(check_header(b"").is_ok());
+        assert!(check_header(&header(4)[..3]).is_ok());
+        assert!(check_header(&header(4)).is_ok());
+        assert!(check_header(&header(MAX_MESSAGE as u32)).is_ok());
+        assert!(check_header(&header(MAX_MESSAGE as u32 + 1)).is_err());
+        assert!(check_header(&header(u32::MAX)).is_err());
+        assert!(check_header(&header(3)).is_err());
+    }
+
+    #[test]
+    fn records_copy_out() {
+        let line = |m: Message| summary(&m, false).unwrap().unwrap();
+        assert_eq!(line(backend(b'H', b"\0\0\x02\0\0\0\0")), "CopyOutResponse");
+        assert_eq!(line(backend(b'd', b"1\ta\n")), "CopyData 1\\ta\\n");
+        assert_eq!(
+            line(backend(b'd', b"PGCOPY\n\xff\r\n\0")),
+            "CopyData hex:5047434f50590aff0d0a00"
+        );
+        assert_eq!(line(backend(b'c', b"")), "CopyDone");
+    }
+
+    #[test]
+    fn parameter_status_only_when_asked() {
+        let status = || backend(b'S', b"application_name\0app\0");
+        assert_eq!(summary(&status(), false).unwrap(), None);
+        assert_eq!(
+            summary(&status(), true).unwrap().as_deref(),
+            Some("ParameterStatus application_name=app")
+        );
+        assert_eq!(
+            summary(&backend(b'Z', b"I"), true).unwrap().as_deref(),
+            Some("ReadyForQuery I")
+        );
+    }
 
     #[test]
     fn parses_messages() {
