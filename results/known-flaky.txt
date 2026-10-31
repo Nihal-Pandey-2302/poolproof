@@ -46,6 +46,9 @@ supavisor-2.10.0-rc.1-strict prepared-statement-survives-other-clients verdict
 # Seen in run 41244449211 (17.11, PASS -> SKIP "passed, but b never reached b's server
 # connection"): the overflow connection moved b between its evidence steps.
 supavisor-2.10.0-rc.1 cancel-from-idle-client-is-harmless reached
+# Seen in run 41250844951 (variants, 18.4, PASS -> SKIP "passed, but b never reached b's
+# server connection").
+supavisor-2.10.0-rc.1-named-prepared protocol-statement-names-isolated reached
 
 # Same mechanism: a named statement prepared on one server, reused after Supavisor moved
 # the client to another, gives 26000. Seen in CI on pgx-default/transaction (both
