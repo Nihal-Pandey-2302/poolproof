@@ -108,10 +108,12 @@ First release.
   18.4, built into the binary.
 - Variant targets in `targets-variants.toml`, started with the test bed's `variants`
   profile (`COMPOSE_PROFILES=variants`): session mode and `pool_size = 4` for PgBouncer
-  1.26.1, PgDog 0.1.62 and Supavisor 2.10.0-rc.1 (Supavisor may open more than
-  pool_size), and one changed setting each for
+  1.26.1, PgDog 0.1.62 and Supavisor 2.10.0-rc.1 (Supavisor's pool holds pool_size +
+  1), and one changed setting each for
   PgBouncer (`max_prepared_statements = 0`, `server_reset_query_always = 1`), PgDog
-  (`prepared_statements = "full"`) and PgCat (`prepared_statements_cache_size = 500`).
+  (`prepared_statements = "full"`), PgCat (`prepared_statements_cache_size = 500`) and
+  Supavisor 2.10.0-rc.1 (the `named_prepared_statements` feature flag on, which its FAQ
+  says transaction mode needs for named prepared statements).
   Their results (Postgres 18.4, 15s step timeout) are on the results site under a
   heading of their own, not in RESULTS.md; `scripts/update-results.sh --variants`
   regenerates them, and CI checks them nightly. `scripts/testbed.sh targets OFFSET FILE`

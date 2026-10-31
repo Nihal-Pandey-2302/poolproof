@@ -323,7 +323,7 @@ database and user, extra pools included:
 | PgDog | `default_pool_size` (or the user's `pool_size`) | |
 | PgCat | the pool's `pool_size` | |
 | Odyssey | the route's `pool_size` | |
-| Supavisor | the tenant user's `pool_size` + 1 | Supavisor's pool allows one extra server connection, so set `pool_size` to the tenant's `pool_size` + 1 |
+| Supavisor | the tenant user's `pool_size` + 1 | Supavisor's default warm pool allows one extra server connection, so set `pool_size` to the tenant's `pool_size` + 1 (`pool_size` for users in `no_warm_pool_users`) |
 
 A user that isn't a superuser needs `pg_signal_backend` and `pg_read_all_stats` to end
 other roles' sessions, and can never end a superuser's. Without `pg_read_all_stats`,
