@@ -2,17 +2,17 @@
 
 A reading order through the core of `run`, for someone who will maintain it. Each stop
 says what to read and why. [architecture.md](architecture.md) is the map to come back to
-later; this is the walk to take first. It fits in an afternoon: about four hours, half of
-it in `check.rs`, `compare.rs` and `steps.rs`.
+later; this is the walk to take first. It fits in an afternoon: about four and a half
+hours, the longest stops being `check.rs`, `steps.rs` and `pg.rs`.
 
 Before reading, watch one scenario run, so the names below match something you've seen:
 
 ```sh
 docker compose -f docker/compose.yml up -d --wait
-cargo run -- run --filter advisory-lock-released -v
+cargo run -- run --target pgbouncer-1.26.1 --filter advisory-lock-released -v
 ```
 
-`-v` prints every step's outcome on Postgres and through each pooler. Keep that output
+`-v` prints every step's outcome on Postgres and through the pooler. Keep that output
 open; most of the tour explains how it came about.
 
 ## 1. A scenario file, then `scenario.rs` (20 min)
@@ -105,8 +105,8 @@ The biggest file; read it in three parts and skip the rest.
    sees, `all` ends every other session the direct user may end, and both refuse
    (`ResetRefusal`) when they couldn't end the pooler's sessions, rather than reset half
    of them and produce results that depend on luck. `RESET_ALL` and `reset_auto_sql`
-   are the statements; note how values from the system under test are kept out of the
-   SQL.
+   are the statements; values from the system under test get into the SQL only after
+   parsing (the address as an IP) or quoting (the user as a literal).
 3. Readiness: `wait_ready` and `settle`. After a reset kills its server connections, a
    pooler needs a moment to notice and reconnect. `settle` waits until the same backend
    answers a few times in a row, and `ROTATING` remembers poolers seen rotating their
@@ -133,6 +133,8 @@ file.
 `run` is the outer loop: for each target, preflight (both URLs must answer), resolve the
 reset, read the direct user's privileges, then for each scenario `before_run` (SKIP for
 another mode or missing privileges, ERROR for an unreachable target) and `check`. The
+first three only happen when some scenario applies to the target, so a target filtered
+down to nothing is never contacted (`reset_is_not_resolved_when_no_scenario_applies`). The
 `determinism` list caches `--check-scenarios` results per scenario, direct URL and reset,
 so a scenario is checked once even with many targets. `FailOn` is the exit code ladder.
 `cli.rs` (the `Command::Run` arm of `run`) is where the result becomes a `Report` and
