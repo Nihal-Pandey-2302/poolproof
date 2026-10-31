@@ -229,7 +229,7 @@ async fn negotiate_tls(mut tcp: TcpStream, tls: &Tls, host: &str) -> Result<RawS
     frontend::ssl_request(&mut out);
     tcp.write_all(&out).await?;
     // Exactly one byte: anything the server sent after it must go through TLS, not be
-    // read as plaintext (CVE-2021-23214).
+    // read as plaintext (CVE-2021-23222).
     let mut answer = [0u8];
     tcp.read_exact(&mut answer)
         .await
