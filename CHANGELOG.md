@@ -55,6 +55,19 @@ First release.
   and `lc_messages`.
 - `scan` rules `deallocate-all` and `load` (warnings).
 - `scan` checks function calls inside `PREPARE` and `DECLARE CURSOR`.
+- `scan` checks the statements inside DO blocks and function bodies (PL/pgSQL and SQL,
+  including trigger functions and `BEGIN ATOMIC`). A DO block runs right away, so its
+  findings keep their severity. A function body runs whenever the function is called, so
+  its findings are warnings that name the function. Parameters the function sets in its
+  own `SET` clause are restored on return and not flagged. Dynamic `EXECUTE` strings are
+  not inspected.
+- `scan` counts the bodies the PL/pgSQL parser could not read, which are only checked for
+  words: in the text summary, as `uninspected` in JSON, and as a SARIF notification.
+
+### Changed
+
+- **Breaking:** `scan --format json` prints an object with `findings` and the counts
+  `queries`, `unparsed` and `uninspected`, instead of an array of findings.
 
 ### Fixed
 
@@ -63,9 +76,10 @@ First release.
   a warning to check the value. A `false` elsewhere in the query no longer triggers it.
   The value is read through casts, string booleans (`'true'`, `'on'`) and named
   arguments (`is_local => true`).
-- `scan`: function calls in the body of `CREATE VIEW`, `CREATE FUNCTION` and
-  `CREATE RULE` are no longer flagged, since they don't run when the statement does.
-  `CREATE MATERIALIZED VIEW` still is, because it runs its query.
+- `scan`: function calls in the body of `CREATE VIEW` and `CREATE RULE`, and in the
+  `CREATE FUNCTION` statement itself, are no longer flagged, since they don't run when the
+  statement does. `CREATE MATERIALIZED VIEW` still is, because it runs its query. The
+  statements in a function body are checked, and give warnings that name the function.
 - `scan`: in jsonlog files, only `LOG` messages count as statements.
 
 [Unreleased]: https://github.com/Nihal-Pandey-2302/poolproof/commits/main
