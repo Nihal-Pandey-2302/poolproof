@@ -87,12 +87,17 @@ async fn json_leaves_out_hosts_users_addresses_and_error_messages() {
     let report: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert_eq!(report["targets"][0]["checks"][0]["detail"], "connected");
 
-    // Postgres names the user in its error; JSON keeps only the class.
-    let text = doctor(&url("wrong"), "text");
+    // Postgres names the user in its error; JSON keeps only the class. This half needs
+    // a server that checks passwords: with trust auth the wrong one connects.
     let json = doctor(&url("wrong"), "json");
-    assert!(text.contains(&role.name), "{text}");
-    assert!(!json.contains(&role.name), "{json}");
     let report: serde_json::Value = serde_json::from_str(&json).unwrap();
     let detail = report["targets"][0]["checks"][0]["detail"].as_str().unwrap();
+    if detail == "connected" {
+        eprintln!("note: the server doesn't check passwords (trust auth?), so the failed-connect half is skipped");
+        return;
+    }
+    let text = doctor(&url("wrong"), "text");
+    assert!(text.contains(&role.name), "{text}");
+    assert!(!json.contains(&role.name), "{json}");
     assert!(detail.ends_with("connect failed: authentication (28P01)"), "{detail}");
 }
