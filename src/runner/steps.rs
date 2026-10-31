@@ -61,7 +61,11 @@ pub async fn run_steps(
                         }
                     }
                     let conn = raw.get_mut(step.client.as_str()).expect("just connected");
-                    match conn.exchange(&messages, &exchange_opts).await {
+                    let opts = ExchangeOpts {
+                        parameter_status: step.compare_parameter_status,
+                        ..exchange_opts
+                    };
+                    match conn.exchange(&messages, &opts).await {
                         Ok(messages) => Outcome::Messages { messages },
                         Err(e) => Outcome::error("CLIENT", format!("{e:#}")),
                     }

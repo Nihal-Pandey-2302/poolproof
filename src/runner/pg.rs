@@ -27,7 +27,7 @@ pub(super) struct Conn {
 
 /// The backend pid of a direct connection.
 pub(super) async fn backend_pid(client: &Client, t: &Timeouts) -> Option<i32> {
-    let messages = timeout(t.step, client.simple_query("SELECT pg_backend_pid()"))
+    let messages = timeout(t.housekeeping, client.simple_query("SELECT pg_backend_pid()"))
         .await
         .ok()?
         .ok()?;
@@ -44,7 +44,7 @@ pub(super) async fn wait_backend_gone(direct: &Endpoint, pid: i32, t: &Timeouts)
     let Ok((client, driver, _)) = connect(direct, t).await else {
         return;
     };
-    let deadline = tokio::time::Instant::now() + t.step;
+    let deadline = tokio::time::Instant::now() + t.housekeeping;
     let sql = format!("SELECT 1 FROM pg_stat_activity WHERE pid = {pid}");
     while tokio::time::Instant::now() < deadline {
         match client.simple_query(&sql).await {
@@ -55,7 +55,7 @@ pub(super) async fn wait_backend_gone(direct: &Endpoint, pid: i32, t: &Timeouts)
         }
     }
     drop(client);
-    let _ = timeout(t.step, driver).await;
+    let _ = timeout(t.housekeeping, driver).await;
 }
 
 impl Conn {
@@ -66,7 +66,7 @@ impl Conn {
             pending.abort();
         }
         drop(self.client);
-        let _ = timeout(t.step, self.driver).await;
+        let _ = timeout(t.housekeeping, self.driver).await;
     }
 }
 
@@ -127,9 +127,9 @@ pub(super) fn row_value(row: &tokio_postgres::Row, idx: usize) -> Option<String>
 /// The server's version number, e.g. `17.11`.
 pub async fn server_version(endpoint: &Endpoint, t: &Timeouts) -> Result<String> {
     let (client, driver, _) = connect(endpoint, t).await?;
-    let res = timeout(t.step, client.simple_query("SHOW server_version")).await;
+    let res = timeout(t.housekeeping, client.simple_query("SHOW server_version")).await;
     drop(client);
-    let _ = timeout(t.step, driver).await;
+    let _ = timeout(t.housekeeping, driver).await;
     let version = res
         .context("SHOW server_version timed out")??
         .into_iter()
@@ -149,9 +149,9 @@ pub(super) async fn wait_ready(endpoint: &Endpoint, t: &Timeouts) -> Result<()> 
     loop {
         let err = match connect(endpoint, t).await {
             Ok((client, driver, _)) => {
-                let res = timeout(t.step, client.simple_query("SELECT 1")).await;
+                let res = timeout(t.housekeeping, client.simple_query("SELECT 1")).await;
                 drop(client);
-                let _ = timeout(t.step, driver).await;
+                let _ = timeout(t.housekeeping, driver).await;
                 match res {
                     Ok(Ok(_)) => return Ok(()),
                     Ok(Err(e)) => anyhow::Error::from(e),
