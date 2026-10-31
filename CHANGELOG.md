@@ -108,10 +108,14 @@ First release.
   supported yet.
 - `reset = "auto"` ends only the sessions from the address and user the pooler connects
   to Postgres as, and refuses when that can't be told apart from poolproof's own
-  sessions. `reset = "all"` ends every other session on the database and needs
-  `run --yes` against a Postgres on another machine. A list of statements works as
-  before. Before the first scenario, `run` prints what each target's reset will end, and
-  warns when the direct user can't end other roles' sessions. `run --pooler ... --reset
+  sessions. `reset = "all"` ends every other session on the database that the `direct`
+  user may end, and needs `run --yes` against a Postgres on another machine. Unless the
+  `direct` user is a superuser, both check the role the pooler connects as and refuse to
+  run when they couldn't end its sessions (without `pg_signal_backend` and
+  `pg_read_all_stats`, or when that role is a superuser), naming the `GRANT` that fixes
+  it; `doctor` reports this as a failure. A list of statements works as before. Before
+  the first scenario, `run` prints what each target's reset will end, and warns when your
+  own reset statements terminate sessions without those privileges. `run --pooler ... --reset
   auto|all` for a single target. The JSON report records each target's reset kind,
   never the SQL or addresses.
 - `requires` in scenario files: privileges the `direct` user needs (`createrole`,
@@ -156,9 +160,10 @@ First release.
 - A URL names one host and port. Several hosts or ports, `hostaddr`,
   `target_session_attrs` and `load_balance_hosts` are refused, since poolproof would
   otherwise pick a host on its own.
-- `sslnegotiation=direct` in a URL is refused when the targets load: normal clients would
-  start TLS directly while `send` clients send SSLRequest, so the two would connect
-  differently. `sslnegotiation=postgres` is accepted.
+- `sslnegotiation=direct` in a URL, or `PGSSLNEGOTIATION=direct`, is refused when the
+  targets load: normal clients would start TLS directly while `send` clients send
+  SSLRequest, so the two would connect differently. `postgres` is accepted, any other
+  value is an error, and the URL's value wins over the environment, as in libpq.
 - The `SET ROLE` scenarios declare `requires = ["createrole"]` and run
   `GRANT pp_role TO CURRENT_USER` in setup, so a non-superuser can run them and they test
   the pooler instead of passing on a permission error.
@@ -168,6 +173,13 @@ First release.
 
 ### Fixed
 
+- `run`: without superuser or `pg_read_all_stats`, Postgres hides other roles' session
+  details, so `reset = "all"` and `"auto"` matched none of the pooler's sessions, reported
+  success, and leaked state carried over between scenarios. A pooler connecting as a
+  superuser made the reset fail in every scenario. Both are now refused before the run,
+  with the reason.
+- `requires` and the reset checks count a privilege only if the user can use it
+  (`pg_has_role(..., 'USAGE')`), so a `NOINHERIT` membership no longer counts.
 - `run`: a backend releases its locks and temp tables only when it exits, so a step right
   after a disconnect could still see them. Every close of a connection to Postgres now
   reads until Postgres closes the socket, which it does after that cleanup. A backend
