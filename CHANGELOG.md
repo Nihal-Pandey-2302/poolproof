@@ -76,6 +76,9 @@ First release.
   poolproof and Postgres, and CI checks that every scenario gets the verdicts listed in
   `selftest/expected.toml`.
 - Release binaries are built with thin LTO and stripped: 9.2 MB to 6.5 MB on Linux x86_64.
+- A GitHub Action (`uses: Nihal-Pandey-2302/poolproof@<version>`): downloads and verifies
+  the release binary, runs `scan` (with an optional SARIF upload to code scanning) or
+  `run` (results table in the job summary), and fails with poolproof's exit code.
 - ERROR verdict when nothing could be compared, instead of a PASS or an aborted run: a
   target URL that doesn't answer before the run (checked once per target), a step on the
   Postgres side that fails in the harness (timeout, connection failure), a pooler that
