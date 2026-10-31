@@ -153,6 +153,24 @@ expect = ["multi-statement-transaction"]
 note = "COMMIT, then more statements in the same string"
 
 [[query]]
+sql = 'INSERT INTO orders (id) VALUES (2); COMMIT'
+form = "log"
+expect = ["multi-statement-transaction"]
+note = "ends a transaction after another statement: a warning, with no scenario of this shape"
+
+[[query]]
+sql = "SET work_mem = '8MB'; COMMIT"
+form = "log"
+expect = ["session-set", "multi-statement-transaction"]
+note = "the SET is a finding of its own"
+
+[[query]]
+sql = 'DO $$ BEGIN INSERT INTO orders (id) VALUES (3); COMMIT; END $$'
+form = "log"
+expect = []
+note = "COMMIT inside a DO block is one statement of the string, not several"
+
+[[query]]
 sql = 'PREPARE lock_job (bigint) AS SELECT pg_try_advisory_lock($1)'
 form = "log"
 expect = ["sql-prepare", "session-advisory-lock"]

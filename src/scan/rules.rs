@@ -77,26 +77,31 @@ pub fn scan(input: &Input) -> Report {
 
 /// A query string of several statements with BEGIN, COMMIT or ROLLBACK among them. The
 /// scenarios are the ones with the same shape: a transaction statement first, BEGIN
-/// first, or one after other statements.
+/// first, or BEGIN after other statements. A string that only ends a transaction (or
+/// sets a savepoint) after other statements has no scenario of its shape.
 fn multi_statement_transaction(stmts: &[pg_query::protobuf::RawStmt]) -> Option<Hit> {
     use pg_query::protobuf::TransactionStmtKind;
-    let (at, kind) = stmts
+    let kinds: Vec<(usize, TransactionStmtKind)> = stmts
         .iter()
         .enumerate()
-        .find_map(|(i, raw)| match raw.stmt.as_ref()?.node.as_ref()? {
+        .filter_map(|(i, raw)| match raw.stmt.as_ref()?.node.as_ref()? {
             NodeEnum::TransactionStmt(t) => Some((i, t.kind())),
             _ => None,
-        })?;
-    let begins = matches!(
-        kind,
-        TransactionStmtKind::TransStmtBegin | TransactionStmtKind::TransStmtStart
-    );
-    let (detail, scenarios) = match at {
-        0 => (
+        })
+        .collect();
+    let begins = |kind: &TransactionStmtKind| {
+        matches!(
+            kind,
+            TransactionStmtKind::TransStmtBegin | TransactionStmtKind::TransStmtStart
+        )
+    };
+    let (at, kind) = kinds.first()?;
+    let (detail, scenarios) = if *at == 0 {
+        (
             "This one query string starts with BEGIN, COMMIT or ROLLBACK and has more statements \
              after it. Some poolers only handle the first statement and defer or drop the rest \
              (PgDog: https://github.com/pgdogdev/pgdog/issues/1849). Send them separately.",
-            if begins {
+            if begins(kind) {
                 vec![
                     "multi-statement-begin",
                     "multi-statement-begin-variants",
@@ -106,17 +111,26 @@ fn multi_statement_transaction(stmts: &[pg_query::protobuf::RawStmt]) -> Option<
             } else {
                 vec!["multi-statement-commit-first"]
             },
-        ),
-        _ => (
-            "This one query string runs other statements, then BEGIN, COMMIT or ROLLBACK. Some \
-             poolers decide about the transaction from the first statement, so its statements or \
-             an error that should abort it don't behave as on Postgres (PgDog: \
+        )
+    } else if kinds.iter().any(|(_, k)| begins(k)) {
+        (
+            "This one query string runs other statements, then BEGIN. Some poolers decide about \
+             the transaction from the first statement, so its statements or an error that should \
+             abort it don't behave as on Postgres (PgDog: \
              https://github.com/pgdogdev/pgdog/issues/1849). Send them separately.",
             vec![
                 "multi-statement-begin-not-first",
                 "multi-statement-error-aborts-transaction",
             ],
-        ),
+        )
+    } else {
+        (
+            "This one query string ends a transaction (COMMIT, ROLLBACK or a savepoint) after other \
+             statements. A pooler that decides about transactions from a string's first statement \
+             may not see it; no poolproof scenario tests this shape yet, so check yours. Send them \
+             separately.",
+            vec![],
+        )
     };
     let mut hit = Hit::new("multi-statement-transaction", Severity::Warn, detail.to_string());
     hit.scenarios = scenarios;
@@ -894,6 +908,22 @@ mod tests {
                 "multi-statement-begin-not-first",
                 "multi-statement-error-aborts-transaction"
             ]
+        );
+        // Ending a transaction after other statements is a warning with no scenario of its
+        // shape, so --pooler has nothing to check it against.
+        for sql in [
+            "INSERT INTO t VALUES (1); COMMIT",
+            "INSERT INTO t VALUES (1); ROLLBACK",
+            "SELECT 1; SAVEPOINT s",
+        ] {
+            let findings = scan(&[query(sql, 1)]).findings;
+            assert_eq!(findings.len(), 1, "{sql}");
+            assert_eq!(findings[0].rule, "multi-statement-transaction");
+            assert!(findings[0].scenarios.is_empty(), "{sql}");
+        }
+        assert_eq!(
+            scenarios("INSERT INTO t VALUES (1); COMMIT; BEGIN; INSERT INTO t VALUES (2)")[0],
+            "multi-statement-begin-not-first"
         );
         // Every scenario a finding narrows its list to exists (the rule lists are checked
         // in findings_point_to_scenarios).
