@@ -100,6 +100,10 @@ pub struct Step {
     /// `execute -`, `sync`) and record every reply. A client that uses `send` talks
     /// raw protocol for its whole life; `disconnect` is its only other step.
     pub send: Option<Vec<String>>,
+    /// With `send`: record ParameterStatus replies too and compare them, ignoring where
+    /// in the reply they come. For poolers that drop or fake them, e.g. after a SET.
+    #[serde(default)]
+    pub compare_parameter_status: bool,
     /// Sleep this long before the step, e.g. so a cancel lands while a query runs.
     pub delay_ms: Option<u64>,
     #[serde(default)]
@@ -229,6 +233,16 @@ fn parse(origin: &str, text: &str) -> Result<Scenario> {
     if scenario.repeat == 0 {
         bail!("{origin}: repeat must be at least 1");
     }
+    if let Some(step) = scenario
+        .steps
+        .iter()
+        .find(|s| s.compare_parameter_status && s.send.is_none())
+    {
+        bail!(
+            "{origin}: compare_parameter_status needs a send step (client '{}')",
+            step.client
+        );
+    }
     if scenario.timeout_ms == Some(0) {
         bail!("{origin}: timeout_ms must be at least 1");
     }
@@ -340,6 +354,14 @@ mod tests {
         let text = |ms: u64| format!("name = 't'\ndescription = 't'\ntimeout_ms = {ms}\nstep = []\n");
         assert_eq!(parse("t", &text(1500)).unwrap().timeout_ms, Some(1500));
         assert!(parse("t", &text(0)).is_err());
+    }
+
+    #[test]
+    fn compare_parameter_status_needs_send() {
+        let head = "name = 't'\ndescription = 't'\n[[step]]\nclient = 'a'\ncompare_parameter_status = true\n";
+        let send = parse("t", &format!("{head}send = ['query SET application_name = 1']\n")).unwrap();
+        assert!(send.steps[0].compare_parameter_status);
+        assert!(parse("t", &format!("{head}simple = 'SELECT 1'\n")).is_err());
     }
 
     #[test]
