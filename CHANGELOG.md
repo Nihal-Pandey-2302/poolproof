@@ -45,9 +45,10 @@ First release.
 - `poolproof run`: replays scenarios against Postgres and through each pooler, and reports
   every step where the results differ (silent, error or hang). Text, JSON, markdown and
   HTML output; `--pooler`/`--direct` for a single target, `--filter`, `--reverse`, `-v`.
-- 37 scenarios: session state leaks (SET, SET ROLE, search_path, temp tables, advisory
+- 49 scenarios: session state leaks (SET, SET ROLE, search_path, temp tables, advisory
   locks, cursors, prepared statements, LISTEN/NOTIFY, DEALLOCATE ALL, LOAD), session
-  state that must survive the client's own transactions, multi-statement transactions,
+  state that must survive the client's own transactions and a move to another server
+  connection, multi-statement transactions,
   cancel requests, abandoned queries, ParameterStatus after SET, and protocol-level
   messages (statement names, Flush vs Sync, pipelines, COPY FROM STDIN and TO STDOUT)
   with raw `send` steps.
@@ -73,7 +74,10 @@ First release.
 - Scenario steps can be `evidence` of which backend a client is on, and `same_backend`
   pairs make a run count only when the clients really shared a server connection; no
   counted run is a SKIP. `same_backend_or_closed` also counts a run where the first
-  client's backend had exited.
+  client's backend had exited. The scenarios about one client's state reaching another
+  use them, so a PASS means the clients really shared a server connection. A raw
+  client's evidence may follow any step that ends with ReadyForQuery (a Sync or a
+  simple query).
 - Scenario steps can be a `precondition`: a boolean query that decides whether a run
   through the pooler counts. Reports say in how many runs it held ("pass (precondition
   1/5)"), and the HTML trace marks steps that never ran and why. The HTML report shows
@@ -102,6 +106,8 @@ First release.
   `targets-variants.toml`, started with the test bed's `variants` profile
   (`COMPOSE_PROFILES=variants`). Their results are not published yet.
   `scripts/testbed.sh targets OFFSET FILE` shifts the ports in any targets file.
+- The test bed keeps Postgres data in tmpfs, capped, with small WAL, so it leaves no
+  Docker volumes behind.
 - `run --compare-to BASE.json`: compares the run with a saved JSON report and fails only
   on regressions (PASS to FAIL or ERROR, a FAIL getting worse, FAIL to ERROR or back),
   as far as `--fail-on` counts them. Fixed, milder and one-sided results are listed but
@@ -115,7 +121,9 @@ First release.
   (`docs/managed-poolers.md`), and a code tour for new contributors (`docs/code-tour.md`).
 - A harness self-test: a small proxy (`tools/pp-proxy`) puts known faults between
   poolproof and Postgres, and CI checks that every scenario gets the verdicts listed in
-  `selftest/expected.toml`.
+  `selftest/expected.toml`, SKIPs by their reason too. One target is a pool of two server
+  connections handed out last in, first out, for the scenarios that need several; CI
+  also checks `doctor --reset exact` against it.
 - Shell completions (bash, zsh, fish, PowerShell, elvish) and man pages, in the release
   archives and from `poolproof completions <shell>` and `poolproof man [command]`.
 - Release binaries are built with thin LTO and stripped: 9.2 MB to 6.5 MB on Linux x86_64.
