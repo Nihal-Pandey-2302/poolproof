@@ -65,7 +65,8 @@ enum Command {
         #[arg(long)]
         strict: bool,
         /// Check each finding against what this pooler actually does, using poolproof's
-        /// own results (e.g. `pgbouncer-1.26.1`), or a target in --results.
+        /// own results (e.g. `pgbouncer-1.26.1`, or a product name such as `pgbouncer`
+        /// for its newest stable version), or a target in --results.
         #[arg(long)]
         pooler: Option<String>,
         /// With --pooler: the Postgres version to use results for. Defaults to the newest.

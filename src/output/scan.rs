@@ -55,8 +55,9 @@ fn status_label(status: scan::PoolerStatus) -> &'static str {
 
 /// The hint for pg_stat_statements rows another role's queries were hidden in.
 pub fn hidden_hint(hidden: usize) -> String {
+    let queries = if hidden == 1 { "query" } else { "queries" };
     format!(
-        "{hidden} queries hidden by pg_stat_statements (<insufficient privilege>): export as a \
+        "{hidden} {queries} hidden by pg_stat_statements (<insufficient privilege>): export as a \
          superuser or a role with pg_read_all_stats to scan them"
     )
 }
