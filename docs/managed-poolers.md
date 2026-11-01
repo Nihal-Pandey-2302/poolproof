@@ -136,7 +136,8 @@ seen through each URL, and fails when they differ.
 - **Pool size.** With more than one server connection, `abandoned-query-does-not-block-pool`
   and `cancel-under-saturated-pool` SKIP ("needs one server connection"); with only one,
   the four `*-survives-server-change` scenarios SKIP ("needs several server
-  connections"). `run` says at the end which pool size runs them.
+  connections"). The probe decides; Supavisor's overflow connection counts as several.
+  `run` says at the end which pool size runs them.
 - **Latency.** Each step may take 10 seconds before it counts as a hang. Over a slow
   link, raise it with `--step-timeout 30s`. `--check-scenarios` runs each scenario twice
   on plain Postgres first and makes it an ERROR if the two runs differ, which catches
