@@ -25,111 +25,126 @@
 # migrating/pgbouncer.md (the same text at v2.9.13). Steps and outcomes are the same as
 # PgBouncer's entries. Unlike PgBouncer 1.26.1, Supavisor also fails search_path on
 # Postgres 18, so that entry has no Postgres bound.
+#
+# Configs: the rows don't depend on the pool size (pool4) or on the
+# named_prepared_statements flag (named-prepared), which only changes named statements.
 
 [[limitation]]
 scenario = "set-isolated-between-clients"
 mode = "transaction"
+config = ["default", "pool4", "named-prepared"]
 since = "2.9.13"
 differs = [{ step = 7, pooler = { status = "ok", rows = [["9MB"]], tags = [0] } }]
 doc = "https://github.com/supabase/supavisor/blob/b3c0236b57adcf29b4c026866a0456e28d5fd5c4/docs/migrating/pgbouncer.md?plain=1#L5-L6"
 quote = "Both `transaction` and `session` pool mode behavior for Supavisor is the same as PgBouncer."
-note = "Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes): \"SET/RESET | Yes | Never\", a row of its table \"SQL feature map for pooling modes\" (Feature, Session pooling, Transaction pooling) with padding collapsed."
+note = "Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (features.md at ccb120f, linked in the PgBouncer entry for this scenario): \"SET/RESET | Yes | Never\", padding collapsed."
 
 [[limitation]]
 scenario = "set-does-not-leak-after-disconnect"
 mode = "transaction"
+config = ["default", "pool4", "named-prepared"]
 since = "2.9.13"
 differs = [{ step = 8, pooler = { status = "ok", rows = [["7MB"]], tags = [0] } }]
 doc = "https://github.com/supabase/supavisor/blob/b3c0236b57adcf29b4c026866a0456e28d5fd5c4/docs/migrating/pgbouncer.md?plain=1#L5-L6"
 quote = "Both `transaction` and `session` pool mode behavior for Supavisor is the same as PgBouncer."
-note = "Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes): \"SET/RESET | Yes | Never\", a row of its table \"SQL feature map for pooling modes\" (Feature, Session pooling, Transaction pooling) with padding collapsed."
+note = "Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (features.md at ccb120f, linked in the PgBouncer entry for this scenario): \"SET/RESET | Yes | Never\", padding collapsed."
 
 [[limitation]]
 scenario = "set-role-isolated-between-clients"
 mode = "transaction"
+config = ["default", "pool4", "named-prepared"]
 since = "2.9.13"
 differs = [{ step = 7, pooler = { status = "ok", rows = [["pp_role"]], tags = [1] } }]
 doc = "https://github.com/supabase/supavisor/blob/b3c0236b57adcf29b4c026866a0456e28d5fd5c4/docs/migrating/pgbouncer.md?plain=1#L5-L6"
 quote = "Both `transaction` and `session` pool mode behavior for Supavisor is the same as PgBouncer."
-note = "Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes): \"SET/RESET | Yes | Never\", a row of its table \"SQL feature map for pooling modes\" (Feature, Session pooling, Transaction pooling) with padding collapsed. SET ROLE is a SET command."
+note = "Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (features.md at ccb120f, linked in the PgBouncer entry for this scenario): \"SET/RESET | Yes | Never\", padding collapsed. SET ROLE is a SET command."
 
 [[limitation]]
 scenario = "set-role-reset-after-pinned-disconnect"
 mode = "transaction"
+config = ["default", "pool4", "named-prepared"]
 since = "2.9.13"
 differs = [{ step = 8, pooler = { status = "ok", rows = [["pp_role"]], tags = [1] } }]
 doc = "https://github.com/supabase/supavisor/blob/b3c0236b57adcf29b4c026866a0456e28d5fd5c4/docs/migrating/pgbouncer.md?plain=1#L5-L6"
 quote = "Both `transaction` and `session` pool mode behavior for Supavisor is the same as PgBouncer."
-note = "Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes): \"SET/RESET | Yes | Never\", a row of its table \"SQL feature map for pooling modes\" (Feature, Session pooling, Transaction pooling) with padding collapsed. SET ROLE is a SET command."
+note = "Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (features.md at ccb120f, linked in the PgBouncer entry for this scenario): \"SET/RESET | Yes | Never\", padding collapsed. SET ROLE is a SET command."
 
 [[limitation]]
 scenario = "set-role-reset-after-temp-table-disconnect"
 mode = "transaction"
+config = ["default", "pool4", "named-prepared"]
 since = "2.9.13"
 differs = [{ step = 8, pooler = { status = "ok", rows = [["pp_role"]], tags = [1] } }]
 doc = "https://github.com/supabase/supavisor/blob/b3c0236b57adcf29b4c026866a0456e28d5fd5c4/docs/migrating/pgbouncer.md?plain=1#L5-L6"
 quote = "Both `transaction` and `session` pool mode behavior for Supavisor is the same as PgBouncer."
-note = "Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes): \"SET/RESET | Yes | Never\", a row of its table \"SQL feature map for pooling modes\" (Feature, Session pooling, Transaction pooling) with padding collapsed. SET ROLE is a SET command."
+note = "Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (features.md at ccb120f, linked in the PgBouncer entry for this scenario): \"SET/RESET | Yes | Never\", padding collapsed. SET ROLE is a SET command."
 
 [[limitation]]
 scenario = "search-path-isolated-between-clients"
 mode = "transaction"
+config = ["default", "pool4", "named-prepared"]
 since = "2.9.13"
 differs = [{ step = 7, pooler = { status = "ok", rows = [["public"]], tags = [0] } }]
 doc = "https://github.com/supabase/supavisor/blob/b3c0236b57adcf29b4c026866a0456e28d5fd5c4/docs/migrating/pgbouncer.md?plain=1#L5-L6"
 quote = "Both `transaction` and `session` pool mode behavior for Supavisor is the same as PgBouncer."
-note = "Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes): \"SET/RESET | Yes | Never\", a row of its table \"SQL feature map for pooling modes\" (Feature, Session pooling, Transaction pooling) with padding collapsed."
+note = "Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (features.md at ccb120f, linked in the PgBouncer entry for this scenario): \"SET/RESET | Yes | Never\", padding collapsed."
 
 [[limitation]]
 scenario = "listen-notify-delivered"
 mode = "transaction"
+config = ["default", "pool4", "named-prepared"]
 since = "2.9.13"
 differs = [{ step = 9, pooler = { status = "ok", rows = [], tags = [] } }]
 doc = "https://github.com/supabase/supavisor/blob/b3c0236b57adcf29b4c026866a0456e28d5fd5c4/docs/migrating/pgbouncer.md?plain=1#L5-L6"
 quote = "Both `transaction` and `session` pool mode behavior for Supavisor is the same as PgBouncer."
-note = "Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes): \"LISTEN | Yes | Never\", a row of its table \"SQL feature map for pooling modes\" (Feature, Session pooling, Transaction pooling) with padding collapsed."
+note = "Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (features.md at ccb120f, linked in the PgBouncer entry for this scenario): \"LISTEN | Yes | Never\", padding collapsed."
 
 [[limitation]]
 scenario = "cursor-isolated-between-clients"
 mode = "transaction"
+config = ["default", "pool4", "named-prepared"]
 since = "2.9.13"
 differs = [{ step = 7, pooler = { status = "ok", rows = [["1"]], tags = [1] } }]
 doc = "https://github.com/supabase/supavisor/blob/b3c0236b57adcf29b4c026866a0456e28d5fd5c4/docs/migrating/pgbouncer.md?plain=1#L5-L6"
 quote = "Both `transaction` and `session` pool mode behavior for Supavisor is the same as PgBouncer."
-note = "Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes): \"WITH HOLD CURSOR | Yes | Never\", a row of its table \"SQL feature map for pooling modes\" (Feature, Session pooling, Transaction pooling) with padding collapsed."
+note = "Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (features.md at ccb120f, linked in the PgBouncer entry for this scenario): \"WITH HOLD CURSOR | Yes | Never\", padding collapsed."
 
 [[limitation]]
 scenario = "sql-prepare-isolated-between-clients"
 mode = "transaction"
+config = ["default", "pool4", "named-prepared"]
 since = "2.9.13"
 differs = [{ step = 7, pooler = { status = "ok", rows = [["from a"]], tags = [1] } }]
 doc = "https://github.com/supabase/supavisor/blob/b3c0236b57adcf29b4c026866a0456e28d5fd5c4/docs/migrating/pgbouncer.md?plain=1#L5-L6"
 quote = "Both `transaction` and `session` pool mode behavior for Supavisor is the same as PgBouncer."
-note = "Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes): \"PREPARE / DEALLOCATE | Yes | Never\", a row of its table \"SQL feature map for pooling modes\" (Feature, Session pooling, Transaction pooling) with padding collapsed."
+note = "Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (features.md at ccb120f, linked in the PgBouncer entry for this scenario): \"PREPARE / DEALLOCATE | Yes | Never\", padding collapsed."
 
 [[limitation]]
 scenario = "temp-table-isolated-between-clients"
 mode = "transaction"
+config = ["default", "pool4", "named-prepared"]
 since = "2.9.13"
 differs = [{ step = 7, pooler = { status = "ok", rows = [["0"]], tags = [1] } }]
 doc = "https://github.com/supabase/supavisor/blob/b3c0236b57adcf29b4c026866a0456e28d5fd5c4/docs/migrating/pgbouncer.md?plain=1#L5-L6"
 quote = "Both `transaction` and `session` pool mode behavior for Supavisor is the same as PgBouncer."
-note = "Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes): \"PRESERVE/DELETE ROWS temp tables | Yes | Never\", a row of its table \"SQL feature map for pooling modes\" (Feature, Session pooling, Transaction pooling) with padding collapsed. CREATE TEMP TABLE without ON COMMIT preserves rows."
+note = "Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (features.md at ccb120f, linked in the PgBouncer entry for this scenario): \"PRESERVE/DELETE ROWS temp tables | Yes | Never\", padding collapsed. CREATE TEMP TABLE without ON COMMIT preserves rows."
 
 [[limitation]]
 scenario = "load-isolated-between-clients"
 mode = "transaction"
+config = ["default", "pool4", "named-prepared"]
 since = "2.9.13"
 differs = [{ step = 8, pooler = { status = "ok", rows = [["-1"]], tags = [1] } }]
 doc = "https://github.com/supabase/supavisor/blob/b3c0236b57adcf29b4c026866a0456e28d5fd5c4/docs/migrating/pgbouncer.md?plain=1#L5-L6"
 quote = "Both `transaction` and `session` pool mode behavior for Supavisor is the same as PgBouncer."
-note = "Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes): \"LOAD statement | Yes | Never\", a row of its table \"SQL feature map for pooling modes\" (Feature, Session pooling, Transaction pooling) with padding collapsed."
+note = "Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (features.md at ccb120f, linked in the PgBouncer entry for this scenario): \"LOAD statement | Yes | Never\", padding collapsed."
 
 [[limitation]]
 scenario = "advisory-lock-released-on-disconnect"
 mode = "transaction"
+config = ["default", "pool4", "named-prepared"]
 since = "2.9.13"
 differs = [{ step = 4, pooler = { status = "ok", rows = [["1"]], tags = [1] } }]
 doc = "https://github.com/supabase/supavisor/blob/b3c0236b57adcf29b4c026866a0456e28d5fd5c4/docs/migrating/pgbouncer.md?plain=1#L5-L6"
 quote = "Both `transaction` and `session` pool mode behavior for Supavisor is the same as PgBouncer."
-note = "Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes): \"Session-level advisory locks | Yes | Never\", a row of its table \"SQL feature map for pooling modes\" (Feature, Session pooling, Transaction pooling) with padding collapsed."
+note = "Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (features.md at ccb120f, linked in the PgBouncer entry for this scenario): \"Session-level advisory locks | Yes | Never\", padding collapsed."

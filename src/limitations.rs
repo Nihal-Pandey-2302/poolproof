@@ -979,13 +979,34 @@ quote = "SET/RESET | Yes | Never"
         assert!(err.unwrap().contains("same scope and steps"));
     }
 
-    /// Every built-in entry must explain a result in the committed results, so a typo
-    /// or a fixed limitation can't sit in the files unnoticed.
+    /// The committed results: the bundled ones, plus results/variants-postgres-*.json
+    /// from the repo (the variant targets: other configs of the same products).
+    fn committed_reports() -> Vec<Report> {
+        let mut reports = crate::report::bundled().unwrap();
+        let Some(dir) = crate::repo_file("results") else {
+            return reports;
+        };
+        let mut variants: Vec<_> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with("variants-postgres-") && n.ends_with(".json"))
+            })
+            .collect();
+        variants.sort();
+        reports.extend(variants.iter().map(|p| Report::load(p).unwrap()));
+        reports
+    }
+
+    /// Every built-in entry must explain a result in the committed results, for each
+    /// config it lists, so a typo or a fixed limitation can't sit in the files unnoticed.
     #[test]
     fn built_in_entries_match_committed_results() {
         let scenarios = scenarios();
         let set = load(None, &scenarios).unwrap();
-        let mut reports = crate::report::bundled().unwrap();
+        let mut reports = committed_reports();
         if reports.is_empty() {
             return;
         }
@@ -1011,6 +1032,19 @@ quote = "SET/RESET | Yes | Never"
                 "entry {i} ({} {}) matches no committed result",
                 entry.product, entry.scenario
             );
+            // A config no committed target has would never be checked against a result.
+            for config in &entry.config {
+                let tested = reports.iter().flat_map(|r| &r.targets).any(|t| {
+                    t.product.as_deref() == Some(entry.product.as_str())
+                        && t.mode == entry.mode
+                        && t.config.as_ref() == Some(config)
+                });
+                assert!(
+                    tested,
+                    "entry {i} ({} {}) lists config {config}, which no committed target has",
+                    entry.product, entry.scenario
+                );
+            }
         }
     }
 }

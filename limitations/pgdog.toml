@@ -15,10 +15,11 @@
 # parser, which an unsharded deployment without read/write split doesn't run by default.
 # So the lock stays on the server connection after the client disconnects. With the
 # parser on (config "full" turns it on) the scenario passes.
+# The pool size doesn't change that (pool4).
 [[limitation]]
 scenario = "advisory-lock-released-on-disconnect"
 mode = "transaction"
-config = ["default", "pubsub"]
+config = ["default", "pubsub", "pool4"]
 since = "0.1.50"
 differs = [{ step = 4, pooler = { status = "ok", rows = [["1"]], tags = [1] } }]
 doc = "https://github.com/pgdogdev/docs/blob/9087f5cc4a5cc1047830c32c078fd84bc9c2e472/docs/features/connection-pooler/transaction-mode.md#handling-advisory-locks"

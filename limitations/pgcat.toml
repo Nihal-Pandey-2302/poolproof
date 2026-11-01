@@ -11,10 +11,15 @@
 
 # SET, advisory locks and prepared statements, which the README says transaction mode
 # doesn't support.
+#
+# Config prepcache (prepared_statements_cache_size > 0) is listed only on the SET and
+# advisory lock entries: with the cache on, PgCat supports prepared statements, so the
+# README's sentence no longer covers those FAILs.
 
 [[limitation]]
 scenario = "set-isolated-between-clients"
 mode = "transaction"
+config = ["default", "prepcache"]
 since = "1.2.0"
 differs = [{ step = 7, pooler = { status = "ok", rows = [["4MB"]], tags = [0] } }]
 doc = "https://github.com/postgresml/pgcat/blob/4a7a6a8e7a78354b889002a4db118a8e2f2d6d79/README.md#transaction-mode"
@@ -24,6 +29,7 @@ note = "README \"Transaction mode\" section, at the v1.2.0 tag."
 [[limitation]]
 scenario = "search-path-isolated-between-clients"
 mode = "transaction"
+config = ["default", "prepcache"]
 since = "1.2.0"
 differs = [{ step = 7, pooler = { status = "ok", rows = [["\"$user\", public"]], tags = [0] } }]
 doc = "https://github.com/postgresml/pgcat/blob/4a7a6a8e7a78354b889002a4db118a8e2f2d6d79/README.md#transaction-mode"
@@ -33,6 +39,7 @@ note = "README \"Transaction mode\" section, at the v1.2.0 tag. SET search_path 
 [[limitation]]
 scenario = "advisory-lock-released-on-disconnect"
 mode = "transaction"
+config = ["default", "prepcache"]
 since = "1.2.0"
 differs = [{ step = 4, pooler = { status = "ok", rows = [["1"]], tags = [1] } }]
 doc = "https://github.com/postgresml/pgcat/blob/4a7a6a8e7a78354b889002a4db118a8e2f2d6d79/README.md#transaction-mode"

@@ -13,21 +13,38 @@
 
 # Session state the feature map lists as "Never" for transaction pooling: the next client on
 # the same server connection sees it, or the client that set it loses it.
+#
+# Configs: the rows don't depend on the pool size (pool4) or on max_prepared_statements
+# (noprep; PREPARE here is SQL, not the protocol). server_reset_query_always (reset-always)
+# changes what is left on the connection, so it is listed only where its results fail at
+# the same step the same way.
 
 [[limitation]]
 scenario = "set-isolated-between-clients"
 mode = "transaction"
-config = ["default", "tls"]
+config = ["default", "tls", "pool4", "noprep"]
 since = "1.24.1"
 differs = [{ step = 7, pooler = { status = "ok", rows = [["9MB"]], tags = [0] } }]
 doc = "https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes"
 quote = "SET/RESET | Yes | Never"
 note = "Row of the table \"SQL feature map for pooling modes\" (columns: Feature, Session pooling, Transaction pooling), with the table's padding spaces collapsed."
 
+# With server_reset_query_always the server connection is reset after every transaction,
+# so client a gets the server default back instead of client b's value. Still the SET row.
+[[limitation]]
+scenario = "set-isolated-between-clients"
+mode = "transaction"
+config = ["reset-always"]
+since = "1.26.1"
+differs = [{ step = 7, pooler = { status = "ok", rows = [["4MB"]], tags = [0] } }]
+doc = "https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes"
+quote = "SET/RESET | Yes | Never"
+note = "Row of the table \"SQL feature map for pooling modes\" (columns: Feature, Session pooling, Transaction pooling), with the table's padding spaces collapsed. With server_reset_query_always the client loses its own SET instead of seeing another client's."
+
 [[limitation]]
 scenario = "set-does-not-leak-after-disconnect"
 mode = "transaction"
-config = ["default", "tls"]
+config = ["default", "tls", "pool4", "noprep"]
 since = "1.24.1"
 differs = [{ step = 8, pooler = { status = "ok", rows = [["7MB"]], tags = [0] } }]
 doc = "https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes"
@@ -37,7 +54,7 @@ note = "Row of the table \"SQL feature map for pooling modes\" (columns: Feature
 [[limitation]]
 scenario = "set-role-isolated-between-clients"
 mode = "transaction"
-config = ["default", "tls"]
+config = ["default", "tls", "pool4", "noprep"]
 since = "1.24.1"
 differs = [{ step = 7, pooler = { status = "ok", rows = [["pp_role"]], tags = [1] } }]
 doc = "https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes"
@@ -47,7 +64,7 @@ note = "Row of the table \"SQL feature map for pooling modes\" (columns: Feature
 [[limitation]]
 scenario = "set-role-reset-after-pinned-disconnect"
 mode = "transaction"
-config = ["default", "tls"]
+config = ["default", "tls", "pool4", "noprep"]
 since = "1.24.1"
 differs = [{ step = 8, pooler = { status = "ok", rows = [["pp_role"]], tags = [1] } }]
 doc = "https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes"
@@ -57,7 +74,7 @@ note = "Row of the table \"SQL feature map for pooling modes\" (columns: Feature
 [[limitation]]
 scenario = "set-role-reset-after-temp-table-disconnect"
 mode = "transaction"
-config = ["default", "tls"]
+config = ["default", "tls", "pool4", "noprep"]
 since = "1.24.1"
 differs = [{ step = 8, pooler = { status = "ok", rows = [["pp_role"]], tags = [1] } }]
 doc = "https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes"
@@ -95,7 +112,7 @@ note = "Row of the table \"SQL feature map for pooling modes\" (columns: Feature
 [[limitation]]
 scenario = "listen-notify-delivered"
 mode = "transaction"
-config = ["default", "tls"]
+config = ["default", "tls", "pool4", "noprep", "reset-always"]
 since = "1.24.1"
 differs = [{ step = 9, pooler = { status = "ok", rows = [], tags = [] } }]
 doc = "https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes"
@@ -105,7 +122,7 @@ note = "Row of the table \"SQL feature map for pooling modes\" (columns: Feature
 [[limitation]]
 scenario = "cursor-isolated-between-clients"
 mode = "transaction"
-config = ["default", "tls"]
+config = ["default", "tls", "pool4", "noprep"]
 since = "1.24.1"
 differs = [{ step = 7, pooler = { status = "ok", rows = [["1"]], tags = [1] } }]
 doc = "https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes"
@@ -115,7 +132,7 @@ note = "Row of the table \"SQL feature map for pooling modes\" (columns: Feature
 [[limitation]]
 scenario = "sql-prepare-isolated-between-clients"
 mode = "transaction"
-config = ["default", "tls"]
+config = ["default", "tls", "pool4", "noprep"]
 since = "1.24.1"
 differs = [{ step = 7, pooler = { status = "ok", rows = [["from a"]], tags = [1] } }]
 doc = "https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes"
@@ -125,7 +142,7 @@ note = "Row of the table \"SQL feature map for pooling modes\" (columns: Feature
 [[limitation]]
 scenario = "temp-table-isolated-between-clients"
 mode = "transaction"
-config = ["default", "tls"]
+config = ["default", "tls", "pool4", "noprep"]
 since = "1.24.1"
 differs = [{ step = 7, pooler = { status = "ok", rows = [["0"]], tags = [1] } }]
 doc = "https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes"
@@ -135,7 +152,7 @@ note = "Row of the table \"SQL feature map for pooling modes\" (columns: Feature
 [[limitation]]
 scenario = "load-isolated-between-clients"
 mode = "transaction"
-config = ["default", "tls"]
+config = ["default", "tls", "pool4", "noprep", "reset-always"]
 since = "1.24.1"
 differs = [{ step = 8, pooler = { status = "ok", rows = [["-1"]], tags = [1] } }]
 doc = "https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes"
@@ -145,7 +162,7 @@ note = "Row of the table \"SQL feature map for pooling modes\" (columns: Feature
 [[limitation]]
 scenario = "advisory-lock-released-on-disconnect"
 mode = "transaction"
-config = ["default", "tls"]
+config = ["default", "tls", "pool4", "noprep"]
 since = "1.24.1"
 differs = [{ step = 4, pooler = { status = "ok", rows = [["1"]], tags = [1] } }]
 doc = "https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes"
