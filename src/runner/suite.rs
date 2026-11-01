@@ -244,7 +244,7 @@ pub async fn run(
                 row.expected = limitations.expected_for(info, s, &row);
             }
             if opts.text {
-                print_result(s, &row, opts.style);
+                print_result(s, &row, target.product.as_deref(), opts.style);
             } else {
                 print_progress(results.len() + 1, total, &target.name, s, &row.verdict);
             }

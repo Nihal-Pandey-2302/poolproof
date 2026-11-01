@@ -209,6 +209,12 @@ footer { color: var(--muted); font-size: 12px; max-width: 1400px; margin: 0 auto
   const refLink = r => /^https?:\/\//i.test(r)
     ? el("a", { href: r, target: "_blank", rel: "noopener noreferrer" }, r.replace("https://github.com/", ""))
     : el("span", {}, r);
+  // Same rule as scenario::ref_label: another project's GitHub issue is only related, so a
+  // PgBouncer FAIL doesn't read as coming from a PgDog issue.
+  const related = (r, product) => {
+    const repo = (/^https:\/\/github\.com\/[^/]*\/([^/]+)/.exec(r) || [])[1];
+    return !!repo && (!product || repo.toLowerCase() !== product.toLowerCase());
+  };
   const state = (x) => !x ? "none" : x.result === "fail" ? x.mismatch.kind : x.result;
   // A FAIL that a pooler's documentation explains. Still a failure, never a pass.
   const expected = (x) => !!(x && x.result === "fail" && x.expected);
@@ -410,7 +416,9 @@ footer { color: var(--muted); font-size: 12px; max-width: 1400px; margin: 0 auto
         probeText(c.t) ? el("p", {}, probeText(c.t)) : null),
       el("button", { class: "close", "aria-label": "Close", onclick: () => dlg.close() }, "×"));
     const body = el("div", { class: "dlg-body" }, el("p", {}, s.description));
-    if (s.refs.length) body.append(el("p", {}, "From: ", s.refs.flatMap((r, i) => [i ? ", " : null, refLink(r)])));
+    const refs = (label, rs) => { if (rs.length) body.append(el("p", {}, label, rs.flatMap((r, i) => [i ? ", " : null, refLink(r)]))); };
+    refs("From: ", s.refs.filter(r => !related(r, c.t.product)));
+    refs("Related upstream issues: ", s.refs.filter(r => related(r, c.t.product)));
     if (expected(x)) {
       const e = x.expected;
       body.append(el("div", { class: "limitation" },

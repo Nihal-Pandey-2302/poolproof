@@ -268,6 +268,10 @@ First release.
 - The bundled targets file uses `reset = "all"`, the same statement as before.
 - **Breaking:** `scan --format json` prints an object with `findings` and the counts
   `queries`, `unparsed` and `uninspected`, instead of an array of findings.
+- A FAIL lists another project's GitHub issue among the scenario's refs as `related:`
+  instead of `from`, in the text, markdown and HTML reports, so a PgBouncer FAIL no
+  longer reads as coming from a PgDog issue. Docs links and the target's own project's
+  issues still say `from`.
 
 ### Fixed
 

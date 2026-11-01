@@ -49,6 +49,7 @@ fn label(verdict: &Verdict, color: bool) -> String {
 
 pub fn print_verdict(
     target: &str,
+    product: Option<&str>,
     s: &scenario::Scenario,
     verdict: &Verdict,
     expected: Option<&Expected>,
@@ -70,15 +71,22 @@ pub fn print_verdict(
                 println!("      documented: \"{}\" {}{version}", e.quote, e.doc);
             }
             for r in &s.refs {
-                println!("      from {r}");
+                println!("      {} {r}", scenario::ref_label(r, product));
             }
         }
     }
 }
 
 /// One scenario's result on one target, as `run` prints it.
-pub fn print_result(s: &scenario::Scenario, row: &ResultRow, style: Style) {
-    print_verdict(&row.target, s, &row.verdict, row.expected.as_ref(), style.color);
+pub fn print_result(s: &scenario::Scenario, row: &ResultRow, product: Option<&str>, style: Style) {
+    print_verdict(
+        &row.target,
+        product,
+        s,
+        &row.verdict,
+        row.expected.as_ref(),
+        style.color,
+    );
     if let Some(unmet) = row.precondition_unmet.filter(|u| *u > 0 || row.runs > 1) {
         let ran = row.runs + unmet;
         let rests = if row.runs == 1 && ran > 1 && matches!(row.verdict, Verdict::Pass) {
