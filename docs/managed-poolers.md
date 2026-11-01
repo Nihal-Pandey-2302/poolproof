@@ -46,8 +46,7 @@ mode = "transaction"
 reset = "all"
 ```
 
-The file leaves out `product`, `version` and `config` (README, "Documented
-limitations"). With `config = "default"`, FAILs that match the built-in entries for that
+The file leaves out `product`, `version` and `config` ([limitations.md](limitations.md)). With `config = "default"`, FAILs that match the built-in entries for that
 product are marked documented, but those entries were checked on the self-hosted
 defaults, and a managed pooler's version and settings may differ. Leave `product` out,
 or set it with a `config` label of your own (`config = "supabase"`) so that only your

@@ -1,6 +1,6 @@
 # PgDog's documented limitations: FAILs its own docs say happen. A result that matches an
 # entry exactly is reported as expected, still a FAIL; anything else stays a bug. See
-# README "Documented limitations" for the format and the rules.
+# docs/limitations.md for the format and the rules.
 #
 # Read: pgdogdev/docs at 9087f5cc (connection-pooler pages). Left as FAILs:
 # - listen-notify-delivered: pub/sub is documented as off by default, but PgDog then

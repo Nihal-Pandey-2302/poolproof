@@ -296,23 +296,23 @@ report given with `--results`.
 | To add or change | Edit |
 |---|---|
 | A scenario | `scenarios/<name>.toml`, then `scripts/update-results.sh` (see CONTRIBUTING.md) |
-| A step action or option | `scenario.rs` (format, and the checks when a file loads: unique names, one side per client, `execute` after `prepare`), `runner/steps.rs`, README's step list |
+| A step action or option | `scenario.rs` (format, and the checks when a file loads: unique names, one side per client, `execute` after `prepare`), `runner/steps.rs`, the step list in docs/scenarios.md |
 | A protocol message for `send` | `runner/raw.rs` (parsing the `send` line, encoding, reply lines) |
 | How outcomes are compared or classified | `runner/compare.rs`, with unit tests there |
 | Reset, setup, repeat or timing behavior | `runner/check.rs`, `runner/pg.rs` (`resolve_reset`, `wait_ready`), `runner/exact.rs` (built in `runner/suite.rs`), `Timeouts` in `runner/mod.rs`; the step timeout is also set by `--step-timeout` in `cli.rs` and `timeout_ms` in `scenario.rs` |
-| A targets file field | `targets.rs`, README's targets example |
+| A targets file field | `targets.rs`, the targets example in docs/targets.md |
 | Connections, TLS or socket options | `runner/pg.rs` (`connect`, `tcp_connect`), `runner/raw.rs` (`RawConn::connect`), `runner/tls.rs`, URL checks in `targets.rs` |
 | A privilege for `requires` | `scenario.rs` (the names), `privileges` in `runner/pg.rs`, `before_run` in `runner/suite.rs`; the server-connection requirements in `runner/probe.rs` |
 | A field in the JSON report | `report/mod.rs`; it's a stable format, see the versioning policy in CHANGELOG.md. A change old readers would misread bumps `SCHEMA_VERSION` |
 | What `--compare-to` counts as a regression | `report/compare.rs` |
 | Any field of a report, scenario or targets file | also regenerate `schemas/v1` with `UPDATE_SCHEMAS=1 cargo test schema`; a test fails until it matches |
 | The results table or page | `report/markdown.rs`, `report/html.rs` and `report/report.html` |
-| A `scan` rule | `scan/rules.rs`, `RULES` and the rule -> scenario map in `scan/mod.rs`, README's rule list, expected findings in the corpus (`tests/fixtures/scan/*.toml`, run by `tests/scan_corpus.rs`) |
+| A `scan` rule | `scan/rules.rs`, `RULES` and the rule -> scenario map in `scan/mod.rs`, the rule list in docs/scan.md, expected findings in the corpus (`tests/fixtures/scan/*.toml`, run by `tests/scan_corpus.rs`) |
 | A driver, variant or driver case | `drivers/` (the program and its lockfile, `drivers.toml`, `cases.toml`; the contract is in `drivers/README.md`), the Dependabot ignore list in `.github/dependabot.yml`, then `scripts/update-driver-results.sh` |
 | A `scan` input format | `scan/input.rs` (`InputFormat` is also the list of `--input` values) |
 | Terminal or SARIF output | `output/` |
-| A command or flag | `cli.rs`, README |
-| A pooler or version in the matrix | `docker/compose.yml`, `targets.toml` (with `product`, `version`, `config`), the version list in README.md, the Docker ignore list in `.github/dependabot.yml`, then regenerate `results/` |
+| A command or flag | `cli.rs`, README.md or the docs page for that command |
+| A pooler or version in the matrix | `docker/compose.yml`, `targets.toml` (with `product`, `version`, `config`), the version lists in README.md and docs/results.md, the Docker ignore list in `.github/dependabot.yml`, then regenerate `results/` |
 | A harness self-test fault | `tools/pp-proxy/src/fault.rs` (the fault and its name), `main.rs` (`PROXY_LISTEN` parsing) and `shared.rs` (the shared-server fault) there, the table in `tools/pp-proxy/README.md`, `selftest/expected.toml` |
 | A `doctor` check | `doctor.rs` (the check and its output), `runner/doctor.rs` (the queries); it must stay read-only |
 | A documented limitation | `limitations/<product>.toml` (the doc pinned to a commit or with `doc_version`, the quote, every differing step), then `report results/postgres-*.json` against RESULTS.md (CONTRIBUTING.md); changing a scenario's steps means checking its entries again |

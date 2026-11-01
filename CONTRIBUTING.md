@@ -16,7 +16,7 @@ cargo run -- run                                    # all scenarios against targ
 The test bed listens on 127.0.0.1 only, with the password `postgres`. Each pooler has a
 pool of one server connection, so state leaks between clients every time instead of by
 luck. `POSTGRES_IMAGE=postgres:18.4` picks the Postgres version. `scripts/testbed.sh`
-runs a second test bed on shifted ports (see the README).
+runs a second test bed on shifted ports (see [docs/test-bed.md](docs/test-bed.md)).
 
 The test bed keeps Postgres data in tmpfs, so it leaves no volumes behind. A Postgres
 container you start yourself does: the image declares a volume for its data, and
@@ -27,7 +27,7 @@ Supavisor loses its tenants: take the test bed down and up again instead.
 
 ## Writing a scenario
 
-The file format is in [README.md](README.md#writing-a-scenario). The workflow:
+The file format is in [docs/scenarios.md](docs/scenarios.md). The workflow:
 
 1. Find the smallest sequence of steps that shows the bug. Start from the issue's own
    reproduction if there is one, and put its URL in `refs`.
@@ -73,7 +73,7 @@ The file format is in [README.md](README.md#writing-a-scenario). The workflow:
 
 A FAIL that the pooler's own docs say will happen gets an entry in
 `limitations/<product>.toml`. The format is in
-[README.md](README.md#documented-limitations). The rules:
+[docs/limitations.md](docs/limitations.md). The rules:
 
 1. `quote` is the doc's own words, copied verbatim, and `doc` links to it pinned to a
    commit (a GitHub link with the commit hash). If it can't be pinned, `doc_version`

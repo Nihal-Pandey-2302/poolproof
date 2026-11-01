@@ -16,8 +16,9 @@ crates.io, so steps 3 to 8 still wait for the first release that goes to crates.
    `publish` job in `release.yml` runs in this environment, so every crates.io upload
    waits for your approval.
 4. In the release commit that step 5 publishes, add `cargo install --locked poolproof`
-   and `cargo binstall poolproof` to the README's Install section, and say it is on
-   crates.io. The crate's README on crates.io is the one in the published commit.
+   and `cargo binstall poolproof` to the Install sections of README.md and
+   docs/install.md, and say it is on crates.io. The crate's README on crates.io is the one
+   in the published commit.
    `cargo binstall` finds the release archives through the crate's metadata, so it needs
    the crate on crates.io too.
 5. Publish the first version by hand. Trusted publishing can only be set up for a crate
@@ -45,8 +46,8 @@ creates the GitHub release, nothing more.
 ## Every release
 
 1. Move the `Unreleased` entries in CHANGELOG.md under the new version and date. Pick the
-   version by the policy in CHANGELOG.md. Change the `--tag` in the README's install
-   command to the new version.
+   version by the policy in CHANGELOG.md. Change the `--tag` in the install command in
+   README.md and docs/install.md to the new version.
 2. Bump `version` in Cargo.toml, run `cargo check` so Cargo.lock follows, commit
    "Release vX.Y.Z", push, and wait for CI to be green on main.
 3. Tag and push the tag:
