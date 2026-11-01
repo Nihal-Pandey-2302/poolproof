@@ -1,8 +1,10 @@
 # Releasing
 
-## Once, before the first release (repository admin)
+## Once (repository admin)
 
 These are repository and crates.io settings, so only a repository admin can do them.
+Steps 1 and 2 come before the first release. v0.1.0 was released on GitHub only, without
+crates.io, so steps 3 to 8 still wait for the first release that goes to crates.io.
 
 1. Done: the repository is public, and GitHub Pages is enabled with GitHub Actions as
    the source. The `pages` job in `ci.yml` deploys the results site on every push to
@@ -30,16 +32,21 @@ These are repository and crates.io settings, so only a repository admin can do t
 6. Turn on the publish job: Settings > Secrets and variables > Actions > Variables >
    New repository variable `CRATES_IO_TRUSTED_PUBLISHING` = `true`.
 7. Revoke the API token used in step 4. No crates.io token is stored in the repository.
+8. Before step 4, in the release commit it publishes: add `cargo install --locked
+   poolproof` and `cargo binstall poolproof` to the README's Install section, and say
+   it is on crates.io. The crate's README on crates.io is the one in the published
+   commit. `cargo binstall` finds the release archives through the crate's metadata, so
+   it needs the crate on crates.io too.
 
-The README's install section already describes the released state (the releases page,
-`cargo binstall poolproof`, `cargo install --locked poolproof`), so the crate's README on
-crates.io is right from the first version. None of those works until the first release is
-tagged and published; check each once it is out.
+Until step 6 is done, the publish job in `release.yml` is skipped (it runs only when
+`CRATES_IO_TRUSTED_PUBLISHING` is `true`), so a tag builds the binaries, attests them and
+creates the GitHub release, nothing more.
 
 ## Every release
 
 1. Move the `Unreleased` entries in CHANGELOG.md under the new version and date. Pick the
-   version by the policy in CHANGELOG.md.
+   version by the policy in CHANGELOG.md. Change the `--tag` in the README's install
+   command to the new version.
 2. Bump `version` in Cargo.toml, run `cargo check` so Cargo.lock follows, commit
    "Release vX.Y.Z", push, and wait for CI to be green on main.
 3. Tag and push the tag:
@@ -57,7 +64,7 @@ tagged and published; check each once it is out.
    ```sh
    gh release download vX.Y.Z --repo Nihal-Pandey-2302/poolproof -p 'poolproof-x86_64-unknown-linux-gnu.tar.gz'
    gh attestation verify poolproof-x86_64-unknown-linux-gnu.tar.gz --repo Nihal-Pandey-2302/poolproof
-   cargo binstall poolproof
+   cargo binstall poolproof   # once the crate is on crates.io
    ```
 
    And the action's download path, which CI can't test before a release exists: in any
