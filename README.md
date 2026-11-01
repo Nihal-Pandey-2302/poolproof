@@ -29,8 +29,8 @@ From the committed results, on Postgres 17.11 and 18.4:
   `set_config()` loses its connection at its next query, once another client has changed
   `search_path` ([pgbouncer#1663](https://github.com/pgbouncer/pgbouncer/issues/1663)).
 - **Every pooler but Odyssey**, with default settings, keeps a session advisory lock after
-  the client that took it disconnects
-  ([pgdog#1407](https://github.com/pgdogdev/pgdog/issues/1407)). PgBouncer, PgDog, PgCat and
+  the client that took it disconnects (PgDog:
+  [pgdog#1407](https://github.com/pgdogdev/pgdog/issues/1407)). PgBouncer, PgDog, PgCat and
   Supavisor document this one.
 
 ## Results
