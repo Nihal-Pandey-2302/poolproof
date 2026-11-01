@@ -11,7 +11,7 @@ inputs:
     description: Arguments for the command, one per line. Each line is one argument, taken as is (no shell quoting, no variables); blank lines are skipped. Don't pass --format.
     default: ""
   version:
-    description: Release to download, e.g. `v0.1.0`, or `latest`. Defaults to the version in `uses:` when that is a release tag, else the latest release.
+    description: Release to download, e.g. `v0.1.0`, or `latest`. Defaults to the version in `uses:` when that is a release tag, else the latest release. Required when `uses:` pins a commit.
     default: ""
   binary:
     description: Path to a poolproof binary to use instead of downloading one. It is not verified.

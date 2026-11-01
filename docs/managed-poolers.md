@@ -46,6 +46,13 @@ mode = "transaction"
 reset = "all"
 ```
 
+The file leaves out `product`, `version` and `config` (README, "Documented
+limitations"). With `config = "default"`, FAILs that match the built-in entries for that
+product are marked documented, but those entries were checked on the self-hosted
+defaults, and a managed pooler's version and settings may differ. Leave `product` out,
+or set it with a `config` label of your own (`config = "supabase"`) so that only your
+own entries (`--limitations DIR`) apply.
+
 ```sh
 export PGPASSWORD=...           # used for both URLs, kept out of `ps`
 poolproof doctor --targets managed.toml --yes
@@ -84,7 +91,7 @@ Not tested in poolproof's CI.
   missing). There is no superuser on RDS; the master user may be able to run that
   `GRANT` (check its privileges with `doctor`), otherwise use one role on both URLs.
   `doctor` shows the same refusal as a failed `reset` check.
-- **SKIP.** `load-isolated-between-clients` needs a superuser, so it always SKIPs. The two
+- **SKIP.** `load-isolated-between-clients` needs a superuser, so it always SKIPs. The
   `SET ROLE` scenarios need `CREATEROLE` on the `direct` user.
 
 ## Hosted Supavisor (Supabase)
@@ -120,11 +127,16 @@ seen through each URL, and fails when they differ.
 - **Clients may not share a server connection.** poolproof's test bed gives each pooler
   one server connection, so two clients always share it. A managed pooler usually has
   more. A scenario that checks one client's state doesn't reach another only tests
-  something when they land on the same server connection; otherwise it passes because
-  nothing was shared. `doctor`'s `mode` line shows what happened when it tried: `b got
-  a's server connection` means they share, `b got another server connection` means a
-  PASS on those scenarios says little. If the provider lets you set the pool size, a pool
-  of one on a throwaway project makes the results comparable to `RESULTS.md`.
+  something when they land on the same server connection. Its evidence steps check that
+  they did; otherwise the run doesn't count, and if no run counted, the scenario is a
+  SKIP that starts "passed, but". `doctor`'s `mode` line shows what happened when it
+  tried: `b got a's server connection` means they share, `b got another server
+  connection` means expect those SKIPs. If the provider lets you set the pool size, a
+  pool of one on a throwaway project makes the results comparable to `RESULTS.md`.
+- **Pool size.** With more than one server connection, `abandoned-query-does-not-block-pool`
+  and `cancel-under-saturated-pool` SKIP ("needs one server connection"); with only one,
+  the four `*-survives-server-change` scenarios SKIP ("needs several server
+  connections"). `run` says at the end which pool size runs them.
 - **Latency.** Each step may take 10 seconds before it counts as a hang. Over a slow
   link, raise it with `--step-timeout 30s`. `--check-scenarios` runs each scenario twice
   on plain Postgres first and makes it an ERROR if the two runs differ, which catches
