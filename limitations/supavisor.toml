@@ -1,6 +1,6 @@
 # Supavisor's documented limitations: FAILs its own docs say happen. A result that matches
 # an entry exactly is reported as expected, still a FAIL; anything else stays a bug. See
-# README "Documented limitations" for the format and the rules.
+# docs/limitations.md for the format and the rules.
 #
 # Supavisor's docs (docs/ at v2.9.13 and v2.10.0-rc.1) say its transaction mode behaves the
 # same as PgBouncer's (migrating/pgbouncer.md). An entry here uses that only where

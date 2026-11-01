@@ -1,6 +1,6 @@
 # PgBouncer's documented limitations: FAILs its own docs say happen. A result that
 # matches an entry exactly is reported as expected, still a FAIL; anything else stays
-# a bug. See README "Documented limitations" for the format and the rules.
+# a bug. See docs/limitations.md for the format and the rules.
 #
 # Every quote is a row of the feature map in features.md at ccb120f (the newest change to
 # that file as of 2026-11-01). Not covered by it, so left as FAILs: an empty search_path
