@@ -29,8 +29,11 @@ hosted Supavisor.
 ## Install
 
 ```sh
-cargo install --git https://github.com/Nihal-Pandey-2302/poolproof
+cargo install --locked --git https://github.com/Nihal-Pandey-2302/poolproof poolproof
 ```
+
+The last `poolproof` picks the package, since the repository holds other, internal ones.
+`--locked` builds with the dependency versions in Cargo.lock, the ones CI tests.
 
 Building needs Rust 1.88 or newer, a C compiler and libclang, since poolproof uses the
 Postgres parser (C, through bindgen): `apt install clang libclang-dev` on Debian and
@@ -105,12 +108,13 @@ Never" for transaction pooling. Those are listed in `limitations/<product>.toml`
 into the binary, each with a link to the pooler's own docs pinned to a version or commit
 and the doc's words. A FAIL that matches an entry exactly is still a FAIL, printed as
 `(silent, documented)` with the doc, and marked `expected` in JSON. Exactly means: the
-target's product, pool mode, config (`default` unless the entry lists others) and version
-are in the entry's range, every step that differs is one the entry lists, with the
-outcome it lists, and nothing hangs. A repeated scenario must fail the same way in every
-run. Anything else stays an unexplained FAIL. An entry that applies to a target but
-doesn't match its result (the scenario passes now, or fails another way) is printed as a
-stale expectation and listed under `stale_expectations` in JSON.
+target's `product`, `mode`, `config` (`default` unless the entry lists others) and
+`version` (keys of the targets file, below) are in the entry's range, every step that
+differs is one the entry lists, with the outcome it lists, and nothing hangs. A repeated
+scenario must fail the same way in every run. Anything else stays an unexplained FAIL. An
+entry that applies to a target but doesn't match its result (the scenario passes now, or
+fails another way) is printed as a stale expectation and listed under
+`stale_expectations` in JSON.
 
 Expected FAILs count for the exit code like any other: for an app, a documented SET leak
 still breaks it. `--ignore-expected` leaves them out, for a pooler's own CI. With
@@ -257,7 +261,20 @@ mode = "transaction"
 # Run on `direct` before every run so one scenario's leaked state can't change the next
 # one's result: "auto", "all", or a list of your own statements.
 reset = "auto"
+# What the pooler is: the product as poolproof names it (pgbouncer, pgdog, supavisor,
+# pgcat, odyssey), its version, and a label for its settings.
+product = "pgbouncer"
+version = "1.26.1"
+config = "default"
 ```
+
+`product`, `version` and `config` label the target in reports, and `--compare-to` warns
+when they differ from the saved run's. Documented limitations only match a target that
+sets all three, with `config = "default"` for a pooler with its default settings (or
+another config an entry lists) and a version poolproof can compare, such as `1.26.1` or
+`2.10.0-rc.1`; `latest` or `v1.26.1` matches no entry. Give a pooler with changed
+settings a label of your own, so entries about the defaults don't apply to it.
+`run --pooler` has no flags for them, so with it no FAIL is marked documented.
 
 Before its first scenario, each target is probed twice: a second client connects while
 the first is connected and idle, and again while the first is inside a transaction. The
@@ -405,6 +422,10 @@ From pg_stat_statements:
 psql -c "\copy (SELECT query, calls FROM pg_stat_statements) TO 'queries.csv' CSV HEADER"
 poolproof scan queries.csv
 ```
+
+Export as a superuser or a role with `pg_read_all_stats`. For any other role,
+pg_stat_statements returns `<insufficient privilege>` instead of other roles' queries,
+and scan can't check them.
 
 From Postgres logs, with `log_statement = 'all'` or `log_min_duration_statement` set:
 `poolproof scan postgresql.log` (stderr format), `postgresql.csv` (csvlog) or

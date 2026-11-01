@@ -302,6 +302,15 @@ First release.
   statement does. `CREATE MATERIALIZED VIEW` still is, because it runs its query. The
   statements in a function body are checked, and give warnings that name the function.
 - `scan`: in jsonlog files, only `LOG` messages count as statements.
+- README: the install command names the package, `cargo install --locked --git ...
+  poolproof`. Without the name, cargo stopped with "multiple packages with binaries
+  found", since the repository holds internal packages too; `--locked` builds the
+  dependency versions CI tests.
+- README documents the target keys `product`, `version` and `config`. Documented
+  limitations only match a target that sets them, with `config = "default"` for a
+  pooler's default settings.
+- README: the pg_stat_statements export needs a superuser or `pg_read_all_stats`, or
+  other roles' queries come back as `<insufficient privilege>`.
 
 ### Security
 
