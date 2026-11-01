@@ -63,8 +63,12 @@ jobs:
                       windows-latest:x86_64-pc-windows-msvc.zip; do
             os=${pair%%:*} archive=poolproof-${pair#*:}
             id=$(gh api "$jobs" --jq ".jobs[] | select(.name == \"scan $os\") | .id")
+            # curl, not gh api: gh refuses a response with terminal escape sequences,
+            # and GH_FORCE_TTY colours these logs. Then CRs and colour codes go.
             for _ in 1 2 3 4 5 6; do
-              gh api "repos/$GITHUB_REPOSITORY/actions/jobs/$id/logs" | tr -d '\r' > "$os.log" && [ -s "$os.log" ] && break
+              curl -sSfL -H "Authorization: Bearer $GH_TOKEN" \
+                "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/jobs/$id/logs" |
+                tr -d '\r' | sed 's/\x1b\[[0-9;]*[A-Za-z]//g' > "$os.log" && [ -s "$os.log" ] && break
               sleep 10
             done
             echo "== $os"
