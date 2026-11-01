@@ -192,11 +192,11 @@ impl Targets {
     }
 
     /// The one target given with `run --pooler URL --direct URL`, with `reset` from
-    /// `--reset`.
+    /// `--reset`. It is named `quick`; cli.rs renames it after `--product`.
     pub fn single(pooler: &str, direct: &str, mode: PoolMode, reset: Reset) -> Result<Self> {
         Ok(Targets {
             targets: vec![Target {
-                name: "pooler".into(),
+                name: "quick".into(),
                 pooler: Endpoint::parse(pooler).context("--pooler")?,
                 direct: Endpoint::parse(direct).context("--direct")?,
                 mode,

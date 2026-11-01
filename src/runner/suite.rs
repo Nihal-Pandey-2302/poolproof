@@ -610,14 +610,14 @@ mod tests {
         targets.append(&mut second);
         let names = |v: Vec<&Target>| v.into_iter().map(|t| t.name.clone()).collect::<Vec<_>>();
 
-        assert_eq!(names(select(&targets, &[]).unwrap()), ["pooler", "b"]);
+        assert_eq!(names(select(&targets, &[]).unwrap()), ["quick", "b"]);
         assert_eq!(
-            names(select(&targets, &["b".into(), "pooler".into()]).unwrap()),
-            ["pooler", "b"]
+            names(select(&targets, &["b".into(), "quick".into()]).unwrap()),
+            ["quick", "b"]
         );
         let Err(err) = select(&targets, &["nope".into()]) else {
             panic!("unknown target accepted")
         };
-        assert_eq!(err.to_string(), "no target named 'nope'; targets: pooler, b");
+        assert_eq!(err.to_string(), "no target named 'nope'; targets: quick, b");
     }
 }

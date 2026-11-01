@@ -178,6 +178,24 @@ struct SuiteArgs {
     /// For Postgres standing in for its own pooler.
     #[arg(long, requires = "pooler")]
     ignore_server_requirements: bool,
+    /// With --pooler: what the pooler is, e.g. `pgbouncer`, as product in a targets
+    /// file. With it, the pooler's documented limitations apply, and the target is
+    /// named after it.
+    #[arg(long, requires = "pooler")]
+    product: Option<String>,
+    /// With --product: the pooler's version, e.g. `1.26.1` (the program's version is
+    /// `poolproof --version`).
+    #[arg(
+        long = "version",
+        id = "product_version",
+        value_name = "VERSION",
+        requires = "product"
+    )]
+    product_version: Option<String>,
+    /// With --product: a label for its configuration. Documented limitations apply
+    /// to `default` unless an entry lists others.
+    #[arg(long, requires = "product", default_value = "default")]
+    config: String,
     /// Allow reset = "all" against a Postgres that isn't on this machine. It gates
     /// nothing else.
     #[arg(long)]
@@ -604,6 +622,27 @@ async fn run_suite(
                 r.reuse_unmet.unwrap_or(0)
             );
         }
+        // The SKIP reasons say what the probe saw; this says what to change.
+        let skipped_for = |reason: &str| {
+            results
+                .iter()
+                .filter(|r| matches!(&r.verdict, Verdict::Skip { reason: why } if why == reason))
+                .count()
+        };
+        match skipped_for(runner::probe::NEEDS_ONE) {
+            0 => {}
+            n => println!(
+                "{n} skipped for needing one server connection: give the pooler a pool size of 1 for this \
+                 database and user (ignore_server_requirements is only for Postgres standing in for its own pooler)"
+            ),
+        }
+        match skipped_for(runner::probe::NEEDS_SEVERAL) {
+            0 => {}
+            n => println!(
+                "{n} skipped for needing several server connections: give the pooler a pool size of 2 or more \
+                 for this database and user"
+            ),
+        }
         for stale in &report.stale_expectations {
             println!(
                 "stale expectation: {} / {}: {} ({})",
@@ -703,8 +742,15 @@ impl SuiteArgs {
             self.reset,
             self.pool_size,
         )?;
-        if self.ignore_server_requirements {
-            targets.targets[0].ignore_server_requirements = true;
+        if self.pooler.is_some() {
+            let target = &mut targets.targets[0];
+            target.ignore_server_requirements = self.ignore_server_requirements;
+            if let Some(product) = &self.product {
+                target.name = quick_name(product, self.product_version.as_deref(), &self.config);
+                target.product = Some(product.clone());
+                target.version = self.product_version.clone();
+                target.config = Some(self.config.clone());
+            }
         }
         Ok(targets)
     }
@@ -739,8 +785,41 @@ fn load_targets(
         _ if file == std::path::Path::new("targets.toml") && !file.exists() => {
             anyhow::bail!("no targets.toml here: pass --targets FILE, or --pooler URL --direct URL for one pooler")
         }
-        _ => Targets::load(file),
+        _ => {
+            let targets = Targets::load(file)?;
+            for warning in missing_config(&targets) {
+                eprintln!("warning: {warning}");
+            }
+            Ok(targets)
+        }
     }
+}
+
+/// The `--pooler` target's name, as the test bed names its targets: `pgbouncer-1.26.1`,
+/// with the config appended unless it is `default`.
+fn quick_name(product: &str, version: Option<&str>, config: &str) -> String {
+    let mut name = product.to_string();
+    for part in [version, (config != "default").then_some(config)].into_iter().flatten() {
+        name = format!("{name}-{part}");
+    }
+    name
+}
+
+/// Targets that say what pooler they are but not which config: documented limitations
+/// match on config, so none would apply to them.
+fn missing_config(targets: &Targets) -> Vec<String> {
+    targets
+        .targets
+        .iter()
+        .filter(|t| t.product.is_some() && t.config.is_none())
+        .map(|t| {
+            format!(
+                "target '{}' sets product but not config, so no documented limitation applies to it; \
+                 add config = \"default\" if it runs the pooler's default configuration",
+                t.name
+            )
+        })
+        .collect()
 }
 
 fn load_scenarios(dir: Option<&std::path::Path>) -> Result<Vec<scenario::Scenario>> {
@@ -769,6 +848,22 @@ fn parse_duration(s: &str) -> Result<Duration, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// clap's own checks (e.g. two flags with one long name, as `run --version` could
+    /// be with an automatic version flag) run only when a command is built in a debug
+    /// build; this builds every command.
+    #[test]
+    fn every_command_passes_clap_checks() {
+        use clap::CommandFactory;
+        Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn quick_targets_are_named_like_the_test_beds() {
+        assert_eq!(quick_name("pgbouncer", Some("1.26.1"), "default"), "pgbouncer-1.26.1");
+        assert_eq!(quick_name("pgdog", Some("0.1.62"), "full"), "pgdog-0.1.62-full");
+        assert_eq!(quick_name("odyssey", None, "default"), "odyssey");
+    }
 
     #[test]
     fn labels_name_inputs_or_add_them() {

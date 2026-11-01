@@ -21,6 +21,11 @@ use crate::targets::Endpoint;
 /// unknown, not as one connection.
 pub const BUSY_WAIT: Duration = Duration::from_secs(3);
 
+/// The SKIP reasons for unmet server-connection requirements. Saved reports hold them,
+/// so they stay as they are; the run's summary says what to change.
+pub const NEEDS_ONE: &str = "needs one server connection (probe: several)";
+pub const NEEDS_SEVERAL: &str = "needs several server connections (probe: one)";
+
 /// One probe's result, as reports record it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
@@ -160,12 +165,8 @@ impl Probes {
                 };
                 let reason = match (r, busy.result) {
                     (_, ProbeResult::Unknown | ProbeResult::Shared) => unknown,
-                    (Requirement::OneServerConnection, ProbeResult::Separate) => {
-                        "needs one server connection (probe: several)"
-                    }
-                    (Requirement::SeveralServerConnections, _) if busy.one() => {
-                        "needs several server connections (probe: one)"
-                    }
+                    (Requirement::OneServerConnection, ProbeResult::Separate) => NEEDS_ONE,
+                    (Requirement::SeveralServerConnections, _) if busy.one() => NEEDS_SEVERAL,
                     _ => continue,
                 };
                 return Some(reason.to_string());
