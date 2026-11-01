@@ -68,11 +68,13 @@ creates the GitHub release, nothing more.
    cargo binstall poolproof   # once the crate is on crates.io
    ```
 
-   And the action's download path, which CI can't test before a release exists: in any
-   repository, a workflow with `uses: Nihal-Pandey-2302/poolproof@vX.Y.Z` and
-   `command: scan` must log the attestation check and poolproof's version. After the
-   first release, add a scheduled job to `ci.yml` that runs the action that way against
-   the latest release, so a broken download or verification shows up on its own.
+   Then the action's download path, which CI can't test before a release exists: in
+   `.github/workflows/release-action.yml`, change `uses:` and `PINNED` to vX.Y.Z in a
+   commit of its own. Its PR runs the action against the new release (download,
+   SHA256SUMS, attestation check, poolproof's version in the log), and it runs again
+   every week. Until it is bumped, that weekly run fails, saying which release is newer.
+   GitHub turns scheduled workflows off after 60 days without activity in the
+   repository; if the weekly run stops, turn it back on under Actions.
 
 Running `release.yml` by hand (Actions > release > Run workflow) only builds, which is
 the way to check the build matrix without releasing.
