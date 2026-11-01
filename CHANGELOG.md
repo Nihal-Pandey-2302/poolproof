@@ -38,6 +38,24 @@ a verdict, new `scan` rules, and new pooler versions in the published results.
 
 ## [Unreleased]
 
+### Added
+
+- Documented limitations also mark the variant configs where the doc holds: the pool of
+  4, PgBouncer noprep and reset-always, PgCat prepcache (SET and advisory locks) and
+  Supavisor named-prepared.
+- A weekly check that the released GitHub Action installs and verifies poolproof on
+  Linux, macOS and Windows.
+
+### Changed
+
+- The README is a short front page. The reference moved to docs/: install, results and
+  verdicts, documented limitations, testing your pooler, the test bed, scan, real
+  drivers, the GitHub Action and writing a scenario.
+
+### Fixed
+
+- The results site keeps a column group's label in view.
+
 ## [0.1.0] - 2026-11-01
 
 First release.

@@ -99,7 +99,7 @@ A FAIL that the pooler's own docs say will happen gets an entry in
   targets in `fuzz/`; see [fuzz/README.md](fuzz/README.md).
 - No `unwrap` or `expect` outside tests, except where it can't fail (say why in a comment).
 - Never print a password: not in logs, errors, reports or panics.
-- A change people will notice updates README.md and gets a line under `Unreleased` in
+- A change people will notice updates README.md or docs/ and gets a line under `Unreleased` in
   [CHANGELOG.md](CHANGELOG.md) in the same commit.
 
 ## Pull requests

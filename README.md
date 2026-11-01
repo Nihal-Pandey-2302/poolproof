@@ -19,22 +19,19 @@ hardcodes the expected output.
 
 From the committed results, on Postgres 17.11 and 18.4:
 
-- **PgDog 0.1.50 to 0.1.62**: in `BEGIN; INSERT ...; COMMIT` sent as one query string, only
-  the `BEGIN` runs. The client gets no error ([pgdog#1849](https://github.com/pgdogdev/pgdog/issues/1849)).
-- **PgDog 0.1.56 and 0.1.62, PgCat 1.2, Odyssey 1.5**: after `SET LOCAL statement_timeout TO
-  DEFAULT` in a committed transaction, the client's session value is gone. `SHOW` gives
-  `0` where Postgres gives `5s`. PgDog 0.1.50 passes.
-- **Supavisor 2.9.13 and 2.10.0-rc.1** (default settings): a client that prepares a
-  statement name another client already used gets 42P05, and its next Bind returns the
-  other client's result.
+- **PgDog 0.1.50 to 0.1.62**: for `BEGIN; INSERT ...; COMMIT` sent as one query string, the
+  client gets back only the `BEGIN`'s result and no error, and the `INSERT` is never
+  committed if the client then disconnects
+  ([pgdog#1849](https://github.com/pgdogdev/pgdog/issues/1849)).
 - **Supavisor 2.9.13**: four pipelined requests hang in 9 of 10 runs
   ([supavisor#1239](https://github.com/supabase/supavisor/issues/1239)). 2.10.0-rc.1 answers them.
 - **PgBouncer 1.26.1 on Postgres 18**: a client that set an empty `search_path` with
   `set_config()` loses its connection at its next query, once another client has changed
   `search_path` ([pgbouncer#1663](https://github.com/pgbouncer/pgbouncer/issues/1663)).
 - **Every pooler but Odyssey**, with default settings, keeps a session advisory lock after
-  the client that took it disconnects. PgBouncer, PgDog, PgCat and Supavisor document this
-  one.
+  the client that took it disconnects
+  ([pgdog#1407](https://github.com/pgdogdev/pgdog/issues/1407)). PgBouncer, PgDog, PgCat and
+  Supavisor document this one.
 
 ## Results
 
@@ -71,14 +68,13 @@ Building needs Rust 1.88 or newer, a C compiler and libclang:
 ## Quick start
 
 Point poolproof at your pooler and the Postgres server behind it. Use a scratch
-database: scenarios create and drop their own `pp_` objects, and `--reset all` ends every
-other session on it before each scenario.
+database: scenarios create and drop their own `pp_` objects.
 
 ```text
 $ export PGPASSWORD=...
 $ poolproof run --pooler postgres://app@pooler-host:6432/app \
                 --direct postgres://app@postgres-host:5432/app \
-                --reset all --product pgbouncer --version 1.26.1
+                --reset all --yes --product pgbouncer --version 1.26.1
 PASS  pgbouncer-1.26.1         abandoned-query-does-not-block-pool
 FAIL  pgbouncer-1.26.1         empty-search-path-from-set-config (error)
       An empty search_path set with set_config() must survive another client changing it.
@@ -92,11 +88,13 @@ FAIL  pgbouncer-1.26.1         set-isolated-between-clients (silent, documented)
       postgres: ok rows=[(7MB)] tags=[0]
       pooler:   ok rows=[(9MB)] tags=[0]
       documented: "SET/RESET | Yes | Never" https://github.com/pgbouncer/pgbouncer.github.io/...
+      related: https://github.com/pgdogdev/pgdog/issues/1850
 ...
 33 passed, 13 failed (11 documented), 0 errors, 4 skipped
 ```
 
-Abridged. `--reset all` against a Postgres on another machine also needs `--yes`;
+Abridged. `--reset all` ends every other session on the database before each scenario,
+so against a Postgres that isn't on this machine it runs only with `--yes`.
 [docs/targets.md](docs/targets.md) covers the other resets, TLS, targets files for several
 poolers, and `poolproof doctor`, which checks a setup before you run anything.
 
@@ -120,9 +118,11 @@ BREAKS   session-advisory-lock       calls=48211    SELECT pg_advisory_lock($1)
          on pgbouncer-1.26.1: advisory-lock-released-on-disconnect fails silently, ...
 BREAKS   temp-table                  calls=12       CREATE TEMP TABLE import_rows (id int)
          on pgbouncer-1.26.1: temp-table-isolated-between-clients fails silently, ...
+...
 OK       session-set                 calls=1022     SET search_path TO app
          on pgbouncer-1.26.1: search-path-isolated-between-clients passes
-...
+         on Postgres 17.11 instead: BREAKS, search-path-isolated-between-clients fails silently (documented: ...)
+
 6 queries scanned, 4 findings. On pgbouncer-1.26.1 (Postgres 18.4): 3 break silently, 0 rejected, 1 handled.
 ```
 
