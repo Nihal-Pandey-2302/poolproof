@@ -15,7 +15,12 @@ crates.io, so steps 3 to 8 still wait for the first release that goes to crates.
    Add yourself as a required reviewer and limit deployments to tags matching `v*`. The
    `publish` job in `release.yml` runs in this environment, so every crates.io upload
    waits for your approval.
-4. Publish the first version by hand. Trusted publishing can only be set up for a crate
+4. In the release commit that step 5 publishes, add `cargo install --locked poolproof`
+   and `cargo binstall poolproof` to the README's Install section, and say it is on
+   crates.io. The crate's README on crates.io is the one in the published commit.
+   `cargo binstall` finds the release archives through the crate's metadata, so it needs
+   the crate on crates.io too.
+5. Publish the first version by hand. Trusted publishing can only be set up for a crate
    that already exists:
 
    ```sh
@@ -23,22 +28,17 @@ crates.io, so steps 3 to 8 still wait for the first release that goes to crates.
    cargo publish          # with a crates.io API token from https://crates.io/settings/tokens
    ```
 
-5. Set up trusted publishing on crates.io: crate page > Settings > Trusted Publishing >
+6. Set up trusted publishing on crates.io: crate page > Settings > Trusted Publishing >
    Add, with
    - repository owner: `Nihal-Pandey-2302`
    - repository name: `poolproof`
    - workflow filename: `release.yml`
    - environment: `crates-io`
-6. Turn on the publish job: Settings > Secrets and variables > Actions > Variables >
+7. Turn on the publish job: Settings > Secrets and variables > Actions > Variables >
    New repository variable `CRATES_IO_TRUSTED_PUBLISHING` = `true`.
-7. Revoke the API token used in step 4. No crates.io token is stored in the repository.
-8. Before step 4, in the release commit it publishes: add `cargo install --locked
-   poolproof` and `cargo binstall poolproof` to the README's Install section, and say
-   it is on crates.io. The crate's README on crates.io is the one in the published
-   commit. `cargo binstall` finds the release archives through the crate's metadata, so
-   it needs the crate on crates.io too.
+8. Revoke the API token used in step 5. No crates.io token is stored in the repository.
 
-Until step 6 is done, the publish job in `release.yml` is skipped (it runs only when
+Until step 7 is done, the publish job in `release.yml` is skipped (it runs only when
 `CRATES_IO_TRUSTED_PUBLISHING` is `true`), so a tag builds the binaries, attests them and
 creates the GitHub release, nothing more.
 
@@ -57,7 +57,7 @@ creates the GitHub release, nothing more.
    ```
 
 4. `release.yml` then builds the binaries, attests them, creates the GitHub release with
-   SHA256SUMS, and (once step 6 above is done) publishes the crate after you approve the
+   SHA256SUMS, and (once step 7 above is done) publishes the crate after you approve the
    `crates-io` deployment. The publish job fails if the tag and Cargo.toml disagree.
 5. Check the result:
 
