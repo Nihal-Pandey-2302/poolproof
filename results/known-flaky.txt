@@ -52,6 +52,9 @@ supavisor-2.10.0-rc.1 cancel-from-idle-client-is-harmless reached
 # Seen in run 41250844951 (variants, 18.4, PASS -> SKIP "passed, but b never reached b's
 # server connection").
 supavisor-2.10.0-rc.1-named-prepared protocol-statement-names-isolated reached
+# Seen in run 41282788570 (18.4, FAIL silent -> SKIP "passed, but b never reached b's
+# server connection").
+supavisor-2.10.0-rc.1 empty-search-path-from-set-config reached
 
 # Same mechanism: a named statement prepared on one server, reused after Supavisor moved
 # the client to another, gives 26000. Seen in CI on pgx-default/transaction (both
