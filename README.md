@@ -273,8 +273,10 @@ when they differ from the saved run's. Documented limitations only match a targe
 sets all three, with `config = "default"` for a pooler with its default settings (or
 another config an entry lists) and a version poolproof can compare, such as `1.26.1` or
 `2.10.0-rc.1`; `latest` or `v1.26.1` matches no entry. Give a pooler with changed
-settings a label of your own, so entries about the defaults don't apply to it.
-`run --pooler` has no flags for them, so with it no FAIL is marked documented.
+settings a label of your own, so entries about the defaults don't apply to it. A
+target that sets `product` but not `config` gets a warning, since no entry can match
+it. `run --pooler` takes them as `--product`, `--version` and `--config` (`default`
+unless given), and names the target after them, e.g. `pgbouncer-1.26.1`.
 
 Before its first scenario, each target is probed twice: a second client connects while
 the first is connected and idle, and again while the first is inside a transaction. The

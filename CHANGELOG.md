@@ -238,9 +238,19 @@ First release.
 - `scan --pooler` without `--postgres` notes which Postgres version the verdicts are from,
   and shows a finding's verdict on the other versions where it differs (`differs_on` in
   JSON).
+- `run --pooler`: `--product`, `--version` and `--config` (default `default` with
+  `--product`) say what the pooler is, so its documented limitations apply in quick mode
+  too. The target is named after them (`pgbouncer-1.26.1`), or `quick` without them.
+- `run`, `doctor` and `drivers` warn about a target that sets `product` but not `config`:
+  no documented limitation can match it. Add `config = "default"`.
+- The `run` summary says what to change when scenarios were skipped for needing one
+  server connection (a pool size of 1) or several (2 or more).
 
 ### Changed
 
+- The `--pooler` target is named `quick` instead of `pooler`, unless `--product` names
+  it. A report saved from an earlier git build no longer matches by name in
+  `--compare-to`.
 - **Breaking:** connections try TLS first (`sslmode=prefer`, as psql). Add
   `sslmode=disable` to a URL for plaintext only.
 - **Breaking** for targets files from earlier git builds: `${` starts an environment
