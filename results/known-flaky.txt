@@ -46,6 +46,8 @@ supavisor-2.10.0-rc.1-strict protocol-statement-names-isolated kind
 supavisor-2.10.0-rc.1 prepared-statement-survives-other-clients verdict
 # Seen in run 41244128107 (17.11, PASS -> FAIL error).
 supavisor-2.10.0-rc.1-strict prepared-statement-survives-other-clients verdict
+# Seen in run 41337718096 (variants, 18.4, PASS -> FAIL error, 26000 at step 8).
+supavisor-2.10.0-rc.1-pool4 prepared-statement-survives-other-clients verdict
 # Seen in run 41244449211 (17.11, PASS -> SKIP "passed, but b never reached b's server
 # connection"): the overflow connection moved b between its evidence steps.
 supavisor-2.10.0-rc.1 cancel-from-idle-client-is-harmless reached
