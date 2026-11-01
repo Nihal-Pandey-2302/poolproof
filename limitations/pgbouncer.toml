@@ -1,9 +1,19 @@
 # PgBouncer's documented limitations: FAILs its own docs say happen. A result that
 # matches an entry exactly is reported as expected, still a FAIL; anything else stays
 # a bug. See README "Documented limitations" for the format and the rules.
+#
+# Every quote is a row of the feature map in features.md at ccb120f (the newest change to
+# that file as of 2026-11-01). Not covered by it, so left as FAILs: an empty search_path
+# set with set_config() coming back as public (empty-search-path-from-set-config; on
+# Postgres 18 with PgBouncer 1.26 the error from pgbouncer#1663), and the unnamed
+# protocol statement lost when another client runs in between
+# (protocol-unnamed-statement-survives-other-clients; the map says protocol-level
+# prepared plans work with max_prepared_statements, and says nothing about the unnamed
+# one).
 
-# The feature map on pgbouncer.org lists SET/RESET as "Never" for transaction
-# pooling: the next client on the same server connection sees the value.
+# Session state the feature map lists as "Never" for transaction pooling: the next client on
+# the same server connection sees it, or the client that set it loses it.
+
 [[limitation]]
 scenario = "set-isolated-between-clients"
 mode = "transaction"
@@ -12,4 +22,132 @@ since = "1.24.1"
 differs = [{ step = 7, pooler = { status = "ok", rows = [["9MB"]], tags = [0] } }]
 doc = "https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes"
 quote = "SET/RESET | Yes | Never"
+note = "Row of the table \"SQL feature map for pooling modes\" (columns: Feature, Session pooling, Transaction pooling), with the table's padding spaces collapsed."
+
+[[limitation]]
+scenario = "set-does-not-leak-after-disconnect"
+mode = "transaction"
+config = ["default", "tls"]
+since = "1.24.1"
+differs = [{ step = 8, pooler = { status = "ok", rows = [["7MB"]], tags = [0] } }]
+doc = "https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes"
+quote = "SET/RESET | Yes | Never"
+note = "Row of the table \"SQL feature map for pooling modes\" (columns: Feature, Session pooling, Transaction pooling), with the table's padding spaces collapsed."
+
+[[limitation]]
+scenario = "set-role-isolated-between-clients"
+mode = "transaction"
+config = ["default", "tls"]
+since = "1.24.1"
+differs = [{ step = 7, pooler = { status = "ok", rows = [["pp_role"]], tags = [1] } }]
+doc = "https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes"
+quote = "SET/RESET | Yes | Never"
+note = "Row of the table \"SQL feature map for pooling modes\" (columns: Feature, Session pooling, Transaction pooling), with the table's padding spaces collapsed. SET ROLE is a SET command."
+
+[[limitation]]
+scenario = "set-role-reset-after-pinned-disconnect"
+mode = "transaction"
+config = ["default", "tls"]
+since = "1.24.1"
+differs = [{ step = 8, pooler = { status = "ok", rows = [["pp_role"]], tags = [1] } }]
+doc = "https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes"
+quote = "SET/RESET | Yes | Never"
+note = "Row of the table \"SQL feature map for pooling modes\" (columns: Feature, Session pooling, Transaction pooling), with the table's padding spaces collapsed. SET ROLE is a SET command."
+
+[[limitation]]
+scenario = "set-role-reset-after-temp-table-disconnect"
+mode = "transaction"
+config = ["default", "tls"]
+since = "1.24.1"
+differs = [{ step = 8, pooler = { status = "ok", rows = [["pp_role"]], tags = [1] } }]
+doc = "https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes"
+quote = "SET/RESET | Yes | Never"
+note = "Row of the table \"SQL feature map for pooling modes\" (columns: Feature, Session pooling, Transaction pooling), with the table's padding spaces collapsed. SET ROLE is a SET command."
+
+# PgBouncer 1.26.1 on Postgres 18 passes this one, so the second entry stops there: its
+# config docs list "`search_path` (since PostgreSQL version 18)" among the parameters it
+# tracks by default (track_extra_parameters, doc/config.md at pgbouncer_1_26_1, commit
+# f03e9bf263d7ccd5d1d152a61811bf3258dd6b87; 1.25.2's list doesn't have it), and the
+# committed results agree. Postgres 17 and older PgBouncer versions fail it.
+
+[[limitation]]
+scenario = "search-path-isolated-between-clients"
+mode = "transaction"
+config = ["default", "tls"]
+since = "1.24.1"
+fixed_in = "1.26.1"
+differs = [{ step = 7, pooler = { status = "ok", rows = [["public"]], tags = [0] } }]
+doc = "https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes"
+quote = "SET/RESET | Yes | Never"
+note = "Row of the table \"SQL feature map for pooling modes\" (columns: Feature, Session pooling, Transaction pooling), with the table's padding spaces collapsed."
+
+[[limitation]]
+scenario = "search-path-isolated-between-clients"
+mode = "transaction"
+config = ["default", "tls"]
+since = "1.26.1"
+postgres_fixed_in = "18"
+differs = [{ step = 7, pooler = { status = "ok", rows = [["public"]], tags = [0] } }]
+doc = "https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes"
+quote = "SET/RESET | Yes | Never"
+note = "Row of the table \"SQL feature map for pooling modes\" (columns: Feature, Session pooling, Transaction pooling), with the table's padding spaces collapsed. PgBouncer 1.26.1 tracks search_path from Postgres 18, per its config docs (https://github.com/pgbouncer/pgbouncer/blob/f03e9bf263d7ccd5d1d152a61811bf3258dd6b87/doc/config.md#track_extra_parameters: \"`search_path` (since PostgreSQL version 18)\"); poolproof's results agree."
+
+[[limitation]]
+scenario = "listen-notify-delivered"
+mode = "transaction"
+config = ["default", "tls"]
+since = "1.24.1"
+differs = [{ step = 9, pooler = { status = "ok", rows = [], tags = [] } }]
+doc = "https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes"
+quote = "LISTEN | Yes | Never"
+note = "Row of the table \"SQL feature map for pooling modes\" (columns: Feature, Session pooling, Transaction pooling), with the table's padding spaces collapsed."
+
+[[limitation]]
+scenario = "cursor-isolated-between-clients"
+mode = "transaction"
+config = ["default", "tls"]
+since = "1.24.1"
+differs = [{ step = 7, pooler = { status = "ok", rows = [["1"]], tags = [1] } }]
+doc = "https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes"
+quote = "WITH HOLD CURSOR | Yes | Never"
+note = "Row of the table \"SQL feature map for pooling modes\" (columns: Feature, Session pooling, Transaction pooling), with the table's padding spaces collapsed."
+
+[[limitation]]
+scenario = "sql-prepare-isolated-between-clients"
+mode = "transaction"
+config = ["default", "tls"]
+since = "1.24.1"
+differs = [{ step = 7, pooler = { status = "ok", rows = [["from a"]], tags = [1] } }]
+doc = "https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes"
+quote = "PREPARE / DEALLOCATE | Yes | Never"
+note = "Row of the table \"SQL feature map for pooling modes\" (columns: Feature, Session pooling, Transaction pooling), with the table's padding spaces collapsed."
+
+[[limitation]]
+scenario = "temp-table-isolated-between-clients"
+mode = "transaction"
+config = ["default", "tls"]
+since = "1.24.1"
+differs = [{ step = 7, pooler = { status = "ok", rows = [["0"]], tags = [1] } }]
+doc = "https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes"
+quote = "PRESERVE/DELETE ROWS temp tables | Yes | Never"
+note = "Row of the table \"SQL feature map for pooling modes\" (columns: Feature, Session pooling, Transaction pooling), with the table's padding spaces collapsed. CREATE TEMP TABLE without ON COMMIT preserves rows."
+
+[[limitation]]
+scenario = "load-isolated-between-clients"
+mode = "transaction"
+config = ["default", "tls"]
+since = "1.24.1"
+differs = [{ step = 8, pooler = { status = "ok", rows = [["-1"]], tags = [1] } }]
+doc = "https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes"
+quote = "LOAD statement | Yes | Never"
+note = "Row of the table \"SQL feature map for pooling modes\" (columns: Feature, Session pooling, Transaction pooling), with the table's padding spaces collapsed."
+
+[[limitation]]
+scenario = "advisory-lock-released-on-disconnect"
+mode = "transaction"
+config = ["default", "tls"]
+since = "1.24.1"
+differs = [{ step = 4, pooler = { status = "ok", rows = [["1"]], tags = [1] } }]
+doc = "https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes"
+quote = "Session-level advisory locks | Yes | Never"
 note = "Row of the table \"SQL feature map for pooling modes\" (columns: Feature, Session pooling, Transaction pooling), with the table's padding spaces collapsed."
