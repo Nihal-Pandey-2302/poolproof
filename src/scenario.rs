@@ -505,6 +505,20 @@ fn check_evidence(origin: &str, scenario: &Scenario) -> Result<()> {
     Ok(())
 }
 
+/// How reports introduce one of a scenario's refs on a target. Another project's GitHub
+/// issue is only related: a PgBouncer FAIL doesn't come from a PgDog issue. Other refs, and
+/// issues of the target's own product, are where the scenario came from.
+pub fn ref_label(r: &str, product: Option<&str>) -> &'static str {
+    match r
+        .strip_prefix("https://github.com/")
+        .and_then(|p| p.split('/').nth(1))
+        .filter(|repo| !repo.is_empty())
+    {
+        Some(repo) if product.is_none_or(|p| !repo.eq_ignore_ascii_case(p)) => "related:",
+        _ => "from",
+    }
+}
+
 /// The scenarios built into the binary.
 pub fn bundled() -> Result<Vec<Scenario>> {
     let parsed = BUNDLED
@@ -546,6 +560,27 @@ fn unique_names(scenarios: Vec<(String, Scenario)>) -> Result<Vec<Scenario>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ref_labels() {
+        let pgdog = "https://github.com/pgdogdev/pgdog/issues/1849";
+        assert_eq!(ref_label(pgdog, Some("pgdog")), "from");
+        assert_eq!(ref_label(pgdog, Some("PgDog")), "from");
+        assert_eq!(ref_label(pgdog, Some("pgbouncer")), "related:");
+        // A GitHub link without a repo isn't an issue of any project.
+        assert_eq!(ref_label("https://github.com/pgdogdev", Some("pgbouncer")), "from");
+        // A target of unknown product can't claim any issue.
+        assert_eq!(ref_label(pgdog, None), "related:");
+        // Docs and other links stay where the scenario came from.
+        assert_eq!(
+            ref_label(
+                "https://www.postgresql.org/docs/current/sql-set.html",
+                Some("pgbouncer")
+            ),
+            "from"
+        );
+        assert_eq!(ref_label("https://pkg.go.dev/github.com/jackc/pgx/v5", None), "from");
+    }
 
     #[test]
     fn bundled_scenarios_match_dir() {

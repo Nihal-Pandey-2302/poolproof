@@ -154,7 +154,7 @@ A client that disconnects inside an aborted transaction must not pass it to the 
 - step 3: `[a] simple: SET LOCAL statement_timeout = 100; SELECT pg_sleep(1); COMMIT`
 - postgres: `error 57014: canceling statement due to statement timeout`
 - pooler: `error 42601: multi-statement queries cannot mix SET with other commands`
-- from https://github.com/pgbouncer/pgbouncer/issues/1415
+- related: https://github.com/pgbouncer/pgbouncer/issues/1415
 
 ### pgdog-0.1.50 (pg 18.4) / aborted-transaction-not-reused (error)
 
@@ -163,7 +163,7 @@ A client that disconnects inside an aborted transaction must not pass it to the 
 - step 3: `[a] simple: SET LOCAL statement_timeout = 100; SELECT pg_sleep(1); COMMIT`
 - postgres: `error 57014: canceling statement due to statement timeout`
 - pooler: `error 42601: multi-statement queries cannot mix SET with other commands`
-- from https://github.com/pgbouncer/pgbouncer/issues/1415
+- related: https://github.com/pgbouncer/pgbouncer/issues/1415
 
 ### pgbouncer-1.24.1 (pg 17.11) / advisory-lock-released-on-disconnect (silent)
 
@@ -172,7 +172,7 @@ A session advisory lock must be released when the client that took it disconnect
 - step 4: `[check (direct)] simple: SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 424242`
 - postgres: `ok rows=[(0)] tags=[1]`
 - pooler: `ok rows=[(1)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1407
+- related: https://github.com/pgdogdev/pgdog/issues/1407
 
 ### pgbouncer-1.25.2 (pg 17.11) / advisory-lock-released-on-disconnect (silent)
 
@@ -181,7 +181,7 @@ A session advisory lock must be released when the client that took it disconnect
 - step 4: `[check (direct)] simple: SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 424242`
 - postgres: `ok rows=[(0)] tags=[1]`
 - pooler: `ok rows=[(1)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1407
+- related: https://github.com/pgdogdev/pgdog/issues/1407
 
 ### pgbouncer-1.26.1 (pg 17.11) / advisory-lock-released-on-disconnect (silent)
 
@@ -190,7 +190,7 @@ A session advisory lock must be released when the client that took it disconnect
 - step 4: `[check (direct)] simple: SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 424242`
 - postgres: `ok rows=[(0)] tags=[1]`
 - pooler: `ok rows=[(1)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1407
+- related: https://github.com/pgdogdev/pgdog/issues/1407
 
 ### pgdog-0.1.50 (pg 17.11) / advisory-lock-released-on-disconnect (silent)
 
@@ -235,7 +235,7 @@ A session advisory lock must be released when the client that took it disconnect
 - step 4: `[check (direct)] simple: SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 424242`
 - postgres: `ok rows=[(0)] tags=[1]`
 - pooler: `ok rows=[(1)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1407
+- related: https://github.com/pgdogdev/pgdog/issues/1407
 
 ### supavisor-2.9.13 (pg 17.11) / advisory-lock-released-on-disconnect (silent)
 
@@ -244,7 +244,7 @@ A session advisory lock must be released when the client that took it disconnect
 - step 4: `[check (direct)] simple: SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 424242`
 - postgres: `ok rows=[(0)] tags=[1]`
 - pooler: `ok rows=[(1)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1407
+- related: https://github.com/pgdogdev/pgdog/issues/1407
 
 ### supavisor-2.10.0-rc.1 (pg 17.11) / advisory-lock-released-on-disconnect (silent)
 
@@ -253,7 +253,7 @@ A session advisory lock must be released when the client that took it disconnect
 - step 4: `[check (direct)] simple: SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 424242`
 - postgres: `ok rows=[(0)] tags=[1]`
 - pooler: `ok rows=[(1)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1407
+- related: https://github.com/pgdogdev/pgdog/issues/1407
 
 ### supavisor-2.10.0-rc.1-strict (pg 17.11) / advisory-lock-released-on-disconnect (error)
 
@@ -262,7 +262,7 @@ A session advisory lock must be released when the client that took it disconnect
 - step 1: `[a] simple: SELECT pg_advisory_lock(424242)::text`
 - postgres: `ok rows=[()] tags=[1]`
 - pooler: `error XX000: (ESESSIONLEAK) session-level advisory lock is not allowed in transaction mode`
-- from https://github.com/pgdogdev/pgdog/issues/1407
+- related: https://github.com/pgdogdev/pgdog/issues/1407
 
 ### pgbouncer-1.26.1-tls (pg 17.11) / advisory-lock-released-on-disconnect (silent)
 
@@ -271,7 +271,7 @@ A session advisory lock must be released when the client that took it disconnect
 - step 4: `[check (direct)] simple: SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 424242`
 - postgres: `ok rows=[(0)] tags=[1]`
 - pooler: `ok rows=[(1)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1407
+- related: https://github.com/pgdogdev/pgdog/issues/1407
 
 ### pgbouncer-1.24.1 (pg 18.4) / advisory-lock-released-on-disconnect (silent)
 
@@ -280,7 +280,7 @@ A session advisory lock must be released when the client that took it disconnect
 - step 4: `[check (direct)] simple: SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 424242`
 - postgres: `ok rows=[(0)] tags=[1]`
 - pooler: `ok rows=[(1)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1407
+- related: https://github.com/pgdogdev/pgdog/issues/1407
 
 ### pgbouncer-1.25.2 (pg 18.4) / advisory-lock-released-on-disconnect (silent)
 
@@ -289,7 +289,7 @@ A session advisory lock must be released when the client that took it disconnect
 - step 4: `[check (direct)] simple: SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 424242`
 - postgres: `ok rows=[(0)] tags=[1]`
 - pooler: `ok rows=[(1)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1407
+- related: https://github.com/pgdogdev/pgdog/issues/1407
 
 ### pgbouncer-1.26.1 (pg 18.4) / advisory-lock-released-on-disconnect (silent)
 
@@ -298,7 +298,7 @@ A session advisory lock must be released when the client that took it disconnect
 - step 4: `[check (direct)] simple: SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 424242`
 - postgres: `ok rows=[(0)] tags=[1]`
 - pooler: `ok rows=[(1)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1407
+- related: https://github.com/pgdogdev/pgdog/issues/1407
 
 ### pgdog-0.1.50 (pg 18.4) / advisory-lock-released-on-disconnect (silent)
 
@@ -343,7 +343,7 @@ A session advisory lock must be released when the client that took it disconnect
 - step 4: `[check (direct)] simple: SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 424242`
 - postgres: `ok rows=[(0)] tags=[1]`
 - pooler: `ok rows=[(1)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1407
+- related: https://github.com/pgdogdev/pgdog/issues/1407
 
 ### supavisor-2.9.13 (pg 18.4) / advisory-lock-released-on-disconnect (silent)
 
@@ -352,7 +352,7 @@ A session advisory lock must be released when the client that took it disconnect
 - step 4: `[check (direct)] simple: SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 424242`
 - postgres: `ok rows=[(0)] tags=[1]`
 - pooler: `ok rows=[(1)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1407
+- related: https://github.com/pgdogdev/pgdog/issues/1407
 
 ### supavisor-2.10.0-rc.1 (pg 18.4) / advisory-lock-released-on-disconnect (silent)
 
@@ -361,7 +361,7 @@ A session advisory lock must be released when the client that took it disconnect
 - step 4: `[check (direct)] simple: SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 424242`
 - postgres: `ok rows=[(0)] tags=[1]`
 - pooler: `ok rows=[(1)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1407
+- related: https://github.com/pgdogdev/pgdog/issues/1407
 
 ### supavisor-2.10.0-rc.1-strict (pg 18.4) / advisory-lock-released-on-disconnect (error)
 
@@ -370,7 +370,7 @@ A session advisory lock must be released when the client that took it disconnect
 - step 1: `[a] simple: SELECT pg_advisory_lock(424242)::text`
 - postgres: `ok rows=[()] tags=[1]`
 - pooler: `error XX000: (ESESSIONLEAK) session-level advisory lock is not allowed in transaction mode`
-- from https://github.com/pgdogdev/pgdog/issues/1407
+- related: https://github.com/pgdogdev/pgdog/issues/1407
 
 ### pgbouncer-1.26.1-tls (pg 18.4) / advisory-lock-released-on-disconnect (silent)
 
@@ -379,7 +379,7 @@ A session advisory lock must be released when the client that took it disconnect
 - step 4: `[check (direct)] simple: SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 424242`
 - postgres: `ok rows=[(0)] tags=[1]`
 - pooler: `ok rows=[(1)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1407
+- related: https://github.com/pgdogdev/pgdog/issues/1407
 
 ### odyssey-1.5.2 (pg 17.11) / advisory-lock-survives-own-transactions (silent)
 
@@ -799,7 +799,7 @@ An empty search_path set with set_config() must survive another client changing 
 - step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[()] tags=[0]`
 - pooler: `ok rows=[("$user", public)] tags=[0]`
-- from https://github.com/pgbouncer/pgbouncer/issues/1663
+- related: https://github.com/pgbouncer/pgbouncer/issues/1663
 
 ### pgdog-0.1.56 (pg 17.11) / empty-search-path-from-set-config (silent)
 
@@ -808,7 +808,7 @@ An empty search_path set with set_config() must survive another client changing 
 - step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[()] tags=[0]`
 - pooler: `ok rows=[("$user", public)] tags=[0]`
-- from https://github.com/pgbouncer/pgbouncer/issues/1663
+- related: https://github.com/pgbouncer/pgbouncer/issues/1663
 
 ### pgdog-0.1.62 (pg 17.11) / empty-search-path-from-set-config (silent)
 
@@ -817,7 +817,7 @@ An empty search_path set with set_config() must survive another client changing 
 - step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[()] tags=[0]`
 - pooler: `ok rows=[("$user", public)] tags=[0]`
-- from https://github.com/pgbouncer/pgbouncer/issues/1663
+- related: https://github.com/pgbouncer/pgbouncer/issues/1663
 
 ### pgdog-0.1.62-pubsub (pg 17.11) / empty-search-path-from-set-config (silent)
 
@@ -826,7 +826,7 @@ An empty search_path set with set_config() must survive another client changing 
 - step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[()] tags=[0]`
 - pooler: `ok rows=[("$user", public)] tags=[0]`
-- from https://github.com/pgbouncer/pgbouncer/issues/1663
+- related: https://github.com/pgbouncer/pgbouncer/issues/1663
 
 ### pgcat-1.2.0 (pg 17.11) / empty-search-path-from-set-config (silent)
 
@@ -835,7 +835,7 @@ An empty search_path set with set_config() must survive another client changing 
 - step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[()] tags=[0]`
 - pooler: `ok rows=[("$user", public)] tags=[0]`
-- from https://github.com/pgbouncer/pgbouncer/issues/1663
+- related: https://github.com/pgbouncer/pgbouncer/issues/1663
 
 ### odyssey-1.5.2 (pg 17.11) / empty-search-path-from-set-config (silent)
 
@@ -844,7 +844,7 @@ An empty search_path set with set_config() must survive another client changing 
 - step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[()] tags=[0]`
 - pooler: `ok rows=[("$user", public)] tags=[0]`
-- from https://github.com/pgbouncer/pgbouncer/issues/1663
+- related: https://github.com/pgbouncer/pgbouncer/issues/1663
 
 ### supavisor-2.9.13 (pg 17.11) / empty-search-path-from-set-config (silent)
 
@@ -853,7 +853,7 @@ An empty search_path set with set_config() must survive another client changing 
 - step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[()] tags=[0]`
 - pooler: `ok rows=[(public)] tags=[0]`
-- from https://github.com/pgbouncer/pgbouncer/issues/1663
+- related: https://github.com/pgbouncer/pgbouncer/issues/1663
 
 ### supavisor-2.10.0-rc.1 (pg 17.11) / empty-search-path-from-set-config (silent)
 
@@ -862,7 +862,7 @@ An empty search_path set with set_config() must survive another client changing 
 - step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[()] tags=[0]`
 - pooler: `ok rows=[(public)] tags=[0]`
-- from https://github.com/pgbouncer/pgbouncer/issues/1663
+- related: https://github.com/pgbouncer/pgbouncer/issues/1663
 
 ### supavisor-2.10.0-rc.1-strict (pg 17.11) / empty-search-path-from-set-config (error)
 
@@ -871,7 +871,7 @@ An empty search_path set with set_config() must survive another client changing 
 - step 1: `[a] simple: SELECT set_config('search_path', '', false)`
 - postgres: `ok rows=[()] tags=[1]`
 - pooler: `error XX000: (ESESSIONLEAK) session-level set_config() call is not allowed in transaction mode`
-- from https://github.com/pgbouncer/pgbouncer/issues/1663
+- related: https://github.com/pgbouncer/pgbouncer/issues/1663
 
 ### pgbouncer-1.26.1-tls (pg 17.11) / empty-search-path-from-set-config (silent)
 
@@ -916,7 +916,7 @@ An empty search_path set with set_config() must survive another client changing 
 - step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[()] tags=[0]`
 - pooler: `ok rows=[("")] tags=[0]`
-- from https://github.com/pgbouncer/pgbouncer/issues/1663
+- related: https://github.com/pgbouncer/pgbouncer/issues/1663
 
 ### pgdog-0.1.56 (pg 18.4) / empty-search-path-from-set-config (silent)
 
@@ -925,7 +925,7 @@ An empty search_path set with set_config() must survive another client changing 
 - step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[()] tags=[0]`
 - pooler: `ok rows=[("")] tags=[0]`
-- from https://github.com/pgbouncer/pgbouncer/issues/1663
+- related: https://github.com/pgbouncer/pgbouncer/issues/1663
 
 ### pgdog-0.1.62 (pg 18.4) / empty-search-path-from-set-config (silent)
 
@@ -934,7 +934,7 @@ An empty search_path set with set_config() must survive another client changing 
 - step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[()] tags=[0]`
 - pooler: `ok rows=[("")] tags=[0]`
-- from https://github.com/pgbouncer/pgbouncer/issues/1663
+- related: https://github.com/pgbouncer/pgbouncer/issues/1663
 
 ### pgdog-0.1.62-pubsub (pg 18.4) / empty-search-path-from-set-config (silent)
 
@@ -943,7 +943,7 @@ An empty search_path set with set_config() must survive another client changing 
 - step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[()] tags=[0]`
 - pooler: `ok rows=[("")] tags=[0]`
-- from https://github.com/pgbouncer/pgbouncer/issues/1663
+- related: https://github.com/pgbouncer/pgbouncer/issues/1663
 
 ### pgcat-1.2.0 (pg 18.4) / empty-search-path-from-set-config (silent)
 
@@ -952,7 +952,7 @@ An empty search_path set with set_config() must survive another client changing 
 - step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[()] tags=[0]`
 - pooler: `ok rows=[("$user", public)] tags=[0]`
-- from https://github.com/pgbouncer/pgbouncer/issues/1663
+- related: https://github.com/pgbouncer/pgbouncer/issues/1663
 
 ### odyssey-1.5.2 (pg 18.4) / empty-search-path-from-set-config (silent)
 
@@ -961,7 +961,7 @@ An empty search_path set with set_config() must survive another client changing 
 - step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[()] tags=[0]`
 - pooler: `ok rows=[("")] tags=[0]`
-- from https://github.com/pgbouncer/pgbouncer/issues/1663
+- related: https://github.com/pgbouncer/pgbouncer/issues/1663
 
 ### supavisor-2.9.13 (pg 18.4) / empty-search-path-from-set-config (silent)
 
@@ -970,7 +970,7 @@ An empty search_path set with set_config() must survive another client changing 
 - step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[()] tags=[0]`
 - pooler: `ok rows=[(public)] tags=[0]`
-- from https://github.com/pgbouncer/pgbouncer/issues/1663
+- related: https://github.com/pgbouncer/pgbouncer/issues/1663
 
 ### supavisor-2.10.0-rc.1 (pg 18.4) / empty-search-path-from-set-config (silent)
 
@@ -979,7 +979,7 @@ An empty search_path set with set_config() must survive another client changing 
 - step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[()] tags=[0]`
 - pooler: `ok rows=[(public)] tags=[0]`
-- from https://github.com/pgbouncer/pgbouncer/issues/1663
+- related: https://github.com/pgbouncer/pgbouncer/issues/1663
 
 ### supavisor-2.10.0-rc.1-strict (pg 18.4) / empty-search-path-from-set-config (error)
 
@@ -988,7 +988,7 @@ An empty search_path set with set_config() must survive another client changing 
 - step 1: `[a] simple: SELECT set_config('search_path', '', false)`
 - postgres: `ok rows=[()] tags=[1]`
 - pooler: `error XX000: (ESESSIONLEAK) session-level set_config() call is not allowed in transaction mode`
-- from https://github.com/pgbouncer/pgbouncer/issues/1663
+- related: https://github.com/pgbouncer/pgbouncer/issues/1663
 
 ### pgbouncer-1.26.1-tls (pg 18.4) / empty-search-path-from-set-config (error)
 
@@ -1033,7 +1033,7 @@ A client that ran LISTEN must receive NOTIFY messages sent by another client.
 - step 3: `[a] simple: LISTEN pp_chan`
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error 58000: pub/sub disabled`
-- from https://github.com/pgbouncer/pgbouncer/issues/655
+- related: https://github.com/pgbouncer/pgbouncer/issues/655
 
 ### pgdog-0.1.56 (pg 17.11) / listen-notify-delivered (error)
 
@@ -1042,7 +1042,7 @@ A client that ran LISTEN must receive NOTIFY messages sent by another client.
 - step 3: `[a] simple: LISTEN pp_chan`
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error 58000: pub/sub disabled`
-- from https://github.com/pgbouncer/pgbouncer/issues/655
+- related: https://github.com/pgbouncer/pgbouncer/issues/655
 
 ### pgdog-0.1.62 (pg 17.11) / listen-notify-delivered (error)
 
@@ -1051,7 +1051,7 @@ A client that ran LISTEN must receive NOTIFY messages sent by another client.
 - step 3: `[a] simple: LISTEN pp_chan`
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error 58000: pub/sub disabled`
-- from https://github.com/pgbouncer/pgbouncer/issues/655
+- related: https://github.com/pgbouncer/pgbouncer/issues/655
 
 ### pgcat-1.2.0 (pg 17.11) / listen-notify-delivered (silent)
 
@@ -1060,7 +1060,7 @@ A client that ran LISTEN must receive NOTIFY messages sent by another client.
 - step 9: `[a] notifications`
 - postgres: `ok rows=[(pp_chan, hello)] tags=[]`
 - pooler: `ok rows=[] tags=[]`
-- from https://github.com/pgbouncer/pgbouncer/issues/655
+- related: https://github.com/pgbouncer/pgbouncer/issues/655
 
 ### odyssey-1.5.2 (pg 17.11) / listen-notify-delivered (silent)
 
@@ -1069,7 +1069,7 @@ A client that ran LISTEN must receive NOTIFY messages sent by another client.
 - step 9: `[a] notifications`
 - postgres: `ok rows=[(pp_chan, hello)] tags=[]`
 - pooler: `ok rows=[] tags=[]`
-- from https://github.com/pgbouncer/pgbouncer/issues/655
+- related: https://github.com/pgbouncer/pgbouncer/issues/655
 
 ### supavisor-2.9.13 (pg 17.11) / listen-notify-delivered (silent)
 
@@ -1078,7 +1078,7 @@ A client that ran LISTEN must receive NOTIFY messages sent by another client.
 - step 9: `[a] notifications`
 - postgres: `ok rows=[(pp_chan, hello)] tags=[]`
 - pooler: `ok rows=[] tags=[]`
-- from https://github.com/pgbouncer/pgbouncer/issues/655
+- related: https://github.com/pgbouncer/pgbouncer/issues/655
 
 ### supavisor-2.10.0-rc.1 (pg 17.11) / listen-notify-delivered (silent)
 
@@ -1087,7 +1087,7 @@ A client that ran LISTEN must receive NOTIFY messages sent by another client.
 - step 9: `[a] notifications`
 - postgres: `ok rows=[(pp_chan, hello)] tags=[]`
 - pooler: `ok rows=[] tags=[]`
-- from https://github.com/pgbouncer/pgbouncer/issues/655
+- related: https://github.com/pgbouncer/pgbouncer/issues/655
 
 ### supavisor-2.10.0-rc.1-strict (pg 17.11) / listen-notify-delivered (error)
 
@@ -1096,7 +1096,7 @@ A client that ran LISTEN must receive NOTIFY messages sent by another client.
 - step 3: `[a] simple: LISTEN pp_chan`
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error XX000: (ESESSIONLEAK) LISTEN statement is not allowed in transaction mode`
-- from https://github.com/pgbouncer/pgbouncer/issues/655
+- related: https://github.com/pgbouncer/pgbouncer/issues/655
 
 ### pgbouncer-1.26.1-tls (pg 17.11) / listen-notify-delivered (silent)
 
@@ -1141,7 +1141,7 @@ A client that ran LISTEN must receive NOTIFY messages sent by another client.
 - step 3: `[a] simple: LISTEN pp_chan`
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error 58000: pub/sub disabled`
-- from https://github.com/pgbouncer/pgbouncer/issues/655
+- related: https://github.com/pgbouncer/pgbouncer/issues/655
 
 ### pgdog-0.1.56 (pg 18.4) / listen-notify-delivered (error)
 
@@ -1150,7 +1150,7 @@ A client that ran LISTEN must receive NOTIFY messages sent by another client.
 - step 3: `[a] simple: LISTEN pp_chan`
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error 58000: pub/sub disabled`
-- from https://github.com/pgbouncer/pgbouncer/issues/655
+- related: https://github.com/pgbouncer/pgbouncer/issues/655
 
 ### pgdog-0.1.62 (pg 18.4) / listen-notify-delivered (error)
 
@@ -1159,7 +1159,7 @@ A client that ran LISTEN must receive NOTIFY messages sent by another client.
 - step 3: `[a] simple: LISTEN pp_chan`
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error 58000: pub/sub disabled`
-- from https://github.com/pgbouncer/pgbouncer/issues/655
+- related: https://github.com/pgbouncer/pgbouncer/issues/655
 
 ### pgcat-1.2.0 (pg 18.4) / listen-notify-delivered (silent)
 
@@ -1168,7 +1168,7 @@ A client that ran LISTEN must receive NOTIFY messages sent by another client.
 - step 9: `[a] notifications`
 - postgres: `ok rows=[(pp_chan, hello)] tags=[]`
 - pooler: `ok rows=[] tags=[]`
-- from https://github.com/pgbouncer/pgbouncer/issues/655
+- related: https://github.com/pgbouncer/pgbouncer/issues/655
 
 ### odyssey-1.5.2 (pg 18.4) / listen-notify-delivered (silent)
 
@@ -1177,7 +1177,7 @@ A client that ran LISTEN must receive NOTIFY messages sent by another client.
 - step 9: `[a] notifications`
 - postgres: `ok rows=[(pp_chan, hello)] tags=[]`
 - pooler: `ok rows=[] tags=[]`
-- from https://github.com/pgbouncer/pgbouncer/issues/655
+- related: https://github.com/pgbouncer/pgbouncer/issues/655
 
 ### supavisor-2.9.13 (pg 18.4) / listen-notify-delivered (silent)
 
@@ -1186,7 +1186,7 @@ A client that ran LISTEN must receive NOTIFY messages sent by another client.
 - step 9: `[a] notifications`
 - postgres: `ok rows=[(pp_chan, hello)] tags=[]`
 - pooler: `ok rows=[] tags=[]`
-- from https://github.com/pgbouncer/pgbouncer/issues/655
+- related: https://github.com/pgbouncer/pgbouncer/issues/655
 
 ### supavisor-2.10.0-rc.1 (pg 18.4) / listen-notify-delivered (silent)
 
@@ -1195,7 +1195,7 @@ A client that ran LISTEN must receive NOTIFY messages sent by another client.
 - step 9: `[a] notifications`
 - postgres: `ok rows=[(pp_chan, hello)] tags=[]`
 - pooler: `ok rows=[] tags=[]`
-- from https://github.com/pgbouncer/pgbouncer/issues/655
+- related: https://github.com/pgbouncer/pgbouncer/issues/655
 
 ### supavisor-2.10.0-rc.1-strict (pg 18.4) / listen-notify-delivered (error)
 
@@ -1204,7 +1204,7 @@ A client that ran LISTEN must receive NOTIFY messages sent by another client.
 - step 3: `[a] simple: LISTEN pp_chan`
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error XX000: (ESESSIONLEAK) LISTEN statement is not allowed in transaction mode`
-- from https://github.com/pgbouncer/pgbouncer/issues/655
+- related: https://github.com/pgbouncer/pgbouncer/issues/655
 
 ### pgbouncer-1.26.1-tls (pg 18.4) / listen-notify-delivered (silent)
 
@@ -1950,7 +1950,7 @@ An error in a request that ends with Flush instead of Sync must be sent right aw
 - step 1: `[a] send: parse - SELEC 1 / flush`
 - postgres: `Error 42601`
 - pooler: ``
-- from https://github.com/pgdogdev/pgdog/issues/1873
+- related: https://github.com/pgdogdev/pgdog/issues/1873
 
 ### pgcat-1.2.0 (pg 18.4) / protocol-error-after-flush (hang)
 
@@ -1959,7 +1959,7 @@ An error in a request that ends with Flush instead of Sync must be sent right aw
 - step 1: `[a] send: parse - SELEC 1 / flush`
 - postgres: `Error 42601`
 - pooler: ``
-- from https://github.com/pgdogdev/pgdog/issues/1873
+- related: https://github.com/pgdogdev/pgdog/issues/1873
 
 ### supavisor-2.9.13 (pg 17.11) / protocol-four-pipelined-requests (hang)
 
@@ -2480,7 +2480,7 @@ Settings from a client that disconnected must not show up for the next client.
 - step 8: `[b] simple: SHOW work_mem`
 - postgres: `ok rows=[(4MB)] tags=[0]`
 - pooler: `ok rows=[(7MB)] tags=[0]`
-- from https://github.com/pgdogdev/pgdog/issues/1850
+- related: https://github.com/pgdogdev/pgdog/issues/1850
 
 ### pgbouncer-1.25.2 (pg 17.11) / set-does-not-leak-after-disconnect (silent)
 
@@ -2489,7 +2489,7 @@ Settings from a client that disconnected must not show up for the next client.
 - step 8: `[b] simple: SHOW work_mem`
 - postgres: `ok rows=[(4MB)] tags=[0]`
 - pooler: `ok rows=[(7MB)] tags=[0]`
-- from https://github.com/pgdogdev/pgdog/issues/1850
+- related: https://github.com/pgdogdev/pgdog/issues/1850
 
 ### pgbouncer-1.26.1 (pg 17.11) / set-does-not-leak-after-disconnect (silent)
 
@@ -2498,7 +2498,7 @@ Settings from a client that disconnected must not show up for the next client.
 - step 8: `[b] simple: SHOW work_mem`
 - postgres: `ok rows=[(4MB)] tags=[0]`
 - pooler: `ok rows=[(7MB)] tags=[0]`
-- from https://github.com/pgdogdev/pgdog/issues/1850
+- related: https://github.com/pgdogdev/pgdog/issues/1850
 
 ### supavisor-2.9.13 (pg 17.11) / set-does-not-leak-after-disconnect (silent)
 
@@ -2507,7 +2507,7 @@ Settings from a client that disconnected must not show up for the next client.
 - step 8: `[b] simple: SHOW work_mem`
 - postgres: `ok rows=[(4MB)] tags=[0]`
 - pooler: `ok rows=[(7MB)] tags=[0]`
-- from https://github.com/pgdogdev/pgdog/issues/1850
+- related: https://github.com/pgdogdev/pgdog/issues/1850
 
 ### supavisor-2.10.0-rc.1 (pg 17.11) / set-does-not-leak-after-disconnect (silent)
 
@@ -2516,7 +2516,7 @@ Settings from a client that disconnected must not show up for the next client.
 - step 8: `[b] simple: SHOW work_mem`
 - postgres: `ok rows=[(4MB)] tags=[0]`
 - pooler: `ok rows=[(7MB)] tags=[0]`
-- from https://github.com/pgdogdev/pgdog/issues/1850
+- related: https://github.com/pgdogdev/pgdog/issues/1850
 
 ### supavisor-2.10.0-rc.1-strict (pg 17.11) / set-does-not-leak-after-disconnect (error)
 
@@ -2525,7 +2525,7 @@ Settings from a client that disconnected must not show up for the next client.
 - step 3: `[a] simple: SET work_mem = '7MB'`
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error XX000: (ESESSIONLEAK) session-level SET statement is not allowed in transaction mode`
-- from https://github.com/pgdogdev/pgdog/issues/1850
+- related: https://github.com/pgdogdev/pgdog/issues/1850
 
 ### pgbouncer-1.26.1-tls (pg 17.11) / set-does-not-leak-after-disconnect (silent)
 
@@ -2534,7 +2534,7 @@ Settings from a client that disconnected must not show up for the next client.
 - step 8: `[b] simple: SHOW work_mem`
 - postgres: `ok rows=[(4MB)] tags=[0]`
 - pooler: `ok rows=[(7MB)] tags=[0]`
-- from https://github.com/pgdogdev/pgdog/issues/1850
+- related: https://github.com/pgdogdev/pgdog/issues/1850
 
 ### pgbouncer-1.24.1 (pg 18.4) / set-does-not-leak-after-disconnect (silent)
 
@@ -2543,7 +2543,7 @@ Settings from a client that disconnected must not show up for the next client.
 - step 8: `[b] simple: SHOW work_mem`
 - postgres: `ok rows=[(4MB)] tags=[0]`
 - pooler: `ok rows=[(7MB)] tags=[0]`
-- from https://github.com/pgdogdev/pgdog/issues/1850
+- related: https://github.com/pgdogdev/pgdog/issues/1850
 
 ### pgbouncer-1.25.2 (pg 18.4) / set-does-not-leak-after-disconnect (silent)
 
@@ -2552,7 +2552,7 @@ Settings from a client that disconnected must not show up for the next client.
 - step 8: `[b] simple: SHOW work_mem`
 - postgres: `ok rows=[(4MB)] tags=[0]`
 - pooler: `ok rows=[(7MB)] tags=[0]`
-- from https://github.com/pgdogdev/pgdog/issues/1850
+- related: https://github.com/pgdogdev/pgdog/issues/1850
 
 ### pgbouncer-1.26.1 (pg 18.4) / set-does-not-leak-after-disconnect (silent)
 
@@ -2561,7 +2561,7 @@ Settings from a client that disconnected must not show up for the next client.
 - step 8: `[b] simple: SHOW work_mem`
 - postgres: `ok rows=[(4MB)] tags=[0]`
 - pooler: `ok rows=[(7MB)] tags=[0]`
-- from https://github.com/pgdogdev/pgdog/issues/1850
+- related: https://github.com/pgdogdev/pgdog/issues/1850
 
 ### supavisor-2.9.13 (pg 18.4) / set-does-not-leak-after-disconnect (silent)
 
@@ -2570,7 +2570,7 @@ Settings from a client that disconnected must not show up for the next client.
 - step 8: `[b] simple: SHOW work_mem`
 - postgres: `ok rows=[(4MB)] tags=[0]`
 - pooler: `ok rows=[(7MB)] tags=[0]`
-- from https://github.com/pgdogdev/pgdog/issues/1850
+- related: https://github.com/pgdogdev/pgdog/issues/1850
 
 ### supavisor-2.10.0-rc.1 (pg 18.4) / set-does-not-leak-after-disconnect (silent)
 
@@ -2579,7 +2579,7 @@ Settings from a client that disconnected must not show up for the next client.
 - step 8: `[b] simple: SHOW work_mem`
 - postgres: `ok rows=[(4MB)] tags=[0]`
 - pooler: `ok rows=[(7MB)] tags=[0]`
-- from https://github.com/pgdogdev/pgdog/issues/1850
+- related: https://github.com/pgdogdev/pgdog/issues/1850
 
 ### supavisor-2.10.0-rc.1-strict (pg 18.4) / set-does-not-leak-after-disconnect (error)
 
@@ -2588,7 +2588,7 @@ Settings from a client that disconnected must not show up for the next client.
 - step 3: `[a] simple: SET work_mem = '7MB'`
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error XX000: (ESESSIONLEAK) session-level SET statement is not allowed in transaction mode`
-- from https://github.com/pgdogdev/pgdog/issues/1850
+- related: https://github.com/pgdogdev/pgdog/issues/1850
 
 ### pgbouncer-1.26.1-tls (pg 18.4) / set-does-not-leak-after-disconnect (silent)
 
@@ -2597,7 +2597,7 @@ Settings from a client that disconnected must not show up for the next client.
 - step 8: `[b] simple: SHOW work_mem`
 - postgres: `ok rows=[(4MB)] tags=[0]`
 - pooler: `ok rows=[(7MB)] tags=[0]`
-- from https://github.com/pgdogdev/pgdog/issues/1850
+- related: https://github.com/pgdogdev/pgdog/issues/1850
 
 ### pgcat-1.2.0 (pg 17.11) / set-isolated-between-clients (silent)
 
@@ -2606,7 +2606,7 @@ A plain SET from one client must not change the setting another client sees.
 - step 7: `[a] simple: SHOW work_mem`
 - postgres: `ok rows=[(7MB)] tags=[0]`
 - pooler: `ok rows=[(4MB)] tags=[0]`
-- from https://github.com/pgdogdev/pgdog/issues/1850
+- related: https://github.com/pgdogdev/pgdog/issues/1850
 
 ### odyssey-1.5.2 (pg 17.11) / set-isolated-between-clients (silent)
 
@@ -2615,7 +2615,7 @@ A plain SET from one client must not change the setting another client sees.
 - step 7: `[a] simple: SHOW work_mem`
 - postgres: `ok rows=[(7MB)] tags=[0]`
 - pooler: `ok rows=[(4MB)] tags=[0]`
-- from https://github.com/pgdogdev/pgdog/issues/1850
+- related: https://github.com/pgdogdev/pgdog/issues/1850
 
 ### supavisor-2.9.13 (pg 17.11) / set-isolated-between-clients (silent)
 
@@ -2624,7 +2624,7 @@ A plain SET from one client must not change the setting another client sees.
 - step 7: `[a] simple: SHOW work_mem`
 - postgres: `ok rows=[(7MB)] tags=[0]`
 - pooler: `ok rows=[(9MB)] tags=[0]`
-- from https://github.com/pgdogdev/pgdog/issues/1850
+- related: https://github.com/pgdogdev/pgdog/issues/1850
 
 ### supavisor-2.10.0-rc.1 (pg 17.11) / set-isolated-between-clients (silent)
 
@@ -2633,7 +2633,7 @@ A plain SET from one client must not change the setting another client sees.
 - step 7: `[a] simple: SHOW work_mem`
 - postgres: `ok rows=[(7MB)] tags=[0]`
 - pooler: `ok rows=[(9MB)] tags=[0]`
-- from https://github.com/pgdogdev/pgdog/issues/1850
+- related: https://github.com/pgdogdev/pgdog/issues/1850
 
 ### supavisor-2.10.0-rc.1-strict (pg 17.11) / set-isolated-between-clients (error)
 
@@ -2642,7 +2642,7 @@ A plain SET from one client must not change the setting another client sees.
 - step 1: `[a] simple: SET work_mem = '7MB'`
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error XX000: (ESESSIONLEAK) session-level SET statement is not allowed in transaction mode`
-- from https://github.com/pgdogdev/pgdog/issues/1850
+- related: https://github.com/pgdogdev/pgdog/issues/1850
 
 ### pgcat-1.2.0 (pg 18.4) / set-isolated-between-clients (silent)
 
@@ -2651,7 +2651,7 @@ A plain SET from one client must not change the setting another client sees.
 - step 7: `[a] simple: SHOW work_mem`
 - postgres: `ok rows=[(7MB)] tags=[0]`
 - pooler: `ok rows=[(4MB)] tags=[0]`
-- from https://github.com/pgdogdev/pgdog/issues/1850
+- related: https://github.com/pgdogdev/pgdog/issues/1850
 
 ### odyssey-1.5.2 (pg 18.4) / set-isolated-between-clients (silent)
 
@@ -2660,7 +2660,7 @@ A plain SET from one client must not change the setting another client sees.
 - step 7: `[a] simple: SHOW work_mem`
 - postgres: `ok rows=[(7MB)] tags=[0]`
 - pooler: `ok rows=[(4MB)] tags=[0]`
-- from https://github.com/pgdogdev/pgdog/issues/1850
+- related: https://github.com/pgdogdev/pgdog/issues/1850
 
 ### supavisor-2.9.13 (pg 18.4) / set-isolated-between-clients (silent)
 
@@ -2669,7 +2669,7 @@ A plain SET from one client must not change the setting another client sees.
 - step 7: `[a] simple: SHOW work_mem`
 - postgres: `ok rows=[(7MB)] tags=[0]`
 - pooler: `ok rows=[(9MB)] tags=[0]`
-- from https://github.com/pgdogdev/pgdog/issues/1850
+- related: https://github.com/pgdogdev/pgdog/issues/1850
 
 ### supavisor-2.10.0-rc.1 (pg 18.4) / set-isolated-between-clients (silent)
 
@@ -2678,7 +2678,7 @@ A plain SET from one client must not change the setting another client sees.
 - step 7: `[a] simple: SHOW work_mem`
 - postgres: `ok rows=[(7MB)] tags=[0]`
 - pooler: `ok rows=[(9MB)] tags=[0]`
-- from https://github.com/pgdogdev/pgdog/issues/1850
+- related: https://github.com/pgdogdev/pgdog/issues/1850
 
 ### supavisor-2.10.0-rc.1-strict (pg 18.4) / set-isolated-between-clients (error)
 
@@ -2687,7 +2687,7 @@ A plain SET from one client must not change the setting another client sees.
 - step 1: `[a] simple: SET work_mem = '7MB'`
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error XX000: (ESESSIONLEAK) session-level SET statement is not allowed in transaction mode`
-- from https://github.com/pgdogdev/pgdog/issues/1850
+- related: https://github.com/pgdogdev/pgdog/issues/1850
 
 ### pgdog-0.1.56 (pg 17.11) / set-local-default-after-set-local (silent)
 
@@ -2723,7 +2723,7 @@ SET LOCAL ... TO DEFAULT after an earlier SET LOCAL in the same transaction, the
 - step 7: `[a] simple: SHOW statement_timeout`
 - postgres: `ok rows=[(5s)] tags=[0]`
 - pooler: `ok rows=[(0)] tags=[0]`
-- from https://github.com/pgdogdev/pgdog/issues/1770
+- related: https://github.com/pgdogdev/pgdog/issues/1770
 
 ### odyssey-1.5.2 (pg 17.11) / set-local-default-after-set-local (silent)
 
@@ -2732,7 +2732,7 @@ SET LOCAL ... TO DEFAULT after an earlier SET LOCAL in the same transaction, the
 - step 7: `[a] simple: SHOW statement_timeout`
 - postgres: `ok rows=[(5s)] tags=[0]`
 - pooler: `ok rows=[(0)] tags=[0]`
-- from https://github.com/pgdogdev/pgdog/issues/1770
+- related: https://github.com/pgdogdev/pgdog/issues/1770
 
 ### supavisor-2.10.0-rc.1-strict (pg 17.11) / set-local-default-after-set-local (error)
 
@@ -2741,7 +2741,7 @@ SET LOCAL ... TO DEFAULT after an earlier SET LOCAL in the same transaction, the
 - step 1: `[a] simple: SET statement_timeout = '5s'`
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error XX000: (ESESSIONLEAK) session-level SET statement is not allowed in transaction mode`
-- from https://github.com/pgdogdev/pgdog/issues/1770
+- related: https://github.com/pgdogdev/pgdog/issues/1770
 
 ### pgdog-0.1.56 (pg 18.4) / set-local-default-after-set-local (silent)
 
@@ -2777,7 +2777,7 @@ SET LOCAL ... TO DEFAULT after an earlier SET LOCAL in the same transaction, the
 - step 7: `[a] simple: SHOW statement_timeout`
 - postgres: `ok rows=[(5s)] tags=[0]`
 - pooler: `ok rows=[(0)] tags=[0]`
-- from https://github.com/pgdogdev/pgdog/issues/1770
+- related: https://github.com/pgdogdev/pgdog/issues/1770
 
 ### odyssey-1.5.2 (pg 18.4) / set-local-default-after-set-local (silent)
 
@@ -2786,7 +2786,7 @@ SET LOCAL ... TO DEFAULT after an earlier SET LOCAL in the same transaction, the
 - step 7: `[a] simple: SHOW statement_timeout`
 - postgres: `ok rows=[(5s)] tags=[0]`
 - pooler: `ok rows=[(0)] tags=[0]`
-- from https://github.com/pgdogdev/pgdog/issues/1770
+- related: https://github.com/pgdogdev/pgdog/issues/1770
 
 ### supavisor-2.10.0-rc.1-strict (pg 18.4) / set-local-default-after-set-local (error)
 
@@ -2795,7 +2795,7 @@ SET LOCAL ... TO DEFAULT after an earlier SET LOCAL in the same transaction, the
 - step 1: `[a] simple: SET statement_timeout = '5s'`
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error XX000: (ESESSIONLEAK) session-level SET statement is not allowed in transaction mode`
-- from https://github.com/pgdogdev/pgdog/issues/1770
+- related: https://github.com/pgdogdev/pgdog/issues/1770
 
 ### pgdog-0.1.56 (pg 17.11) / set-local-reverts-after-commit (silent)
 
@@ -2831,7 +2831,7 @@ SET LOCAL ... TO DEFAULT must not change the session value, outside or inside a 
 - step 3: `[a] simple: SHOW statement_timeout`
 - postgres: `ok rows=[(5s)] tags=[0]`
 - pooler: `ok rows=[(0)] tags=[0]`
-- from https://github.com/pgdogdev/pgdog/issues/1770
+- related: https://github.com/pgdogdev/pgdog/issues/1770
 
 ### odyssey-1.5.2 (pg 17.11) / set-local-reverts-after-commit (silent)
 
@@ -2840,7 +2840,7 @@ SET LOCAL ... TO DEFAULT must not change the session value, outside or inside a 
 - step 3: `[a] simple: SHOW statement_timeout`
 - postgres: `ok rows=[(5s)] tags=[0]`
 - pooler: `ok rows=[(0)] tags=[0]`
-- from https://github.com/pgdogdev/pgdog/issues/1770
+- related: https://github.com/pgdogdev/pgdog/issues/1770
 
 ### supavisor-2.10.0-rc.1-strict (pg 17.11) / set-local-reverts-after-commit (error)
 
@@ -2849,7 +2849,7 @@ SET LOCAL ... TO DEFAULT must not change the session value, outside or inside a 
 - step 1: `[a] simple: SET statement_timeout = '5s'`
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error XX000: (ESESSIONLEAK) session-level SET statement is not allowed in transaction mode`
-- from https://github.com/pgdogdev/pgdog/issues/1770
+- related: https://github.com/pgdogdev/pgdog/issues/1770
 
 ### pgdog-0.1.56 (pg 18.4) / set-local-reverts-after-commit (silent)
 
@@ -2885,7 +2885,7 @@ SET LOCAL ... TO DEFAULT must not change the session value, outside or inside a 
 - step 3: `[a] simple: SHOW statement_timeout`
 - postgres: `ok rows=[(5s)] tags=[0]`
 - pooler: `ok rows=[(0)] tags=[0]`
-- from https://github.com/pgdogdev/pgdog/issues/1770
+- related: https://github.com/pgdogdev/pgdog/issues/1770
 
 ### odyssey-1.5.2 (pg 18.4) / set-local-reverts-after-commit (silent)
 
@@ -2894,7 +2894,7 @@ SET LOCAL ... TO DEFAULT must not change the session value, outside or inside a 
 - step 3: `[a] simple: SHOW statement_timeout`
 - postgres: `ok rows=[(5s)] tags=[0]`
 - pooler: `ok rows=[(0)] tags=[0]`
-- from https://github.com/pgdogdev/pgdog/issues/1770
+- related: https://github.com/pgdogdev/pgdog/issues/1770
 
 ### supavisor-2.10.0-rc.1-strict (pg 18.4) / set-local-reverts-after-commit (error)
 
@@ -2903,7 +2903,7 @@ SET LOCAL ... TO DEFAULT must not change the session value, outside or inside a 
 - step 1: `[a] simple: SET statement_timeout = '5s'`
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error XX000: (ESESSIONLEAK) session-level SET statement is not allowed in transaction mode`
-- from https://github.com/pgdogdev/pgdog/issues/1770
+- related: https://github.com/pgdogdev/pgdog/issues/1770
 
 ### pgbouncer-1.24.1 (pg 17.11) / set-role-isolated-between-clients (silent)
 
@@ -3024,7 +3024,7 @@ A client that held an advisory lock and ran SET ROLE must not pass its role to t
 - step 8: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1341
+- related: https://github.com/pgdogdev/pgdog/issues/1341
 
 ### pgbouncer-1.25.2 (pg 17.11) / set-role-reset-after-pinned-disconnect (silent)
 
@@ -3033,7 +3033,7 @@ A client that held an advisory lock and ran SET ROLE must not pass its role to t
 - step 8: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1341
+- related: https://github.com/pgdogdev/pgdog/issues/1341
 
 ### pgbouncer-1.26.1 (pg 17.11) / set-role-reset-after-pinned-disconnect (silent)
 
@@ -3042,7 +3042,7 @@ A client that held an advisory lock and ran SET ROLE must not pass its role to t
 - step 8: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1341
+- related: https://github.com/pgdogdev/pgdog/issues/1341
 
 ### supavisor-2.9.13 (pg 17.11) / set-role-reset-after-pinned-disconnect (silent)
 
@@ -3051,7 +3051,7 @@ A client that held an advisory lock and ran SET ROLE must not pass its role to t
 - step 8: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1341
+- related: https://github.com/pgdogdev/pgdog/issues/1341
 
 ### supavisor-2.10.0-rc.1 (pg 17.11) / set-role-reset-after-pinned-disconnect (silent)
 
@@ -3060,7 +3060,7 @@ A client that held an advisory lock and ran SET ROLE must not pass its role to t
 - step 8: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1341
+- related: https://github.com/pgdogdev/pgdog/issues/1341
 
 ### supavisor-2.10.0-rc.1-strict (pg 17.11) / set-role-reset-after-pinned-disconnect (error)
 
@@ -3069,7 +3069,7 @@ A client that held an advisory lock and ran SET ROLE must not pass its role to t
 - step 1: `[a] simple: SELECT pg_advisory_lock(707519)::text`
 - postgres: `ok rows=[()] tags=[1]`
 - pooler: `error XX000: (ESESSIONLEAK) session-level advisory lock is not allowed in transaction mode`
-- from https://github.com/pgdogdev/pgdog/issues/1341
+- related: https://github.com/pgdogdev/pgdog/issues/1341
 
 ### pgbouncer-1.26.1-tls (pg 17.11) / set-role-reset-after-pinned-disconnect (silent)
 
@@ -3078,7 +3078,7 @@ A client that held an advisory lock and ran SET ROLE must not pass its role to t
 - step 8: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1341
+- related: https://github.com/pgdogdev/pgdog/issues/1341
 
 ### pgbouncer-1.24.1 (pg 18.4) / set-role-reset-after-pinned-disconnect (silent)
 
@@ -3087,7 +3087,7 @@ A client that held an advisory lock and ran SET ROLE must not pass its role to t
 - step 8: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1341
+- related: https://github.com/pgdogdev/pgdog/issues/1341
 
 ### pgbouncer-1.25.2 (pg 18.4) / set-role-reset-after-pinned-disconnect (silent)
 
@@ -3096,7 +3096,7 @@ A client that held an advisory lock and ran SET ROLE must not pass its role to t
 - step 8: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1341
+- related: https://github.com/pgdogdev/pgdog/issues/1341
 
 ### pgbouncer-1.26.1 (pg 18.4) / set-role-reset-after-pinned-disconnect (silent)
 
@@ -3105,7 +3105,7 @@ A client that held an advisory lock and ran SET ROLE must not pass its role to t
 - step 8: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1341
+- related: https://github.com/pgdogdev/pgdog/issues/1341
 
 ### supavisor-2.9.13 (pg 18.4) / set-role-reset-after-pinned-disconnect (silent)
 
@@ -3114,7 +3114,7 @@ A client that held an advisory lock and ran SET ROLE must not pass its role to t
 - step 8: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1341
+- related: https://github.com/pgdogdev/pgdog/issues/1341
 
 ### supavisor-2.10.0-rc.1 (pg 18.4) / set-role-reset-after-pinned-disconnect (silent)
 
@@ -3123,7 +3123,7 @@ A client that held an advisory lock and ran SET ROLE must not pass its role to t
 - step 8: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1341
+- related: https://github.com/pgdogdev/pgdog/issues/1341
 
 ### supavisor-2.10.0-rc.1-strict (pg 18.4) / set-role-reset-after-pinned-disconnect (error)
 
@@ -3132,7 +3132,7 @@ A client that held an advisory lock and ran SET ROLE must not pass its role to t
 - step 1: `[a] simple: SELECT pg_advisory_lock(707519)::text`
 - postgres: `ok rows=[()] tags=[1]`
 - pooler: `error XX000: (ESESSIONLEAK) session-level advisory lock is not allowed in transaction mode`
-- from https://github.com/pgdogdev/pgdog/issues/1341
+- related: https://github.com/pgdogdev/pgdog/issues/1341
 
 ### pgbouncer-1.26.1-tls (pg 18.4) / set-role-reset-after-pinned-disconnect (silent)
 
@@ -3141,7 +3141,7 @@ A client that held an advisory lock and ran SET ROLE must not pass its role to t
 - step 8: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1341
+- related: https://github.com/pgdogdev/pgdog/issues/1341
 
 ### pgbouncer-1.24.1 (pg 17.11) / set-role-reset-after-temp-table-disconnect (silent)
 
@@ -3150,7 +3150,7 @@ A client that created a temp table and ran SET ROLE must not pass its role to th
 - step 8: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1341
+- related: https://github.com/pgdogdev/pgdog/issues/1341
 
 ### pgbouncer-1.25.2 (pg 17.11) / set-role-reset-after-temp-table-disconnect (silent)
 
@@ -3159,7 +3159,7 @@ A client that created a temp table and ran SET ROLE must not pass its role to th
 - step 8: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1341
+- related: https://github.com/pgdogdev/pgdog/issues/1341
 
 ### pgbouncer-1.26.1 (pg 17.11) / set-role-reset-after-temp-table-disconnect (silent)
 
@@ -3168,7 +3168,7 @@ A client that created a temp table and ran SET ROLE must not pass its role to th
 - step 8: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1341
+- related: https://github.com/pgdogdev/pgdog/issues/1341
 
 ### supavisor-2.9.13 (pg 17.11) / set-role-reset-after-temp-table-disconnect (silent)
 
@@ -3177,7 +3177,7 @@ A client that created a temp table and ran SET ROLE must not pass its role to th
 - step 8: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1341
+- related: https://github.com/pgdogdev/pgdog/issues/1341
 
 ### supavisor-2.10.0-rc.1 (pg 17.11) / set-role-reset-after-temp-table-disconnect (silent)
 
@@ -3186,7 +3186,7 @@ A client that created a temp table and ran SET ROLE must not pass its role to th
 - step 8: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1341
+- related: https://github.com/pgdogdev/pgdog/issues/1341
 
 ### supavisor-2.10.0-rc.1-strict (pg 17.11) / set-role-reset-after-temp-table-disconnect (error)
 
@@ -3195,7 +3195,7 @@ A client that created a temp table and ran SET ROLE must not pass its role to th
 - step 1: `[a] simple: CREATE TEMP TABLE pp_role_tmp (x int)`
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error XX000: (ESESSIONLEAK) temporary table creation is not allowed in transaction mode`
-- from https://github.com/pgdogdev/pgdog/issues/1341
+- related: https://github.com/pgdogdev/pgdog/issues/1341
 
 ### pgbouncer-1.26.1-tls (pg 17.11) / set-role-reset-after-temp-table-disconnect (silent)
 
@@ -3204,7 +3204,7 @@ A client that created a temp table and ran SET ROLE must not pass its role to th
 - step 8: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1341
+- related: https://github.com/pgdogdev/pgdog/issues/1341
 
 ### pgbouncer-1.24.1 (pg 18.4) / set-role-reset-after-temp-table-disconnect (silent)
 
@@ -3213,7 +3213,7 @@ A client that created a temp table and ran SET ROLE must not pass its role to th
 - step 8: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1341
+- related: https://github.com/pgdogdev/pgdog/issues/1341
 
 ### pgbouncer-1.25.2 (pg 18.4) / set-role-reset-after-temp-table-disconnect (silent)
 
@@ -3222,7 +3222,7 @@ A client that created a temp table and ran SET ROLE must not pass its role to th
 - step 8: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1341
+- related: https://github.com/pgdogdev/pgdog/issues/1341
 
 ### pgbouncer-1.26.1 (pg 18.4) / set-role-reset-after-temp-table-disconnect (silent)
 
@@ -3231,7 +3231,7 @@ A client that created a temp table and ran SET ROLE must not pass its role to th
 - step 8: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1341
+- related: https://github.com/pgdogdev/pgdog/issues/1341
 
 ### supavisor-2.9.13 (pg 18.4) / set-role-reset-after-temp-table-disconnect (silent)
 
@@ -3240,7 +3240,7 @@ A client that created a temp table and ran SET ROLE must not pass its role to th
 - step 8: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1341
+- related: https://github.com/pgdogdev/pgdog/issues/1341
 
 ### supavisor-2.10.0-rc.1 (pg 18.4) / set-role-reset-after-temp-table-disconnect (silent)
 
@@ -3249,7 +3249,7 @@ A client that created a temp table and ran SET ROLE must not pass its role to th
 - step 8: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1341
+- related: https://github.com/pgdogdev/pgdog/issues/1341
 
 ### supavisor-2.10.0-rc.1-strict (pg 18.4) / set-role-reset-after-temp-table-disconnect (error)
 
@@ -3258,7 +3258,7 @@ A client that created a temp table and ran SET ROLE must not pass its role to th
 - step 1: `[a] simple: CREATE TEMP TABLE pp_role_tmp (x int)`
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error XX000: (ESESSIONLEAK) temporary table creation is not allowed in transaction mode`
-- from https://github.com/pgdogdev/pgdog/issues/1341
+- related: https://github.com/pgdogdev/pgdog/issues/1341
 
 ### pgbouncer-1.26.1-tls (pg 18.4) / set-role-reset-after-temp-table-disconnect (silent)
 
@@ -3267,7 +3267,7 @@ A client that created a temp table and ran SET ROLE must not pass its role to th
 - step 8: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1341
+- related: https://github.com/pgdogdev/pgdog/issues/1341
 
 ### supavisor-2.9.13 (pg 17.11) / set-survives-server-change (silent)
 
@@ -3592,7 +3592,7 @@ A temp table created by one client must not be visible to another client.
 - step 7: `[b] simple: SELECT count(*) FROM pp_tmp`
 - postgres: `error 42P01: relation "pp_tmp" does not exist`
 - pooler: `ok rows=[(0)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1733
+- related: https://github.com/pgdogdev/pgdog/issues/1733
 
 ### pgbouncer-1.25.2 (pg 17.11) / temp-table-isolated-between-clients (silent)
 
@@ -3601,7 +3601,7 @@ A temp table created by one client must not be visible to another client.
 - step 7: `[b] simple: SELECT count(*) FROM pp_tmp`
 - postgres: `error 42P01: relation "pp_tmp" does not exist`
 - pooler: `ok rows=[(0)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1733
+- related: https://github.com/pgdogdev/pgdog/issues/1733
 
 ### pgbouncer-1.26.1 (pg 17.11) / temp-table-isolated-between-clients (silent)
 
@@ -3610,7 +3610,7 @@ A temp table created by one client must not be visible to another client.
 - step 7: `[b] simple: SELECT count(*) FROM pp_tmp`
 - postgres: `error 42P01: relation "pp_tmp" does not exist`
 - pooler: `ok rows=[(0)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1733
+- related: https://github.com/pgdogdev/pgdog/issues/1733
 
 ### pgdog-0.1.50 (pg 17.11) / temp-table-isolated-between-clients (silent)
 
@@ -3655,7 +3655,7 @@ A temp table created by one client must not be visible to another client.
 - step 7: `[b] simple: SELECT count(*) FROM pp_tmp`
 - postgres: `error 42P01: relation "pp_tmp" does not exist`
 - pooler: `ok rows=[(0)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1733
+- related: https://github.com/pgdogdev/pgdog/issues/1733
 
 ### supavisor-2.9.13 (pg 17.11) / temp-table-isolated-between-clients (silent)
 
@@ -3664,7 +3664,7 @@ A temp table created by one client must not be visible to another client.
 - step 7: `[b] simple: SELECT count(*) FROM pp_tmp`
 - postgres: `error 42P01: relation "pp_tmp" does not exist`
 - pooler: `ok rows=[(0)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1733
+- related: https://github.com/pgdogdev/pgdog/issues/1733
 
 ### supavisor-2.10.0-rc.1 (pg 17.11) / temp-table-isolated-between-clients (silent)
 
@@ -3673,7 +3673,7 @@ A temp table created by one client must not be visible to another client.
 - step 7: `[b] simple: SELECT count(*) FROM pp_tmp`
 - postgres: `error 42P01: relation "pp_tmp" does not exist`
 - pooler: `ok rows=[(0)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1733
+- related: https://github.com/pgdogdev/pgdog/issues/1733
 
 ### supavisor-2.10.0-rc.1-strict (pg 17.11) / temp-table-isolated-between-clients (error)
 
@@ -3682,7 +3682,7 @@ A temp table created by one client must not be visible to another client.
 - step 3: `[a] simple: CREATE TEMP TABLE pp_tmp (x int)`
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error XX000: (ESESSIONLEAK) temporary table creation is not allowed in transaction mode`
-- from https://github.com/pgdogdev/pgdog/issues/1733
+- related: https://github.com/pgdogdev/pgdog/issues/1733
 
 ### pgbouncer-1.26.1-tls (pg 17.11) / temp-table-isolated-between-clients (silent)
 
@@ -3691,7 +3691,7 @@ A temp table created by one client must not be visible to another client.
 - step 7: `[b] simple: SELECT count(*) FROM pp_tmp`
 - postgres: `error 42P01: relation "pp_tmp" does not exist`
 - pooler: `ok rows=[(0)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1733
+- related: https://github.com/pgdogdev/pgdog/issues/1733
 
 ### pgbouncer-1.24.1 (pg 18.4) / temp-table-isolated-between-clients (silent)
 
@@ -3700,7 +3700,7 @@ A temp table created by one client must not be visible to another client.
 - step 7: `[b] simple: SELECT count(*) FROM pp_tmp`
 - postgres: `error 42P01: relation "pp_tmp" does not exist`
 - pooler: `ok rows=[(0)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1733
+- related: https://github.com/pgdogdev/pgdog/issues/1733
 
 ### pgbouncer-1.25.2 (pg 18.4) / temp-table-isolated-between-clients (silent)
 
@@ -3709,7 +3709,7 @@ A temp table created by one client must not be visible to another client.
 - step 7: `[b] simple: SELECT count(*) FROM pp_tmp`
 - postgres: `error 42P01: relation "pp_tmp" does not exist`
 - pooler: `ok rows=[(0)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1733
+- related: https://github.com/pgdogdev/pgdog/issues/1733
 
 ### pgbouncer-1.26.1 (pg 18.4) / temp-table-isolated-between-clients (silent)
 
@@ -3718,7 +3718,7 @@ A temp table created by one client must not be visible to another client.
 - step 7: `[b] simple: SELECT count(*) FROM pp_tmp`
 - postgres: `error 42P01: relation "pp_tmp" does not exist`
 - pooler: `ok rows=[(0)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1733
+- related: https://github.com/pgdogdev/pgdog/issues/1733
 
 ### pgdog-0.1.50 (pg 18.4) / temp-table-isolated-between-clients (silent)
 
@@ -3763,7 +3763,7 @@ A temp table created by one client must not be visible to another client.
 - step 7: `[b] simple: SELECT count(*) FROM pp_tmp`
 - postgres: `error 42P01: relation "pp_tmp" does not exist`
 - pooler: `ok rows=[(0)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1733
+- related: https://github.com/pgdogdev/pgdog/issues/1733
 
 ### supavisor-2.9.13 (pg 18.4) / temp-table-isolated-between-clients (silent)
 
@@ -3772,7 +3772,7 @@ A temp table created by one client must not be visible to another client.
 - step 7: `[b] simple: SELECT count(*) FROM pp_tmp`
 - postgres: `error 42P01: relation "pp_tmp" does not exist`
 - pooler: `ok rows=[(0)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1733
+- related: https://github.com/pgdogdev/pgdog/issues/1733
 
 ### supavisor-2.10.0-rc.1 (pg 18.4) / temp-table-isolated-between-clients (silent)
 
@@ -3781,7 +3781,7 @@ A temp table created by one client must not be visible to another client.
 - step 7: `[b] simple: SELECT count(*) FROM pp_tmp`
 - postgres: `error 42P01: relation "pp_tmp" does not exist`
 - pooler: `ok rows=[(0)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1733
+- related: https://github.com/pgdogdev/pgdog/issues/1733
 
 ### supavisor-2.10.0-rc.1-strict (pg 18.4) / temp-table-isolated-between-clients (error)
 
@@ -3790,7 +3790,7 @@ A temp table created by one client must not be visible to another client.
 - step 3: `[a] simple: CREATE TEMP TABLE pp_tmp (x int)`
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error XX000: (ESESSIONLEAK) temporary table creation is not allowed in transaction mode`
-- from https://github.com/pgdogdev/pgdog/issues/1733
+- related: https://github.com/pgdogdev/pgdog/issues/1733
 
 ### pgbouncer-1.26.1-tls (pg 18.4) / temp-table-isolated-between-clients (silent)
 
@@ -3799,7 +3799,7 @@ A temp table created by one client must not be visible to another client.
 - step 7: `[b] simple: SELECT count(*) FROM pp_tmp`
 - postgres: `error 42P01: relation "pp_tmp" does not exist`
 - pooler: `ok rows=[(0)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1733
+- related: https://github.com/pgdogdev/pgdog/issues/1733
 
 ### odyssey-1.5.2 (pg 17.11) / temp-table-survives-own-transactions (error)
 
@@ -3899,4 +3899,4 @@ A plain SET from one client must not change the setting another client sees.
 - step 7: `[a] simple: SHOW work_mem`
 - postgres: `ok rows=[(7MB)] tags=[0]`
 - pooler: `ok rows=[(9MB)] tags=[0]`
-- from https://github.com/pgdogdev/pgdog/issues/1850
+- related: https://github.com/pgdogdev/pgdog/issues/1850

@@ -2,6 +2,7 @@ use std::fmt::Write;
 
 use super::{Report, ResultRow, ScenarioInfo, TargetInfo};
 use crate::runner::{FailKind, Verdict};
+use crate::scenario::ref_label;
 
 /// One table column: a target in one report.
 struct Column<'a> {
@@ -182,7 +183,7 @@ pub fn markdown(reports: &[Report]) -> String {
                     let _ = writeln!(text, "- postgres: `{}`", m.expected);
                     let _ = writeln!(text, "- pooler: `{}`", m.actual);
                     for r in &s.refs {
-                        let _ = writeln!(text, "- from {r}");
+                        let _ = writeln!(text, "- {} {r}", ref_label(r, c.target.product.as_deref()));
                     }
                     if row.expected.is_none() {
                         let _ = write!(
