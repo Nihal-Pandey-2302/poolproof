@@ -30,12 +30,11 @@ These are repository and crates.io settings, so only a repository admin can do t
 6. Turn on the publish job: Settings > Secrets and variables > Actions > Variables >
    New repository variable `CRATES_IO_TRUSTED_PUBLISHING` = `true`.
 7. Revoke the API token used in step 4. No crates.io token is stored in the repository.
-8. In README.md, change the install section to `cargo install --locked poolproof` and
-   `cargo binstall poolproof`.
 
-Two README install lines only work after the first release: "download a binary" (the
-releases page) and `cargo binstall` (it downloads the release archives). Check both once
-it is out.
+The README's install section already describes the released state (the releases page,
+`cargo binstall poolproof`, `cargo install --locked poolproof`), so the crate's README on
+crates.io is right from the first version. None of those works until the first release is
+tagged and published; check each once it is out.
 
 ## Every release
 
