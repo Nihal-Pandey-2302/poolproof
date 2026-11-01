@@ -124,7 +124,7 @@ mod tests {
         // The page groups by it, as text, after the unlabeled columns.
         assert!(TEMPLATE.contains(r#"group: typeof r.label === "string" ? r.label : """#));
         assert!(TEMPLATE.contains(
-            r#"el("th", { class: "group", colspan: String(runLength(i, x => x.group === c.group)) }, c.group)"#
+            r#"el("th", { class: "group", colspan: String(runLength(i, x => x.group === c.group)) }, c.group ? el("span", {}, c.group) : null)"#
         ));
     }
 
