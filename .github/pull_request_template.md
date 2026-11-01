@@ -7,4 +7,4 @@
 - [ ] `cargo fmt`, `cargo clippy --all-targets -- -D warnings` and `cargo test` pass
 - [ ] Bug fix: a test that fails without it
 - [ ] New or changed scenario: checked with `run -v`, `results/` and RESULTS.md regenerated
-- [ ] User-visible change: README.md updated and a CHANGELOG.md line under `Unreleased`
+- [ ] User-visible change: README.md or docs/ updated and a CHANGELOG.md line under `Unreleased`
