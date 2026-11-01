@@ -9,7 +9,7 @@ PASS or FAIL makes every other result less trustworthy.
 You need Rust 1.88 or newer and Docker.
 
 ```sh
-docker compose -f docker/compose.yml up -d --wait   # Postgres + every pooler in the matrix
+docker compose -f docker/compose.yml up -d --wait   # Postgres + every pooler in targets.toml
 cargo run -- run                                    # all scenarios against targets.toml
 ```
 
@@ -53,7 +53,8 @@ The file format is in [README.md](README.md#writing-a-scenario). The workflow:
    that returns a pid, a time or a random value. Use `compare = "status"` or `"ignore"`
    on such steps.
 6. Check the verdicts make sense on every pooler, and run the whole suite with `--reverse`
-   too. A verdict that changes with order means state leaks between scenarios.
+   too. A verdict that changes with order means state leaks between scenarios. A FAIL
+   the pooler's own docs describe gets a documented limitation (below).
 7. If the outcome depends on timing inside the pooler (pipelines, races), set `repeat`.
 8. If the scenario needs a privilege a managed database may not give (`CREATE ROLE`,
    ending other sessions), list it in `requires` (`createrole`, `superuser`,
@@ -67,6 +68,27 @@ The file format is in [README.md](README.md#writing-a-scenario). The workflow:
     ```
 
     CI compares its own verdicts with `results/` and fails if they differ.
+
+## Adding a documented limitation
+
+A FAIL that the pooler's own docs say will happen gets an entry in
+`limitations/<product>.toml`. The format is in
+[README.md](README.md#documented-limitations). The rules:
+
+1. `quote` is the doc's own words, copied verbatim, and `doc` links to it pinned to a
+   commit (a GitHub link with the commit hash). If it can't be pinned, `doc_version`
+   names the version you read. `note` says where in the doc the quote is. A FAIL the doc
+   doesn't plainly describe stays a bug: no entry.
+2. `differs` lists every step where the pooler differs, each with the exact outcome it
+   gives, as `run -v` prints it. A result that differs at another step, or another way,
+   stays an unexplained FAIL. `since` is the lowest version you checked; add `config`,
+   `fixed_in` or `postgres_since` where they apply.
+3. An entry is checked against the scenario's steps as they are. After changing a
+   scenario's steps, check its entries' step numbers and outcomes again.
+4. `cargo test built_in_entries_match_committed_results` fails when a built-in entry
+   matches no committed result, or a committed result makes one stale.
+   `cargo run -- report results/postgres-*.json | diff RESULTS.md -` shows what changes,
+   without a new run; commit the new RESULTS.md with the entry.
 
 ## Code
 

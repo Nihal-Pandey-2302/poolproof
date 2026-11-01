@@ -1,6 +1,7 @@
 # Architecture
 
-poolproof has two independent halves that share a report format:
+poolproof has three main commands. `run` and `drivers` write the same report, and `scan`
+reads it:
 
 - `run` is a differential tester. It plays each scenario against plain Postgres, then
   through a pooler, and compares what clients saw. Postgres is the oracle: scenarios
@@ -74,6 +75,9 @@ src/scan/
   rules.rs               the rules, on the parsed statement tree
   statements.rs          statement names: which driver they look like, which pooler renamed
                          them, and the driver results for --pooler
+  parameters.rs          which parameter a SET finding is about: the scenarios that set it,
+                         and the parameters each pooler keeps per client (by version and
+                         Postgres major), for --pooler
 src/drivers/mod.rs       `drivers`: drivers.toml and cases.toml as scenarios whose steps a
                          driver program runs, the docker run, its output checked and read
 src/output/
@@ -276,7 +280,9 @@ file or stdin -> scan::input::load_queries -> Input: Vec<Query> (SQL, calls, lin
            -> scan::rules::scan -> findings (rule, severity, query), and from the
                                    names scan::statements: a finding per driver
            -> with --pooler: report::find_target + check_finding
-                             (rule -> scenarios -> that pooler's verdicts);
+                             (rule -> scenarios -> that pooler's verdicts;
+                             for SET, scan::parameters picks the scenarios,
+                             or a note for a parameter the pooler keeps);
                              driver findings: scan::check_driver against
                              report::driver_results, a list of its own
            -> output::scan (text), output::sarif, or JSON printed by cli.rs
@@ -309,5 +315,7 @@ report given with `--results`.
 | A pooler or version in the matrix | `docker/compose.yml`, `targets.toml` (with `product`, `version`, `config`), the version list in README.md, the Docker ignore list in `.github/dependabot.yml`, then regenerate `results/` |
 | A harness self-test fault | `tools/pp-proxy/src/fault.rs` (the fault and its name), `main.rs` (`PROXY_LISTEN` parsing) and `shared.rs` (the shared-server fault) there, the table in `tools/pp-proxy/README.md`, `selftest/expected.toml` |
 | A `doctor` check | `doctor.rs` (the check and its output), `runner/doctor.rs` (the queries); it must stay read-only |
+| A documented limitation | `limitations/<product>.toml` (the doc pinned to a commit or with `doc_version`, the quote, every differing step), then `report results/postgres-*.json` against RESULTS.md (CONTRIBUTING.md); changing a scenario's steps means checking its entries again |
+| Which parameters a pooler keeps per client (scan) | `scan/parameters.rs` |
 | Known flaky pairs, or how CI compares verdicts | `results/known-flaky.txt`, `.github/compare-verdicts.sh` |
 | CI or releases | `.github/workflows/`, `docs/releasing.md` |

@@ -68,6 +68,10 @@ for each cell. Where a behavior changed between tested versions, it names both, 
 "fails from 0.1.56 (passed in 0.1.50)". Supavisor runs with its defaults:
 named_prepared_statements off. Its FAQ says transaction mode needs the flag for named
 prepared statements; the named-prepared variant column shows Supavisor with it on.
+PgDog's `full` variant (query parser on) pins a client that ran CREATE TEMP to its server
+connection (PgDog's CHANGELOG, v0.1.57): with a pool of one, the other client can't get a
+server and PgDog answers 58000 "all replicas down"; with a bigger pool it gets
+Postgres's own 42P01.
 [RESULTS.md](RESULTS.md) has the same data as a table. Both are built from `results/`,
 which `scripts/update-results.sh` regenerates and CI checks.
 
@@ -105,27 +109,30 @@ target whose product, version, config or Postgres differs gets a warning; a diff
 pool mode is an error. With `--format json` the comparison is in the report under
 `comparison`.
 
+### Documented limitations
+
 Some FAILs are limitations the pooler documents itself, like PgBouncer's "SET/RESET:
 Never" for transaction pooling. Those are listed in `limitations/<product>.toml`, built
 into the binary, each with a link to the pooler's own docs pinned to a version or commit
-and the doc's words. A FAIL that matches an entry exactly is still a FAIL, printed as
-`(silent, documented)` with the doc, and marked `expected` in JSON. Exactly means: the
-target's `product`, `mode`, `config` (`default` unless the entry lists others) and
-`version` (keys of the targets file, below) are in the entry's range, every step that
-differs is one the entry lists, with the outcome it lists, and nothing hangs. A repeated
-scenario must fail the same way in every run. Anything else stays an unexplained FAIL. An
-entry that applies to a target but doesn't match its result (the scenario passes now, or
-fails another way) is printed as a stale expectation and listed under
-`stale_expectations` in JSON.
+and the doc's words. Built in: PgBouncer, PgCat, PgDog (advisory locks) and Supavisor;
+none for Odyssey yet, so nothing is marked documented on it. A FAIL that matches an entry
+exactly is still a FAIL, printed as `(silent, documented)` with the doc, and marked
+`expected` in JSON. Exactly means: the target's `product`, `mode`, `config` (`default`
+unless the entry lists others) and `version` (keys of the targets file, below) are in the
+entry's range, every step that differs is one the entry lists, with the outcome it lists,
+and nothing hangs. A repeated scenario must fail the same way in every run. Anything else
+stays an unexplained FAIL. An entry that applies to a target but doesn't match its result
+(the scenario passes now, or fails another way) is printed as a stale expectation and
+listed under `stale_expectations` in JSON.
 
 Expected FAILs count for the exit code like any other: for an app, a documented SET leak
 still breaks it. `--ignore-expected` leaves them out, for a pooler's own CI. With
 `--compare-to`, an expected FAIL that no longer matches its entry is a regression.
-`--limitations DIR` (on `run`, `report` and `scan`) uses your own entries, checked
-against the scenarios the run uses. An entry only applies to a scenario with the same
-steps it was checked against, so a scenario of your own with a built-in name isn't judged
-by the built-in entries. `report`
-applies the current entries to saved runs, so a new entry needs no new run.
+`--limitations DIR` (on `run`, `drivers`, `report` and `scan`) uses your own entries,
+checked against the scenarios the run uses. An entry only applies to a scenario with the
+same steps it was checked against, so a scenario of your own with a built-in name isn't
+judged by the built-in entries. `report` applies the current entries to saved runs, so a
+new entry needs no new run.
 
 ```toml
 [[limitation]]
@@ -138,6 +145,7 @@ differs = [{ step = 7, pooler = { status = "ok", rows = [["9MB"]], tags = [0] } 
 doc = "https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f.../features.md"
 quote = "SET/RESET | Yes | Never"
 # doc_version = "1.26.1" is needed when the link isn't pinned to a commit.
+# note = "..." says where in the doc the quote is, for whoever checks; shown nowhere else.
 ```
 
 `pooler` is the outcome as in `run -v`: `{ status = "ok", rows, tags }`, `{ status =
@@ -278,7 +286,9 @@ another config an entry lists) and a version poolproof can compare, such as `1.2
 settings a label of your own, so entries about the defaults don't apply to it. A
 target that sets `product` but not `config` gets a warning, since no entry can match
 it. `run --pooler` takes them as `--product`, `--version` and `--config` (`default`
-unless given), and names the target after them, e.g. `pgbouncer-1.26.1`.
+unless given), and names the target after them, e.g. `pgbouncer-1.26.1`, or `quick`
+without `--product`. `--target` and `--compare-to` go by that name, so a saved quick run
+with `--product` and one without never match.
 
 Before its first scenario, each target is probed twice: a second client connects while
 the first is connected and idle, and again while the first is inside a transaction. The
@@ -594,19 +604,26 @@ steps:
 
 `args` takes one argument per line, as written: no shell quoting and no variables. Leave
 out `--format`; the action sets it. The step fails with poolproof's exit code, after the
-SARIF upload and the summary. Outputs: `exit-code`, `report` (the JSON from `run`) and
-`sarif`. `version:` picks another release (`latest` works, with a warning); `binary:`
-uses a poolproof you built, unverified. Runners: Linux x86_64 and arm64, macOS x86_64
-and arm64, Windows x86_64, with the GitHub CLI installed (it is on GitHub's own).
+SARIF upload and the summary. `summary: false` skips the job summary, and
+`upload-sarif: false` writes the SARIF without uploading it. Outputs: `exit-code`,
+`report` (the JSON from `run`) and `sarif`. `version:` picks another release (`latest`
+works, with a warning); `binary:` uses a poolproof you built, unverified. Runners: Linux
+x86_64 and arm64, macOS x86_64 and arm64, Windows x86_64, with the GitHub CLI installed
+(it is on GitHub's own).
 
 ## Writing a scenario
 
 A scenario is a TOML file in `scenarios/`. Clients are named; each connects on its first
 step. `direct = true` connects to Postgres directly, which is how scenarios check server
 state behind the pooler. A client is either direct or pooled for all of its steps.
-Scenario names must be unique.
+Scenario names must be unique. `refs` links the issues or docs the scenario came from.
+Reports print them after a FAIL as `from`, or as `related:` for a GitHub link to another
+project than the target's `product` (a PgDog issue on a PgBouncer FAIL, or any GitHub
+link on a target without `product`).
 
 ```toml
+# Shortened: the real file adds evidence steps (below), without which this would PASS
+# whenever the two clients don't share a server connection.
 name = "temp-table-isolated-between-clients"
 description = "A temp table created by one client must not be visible to another client."
 refs = ["https://github.com/pgdogdev/pgdog/issues/1733"]
@@ -731,13 +748,9 @@ Not covered yet:
 
 - RDS Proxy and hosted poolers are not in the test bed; they can be tested with the
   recipes in [docs/managed-poolers.md](docs/managed-poolers.md).
-- The variant targets (`targets-variants.toml`: session mode, pool_size 4 and four
+- The variant targets (`targets-variants.toml`: session mode, pool_size 4 and five
   non-default pooler settings) run nightly on Postgres 18.4 only; their results are
-  published on the site under their own heading. PgDog pins a client that ran CREATE
-  TEMP to its server connection (CHANGELOG v0.1.57; it needs the query parser, so only
-  the `full` config does it). With a pool of one, the other client can't get a server
-  and PgDog answers 58000 "all replicas down"; with a bigger pool it gets Postgres's
-  own 42P01.
+  published on the site under their own heading.
 - `scripts/pgdog-ref.sh` has not been checked with release builds, its default.
 
 ## License
