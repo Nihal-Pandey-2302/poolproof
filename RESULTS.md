@@ -2563,7 +2563,7 @@ A session advisory lock must be released when the client that took it disconnect
 
 - on supavisor-2.9.13 (pg 17.11), supavisor-2.10.0-rc.1 (pg 17.11), supavisor-2.9.13 (pg 18.4), supavisor-2.10.0-rc.1 (pg 18.4)
 - documented: "Both `transaction` and `session` pool mode behavior for Supavisor is the same as PgBouncer.", https://github.com/supabase/supavisor/blob/b3c0236b57adcf29b4c026866a0456e28d5fd5c4/docs/migrating/pgbouncer.md?plain=1#L5-L6
-- note: Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes): "Session-level advisory locks | Yes | Never", a row of its table "SQL feature map for pooling modes" (Feature, Session pooling, Transaction pooling) with padding collapsed.
+- note: Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (features.md at ccb120f, linked in the PgBouncer entry for this scenario): "Session-level advisory locks | Yes | Never", padding collapsed.
 - step 4: `[check (direct)] simple: SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 424242`
 - postgres: `ok rows=[(0)] tags=[1]`
 - pooler: `ok rows=[(1)] tags=[1]`
@@ -2586,7 +2586,7 @@ A WITH HOLD cursor declared by one client must not be visible to another client.
 
 - on supavisor-2.9.13 (pg 17.11), supavisor-2.10.0-rc.1 (pg 17.11), supavisor-2.9.13 (pg 18.4), supavisor-2.10.0-rc.1 (pg 18.4)
 - documented: "Both `transaction` and `session` pool mode behavior for Supavisor is the same as PgBouncer.", https://github.com/supabase/supavisor/blob/b3c0236b57adcf29b4c026866a0456e28d5fd5c4/docs/migrating/pgbouncer.md?plain=1#L5-L6
-- note: Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes): "WITH HOLD CURSOR | Yes | Never", a row of its table "SQL feature map for pooling modes" (Feature, Session pooling, Transaction pooling) with padding collapsed.
+- note: Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (features.md at ccb120f, linked in the PgBouncer entry for this scenario): "WITH HOLD CURSOR | Yes | Never", padding collapsed.
 - step 7: `[b] simple: FETCH 1 FROM pp_cur`
 - postgres: `error 34000: cursor "pp_cur" does not exist`
 - pooler: `ok rows=[(1)] tags=[1]`
@@ -2620,7 +2620,7 @@ A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
 - on supavisor-2.9.13 (pg 17.11), supavisor-2.10.0-rc.1 (pg 17.11), supavisor-2.9.13 (pg 18.4), supavisor-2.10.0-rc.1 (pg 18.4)
 - documented: "Both `transaction` and `session` pool mode behavior for Supavisor is the same as PgBouncer.", https://github.com/supabase/supavisor/blob/b3c0236b57adcf29b4c026866a0456e28d5fd5c4/docs/migrating/pgbouncer.md?plain=1#L5-L6
-- note: Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes): "LISTEN | Yes | Never", a row of its table "SQL feature map for pooling modes" (Feature, Session pooling, Transaction pooling) with padding collapsed.
+- note: Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (features.md at ccb120f, linked in the PgBouncer entry for this scenario): "LISTEN | Yes | Never", padding collapsed.
 - step 9: `[a] notifications`
 - postgres: `ok rows=[(pp_chan, hello)] tags=[]`
 - pooler: `ok rows=[] tags=[]`
@@ -2643,7 +2643,7 @@ A library one client loads with LOAD must not show up for another client.
 
 - on supavisor-2.9.13 (pg 17.11), supavisor-2.10.0-rc.1 (pg 17.11), supavisor-2.9.13 (pg 18.4), supavisor-2.10.0-rc.1 (pg 18.4)
 - documented: "Both `transaction` and `session` pool mode behavior for Supavisor is the same as PgBouncer.", https://github.com/supabase/supavisor/blob/b3c0236b57adcf29b4c026866a0456e28d5fd5c4/docs/migrating/pgbouncer.md?plain=1#L5-L6
-- note: Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes): "LOAD statement | Yes | Never", a row of its table "SQL feature map for pooling modes" (Feature, Session pooling, Transaction pooling) with padding collapsed.
+- note: Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (features.md at ccb120f, linked in the PgBouncer entry for this scenario): "LOAD statement | Yes | Never", padding collapsed.
 - step 8: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
 - postgres: `ok rows=[(NULL)] tags=[1]`
 - pooler: `ok rows=[(-1)] tags=[1]`
@@ -2731,7 +2731,7 @@ A client's empty search_path must still be empty after another client changed it
 
 - on supavisor-2.9.13 (pg 17.11), supavisor-2.10.0-rc.1 (pg 17.11), supavisor-2.9.13 (pg 18.4), supavisor-2.10.0-rc.1 (pg 18.4)
 - documented: "Both `transaction` and `session` pool mode behavior for Supavisor is the same as PgBouncer.", https://github.com/supabase/supavisor/blob/b3c0236b57adcf29b4c026866a0456e28d5fd5c4/docs/migrating/pgbouncer.md?plain=1#L5-L6
-- note: Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes): "SET/RESET | Yes | Never", a row of its table "SQL feature map for pooling modes" (Feature, Session pooling, Transaction pooling) with padding collapsed.
+- note: Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (features.md at ccb120f, linked in the PgBouncer entry for this scenario): "SET/RESET | Yes | Never", padding collapsed.
 - step 7: `[a] simple: SHOW search_path`
 - postgres: `ok rows=[("")] tags=[0]`
 - pooler: `ok rows=[(public)] tags=[0]`
@@ -2754,7 +2754,7 @@ Settings from a client that disconnected must not show up for the next client.
 
 - on supavisor-2.9.13 (pg 17.11), supavisor-2.10.0-rc.1 (pg 17.11), supavisor-2.9.13 (pg 18.4), supavisor-2.10.0-rc.1 (pg 18.4)
 - documented: "Both `transaction` and `session` pool mode behavior for Supavisor is the same as PgBouncer.", https://github.com/supabase/supavisor/blob/b3c0236b57adcf29b4c026866a0456e28d5fd5c4/docs/migrating/pgbouncer.md?plain=1#L5-L6
-- note: Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes): "SET/RESET | Yes | Never", a row of its table "SQL feature map for pooling modes" (Feature, Session pooling, Transaction pooling) with padding collapsed.
+- note: Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (features.md at ccb120f, linked in the PgBouncer entry for this scenario): "SET/RESET | Yes | Never", padding collapsed.
 - step 8: `[b] simple: SHOW work_mem`
 - postgres: `ok rows=[(4MB)] tags=[0]`
 - pooler: `ok rows=[(7MB)] tags=[0]`
@@ -2790,7 +2790,7 @@ A plain SET from one client must not change the setting another client sees.
 
 - on supavisor-2.9.13 (pg 17.11), supavisor-2.10.0-rc.1 (pg 17.11), supavisor-2.9.13 (pg 18.4), supavisor-2.10.0-rc.1 (pg 18.4)
 - documented: "Both `transaction` and `session` pool mode behavior for Supavisor is the same as PgBouncer.", https://github.com/supabase/supavisor/blob/b3c0236b57adcf29b4c026866a0456e28d5fd5c4/docs/migrating/pgbouncer.md?plain=1#L5-L6
-- note: Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes): "SET/RESET | Yes | Never", a row of its table "SQL feature map for pooling modes" (Feature, Session pooling, Transaction pooling) with padding collapsed.
+- note: Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (features.md at ccb120f, linked in the PgBouncer entry for this scenario): "SET/RESET | Yes | Never", padding collapsed.
 - step 7: `[a] simple: SHOW work_mem`
 - postgres: `ok rows=[(7MB)] tags=[0]`
 - pooler: `ok rows=[(9MB)] tags=[0]`
@@ -2813,7 +2813,7 @@ SET ROLE from one client must not change the role another client runs as.
 
 - on supavisor-2.9.13 (pg 17.11), supavisor-2.10.0-rc.1 (pg 17.11), supavisor-2.9.13 (pg 18.4), supavisor-2.10.0-rc.1 (pg 18.4)
 - documented: "Both `transaction` and `session` pool mode behavior for Supavisor is the same as PgBouncer.", https://github.com/supabase/supavisor/blob/b3c0236b57adcf29b4c026866a0456e28d5fd5c4/docs/migrating/pgbouncer.md?plain=1#L5-L6
-- note: Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes): "SET/RESET | Yes | Never", a row of its table "SQL feature map for pooling modes" (Feature, Session pooling, Transaction pooling) with padding collapsed. SET ROLE is a SET command.
+- note: Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (features.md at ccb120f, linked in the PgBouncer entry for this scenario): "SET/RESET | Yes | Never", padding collapsed. SET ROLE is a SET command.
 - step 7: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
@@ -2836,7 +2836,7 @@ A client that held an advisory lock and ran SET ROLE must not pass its role to t
 
 - on supavisor-2.9.13 (pg 17.11), supavisor-2.10.0-rc.1 (pg 17.11), supavisor-2.9.13 (pg 18.4), supavisor-2.10.0-rc.1 (pg 18.4)
 - documented: "Both `transaction` and `session` pool mode behavior for Supavisor is the same as PgBouncer.", https://github.com/supabase/supavisor/blob/b3c0236b57adcf29b4c026866a0456e28d5fd5c4/docs/migrating/pgbouncer.md?plain=1#L5-L6
-- note: Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes): "SET/RESET | Yes | Never", a row of its table "SQL feature map for pooling modes" (Feature, Session pooling, Transaction pooling) with padding collapsed. SET ROLE is a SET command.
+- note: Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (features.md at ccb120f, linked in the PgBouncer entry for this scenario): "SET/RESET | Yes | Never", padding collapsed. SET ROLE is a SET command.
 - step 8: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
@@ -2860,7 +2860,7 @@ A client that created a temp table and ran SET ROLE must not pass its role to th
 
 - on supavisor-2.9.13 (pg 17.11), supavisor-2.10.0-rc.1 (pg 17.11), supavisor-2.9.13 (pg 18.4), supavisor-2.10.0-rc.1 (pg 18.4)
 - documented: "Both `transaction` and `session` pool mode behavior for Supavisor is the same as PgBouncer.", https://github.com/supabase/supavisor/blob/b3c0236b57adcf29b4c026866a0456e28d5fd5c4/docs/migrating/pgbouncer.md?plain=1#L5-L6
-- note: Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes): "SET/RESET | Yes | Never", a row of its table "SQL feature map for pooling modes" (Feature, Session pooling, Transaction pooling) with padding collapsed. SET ROLE is a SET command.
+- note: Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (features.md at ccb120f, linked in the PgBouncer entry for this scenario): "SET/RESET | Yes | Never", padding collapsed. SET ROLE is a SET command.
 - step 8: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
@@ -2894,7 +2894,7 @@ A statement made with SQL PREPARE must be usable by the client that made it, and
 
 - on supavisor-2.9.13 (pg 17.11), supavisor-2.10.0-rc.1 (pg 17.11), supavisor-2.9.13 (pg 18.4), supavisor-2.10.0-rc.1 (pg 18.4)
 - documented: "Both `transaction` and `session` pool mode behavior for Supavisor is the same as PgBouncer.", https://github.com/supabase/supavisor/blob/b3c0236b57adcf29b4c026866a0456e28d5fd5c4/docs/migrating/pgbouncer.md?plain=1#L5-L6
-- note: Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes): "PREPARE / DEALLOCATE | Yes | Never", a row of its table "SQL feature map for pooling modes" (Feature, Session pooling, Transaction pooling) with padding collapsed.
+- note: Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (features.md at ccb120f, linked in the PgBouncer entry for this scenario): "PREPARE / DEALLOCATE | Yes | Never", padding collapsed.
 - step 7: `[b] simple: EXECUTE pp_q`
 - postgres: `error 26000: prepared statement "pp_q" does not exist`
 - pooler: `ok rows=[(from a)] tags=[1]`
@@ -2917,7 +2917,7 @@ A temp table created by one client must not be visible to another client.
 
 - on supavisor-2.9.13 (pg 17.11), supavisor-2.10.0-rc.1 (pg 17.11), supavisor-2.9.13 (pg 18.4), supavisor-2.10.0-rc.1 (pg 18.4)
 - documented: "Both `transaction` and `session` pool mode behavior for Supavisor is the same as PgBouncer.", https://github.com/supabase/supavisor/blob/b3c0236b57adcf29b4c026866a0456e28d5fd5c4/docs/migrating/pgbouncer.md?plain=1#L5-L6
-- note: Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes): "PRESERVE/DELETE ROWS temp tables | Yes | Never", a row of its table "SQL feature map for pooling modes" (Feature, Session pooling, Transaction pooling) with padding collapsed. CREATE TEMP TABLE without ON COMMIT preserves rows.
+- note: Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (features.md at ccb120f, linked in the PgBouncer entry for this scenario): "PRESERVE/DELETE ROWS temp tables | Yes | Never", padding collapsed. CREATE TEMP TABLE without ON COMMIT preserves rows.
 - step 7: `[b] simple: SELECT count(*) FROM pp_tmp`
 - postgres: `error 42P01: relation "pp_tmp" does not exist`
 - pooler: `ok rows=[(0)] tags=[1]`
