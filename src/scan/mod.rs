@@ -3,10 +3,12 @@
 use serde::Serialize;
 
 mod input;
+mod parameters;
 mod rules;
 mod statements;
 
 pub use input::{InputFormat, load_queries, read_queries};
+pub use parameters::{check_parameter, scenarios_for_parameter};
 pub use rules::scan;
 pub use statements::check_driver;
 
@@ -42,6 +44,13 @@ pub struct Finding {
     /// With `--pooler`, why there is no `on_pooler`, e.g. no driver results for it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pooler_note: Option<String>,
+    /// For `session-set`: the parameter it sets, as Postgres folds the name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parameter: Option<String>,
+    /// With `--pooler` and no `--postgres`: the same pooler on other Postgres versions,
+    /// where the verdict differs from `on_pooler`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub differs_on: Vec<PoolerCheck>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -63,6 +72,10 @@ pub struct PoolerCheck {
     /// (driver results exist for fewer versions), so the text says which.
     #[serde(skip)]
     pub other_postgres: bool,
+    /// For a SET finding whose parameter none of the scenarios sets: the parameter they
+    /// set instead, so the verdict only says how the pooler treats that one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stand_in: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -109,6 +122,8 @@ pub struct Input {
     pub queries: Vec<Query>,
     /// Only from logs: pg_stat_statements and SQL files have no statement names.
     pub statement_names: Vec<StatementName>,
+    /// pg_stat_statements rows hidden as `<insufficient privilege>`.
+    pub hidden: usize,
 }
 
 impl Input {
@@ -194,6 +209,9 @@ pub struct Report {
     pub queries: usize,
     /// Queries the SQL parser rejected.
     pub unparsed: usize,
+    /// pg_stat_statements rows shown as `<insufficient privilege>`: other roles' queries,
+    /// hidden from the role that exported them.
+    pub hidden: usize,
     /// DO blocks and function bodies that could not be parsed (PL/pgSQL even after a
     /// retry), so only their words were checked.
     pub uninspected: usize,

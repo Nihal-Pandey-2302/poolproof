@@ -138,6 +138,8 @@ pub(super) fn findings(names: &[StatementName]) -> (Vec<Finding>, Vec<String>) {
             on_pooler: None,
             driver: Some(driver.name),
             pooler_note: None,
+            parameter: None,
+            differs_on: vec![],
         });
     }
     let notes = RENAMING_POOLERS
@@ -200,6 +202,7 @@ pub fn check_driver(finding: &mut Finding, target: &str, postgres: Option<&str>,
         scenarios: pick(default),
         documented: vec![],
         fix: status_of_fix(&pick(fix), driver.fix),
+        stand_in: None,
     });
 }
 

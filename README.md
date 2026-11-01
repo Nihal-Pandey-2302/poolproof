@@ -464,14 +464,21 @@ query fails because of it; OK means it passes. With
 cover (no related scenario, or only SKIP or ERROR verdicts) counts as it would without
 `--pooler`. A finding whose failing scenarios are all documented limitations (see
 above) still says BREAKS or REJECTED, with the docs after it: `(documented: <link>)`.
-`--postgres 17.11` picks the Postgres version (default: newest), and
-`--results my-run.json` uses a run against your own setup instead. An unknown name lists
-the available ones.
+`--pooler pgbouncer` (a product) means its newest stable version in the results.
+`--postgres 17.11` picks the Postgres version (default: newest; without it, a finding
+whose verdict differs on another version says so), and `--results my-run.json` uses a
+run against your own setup instead. An unknown name lists the available ones.
+
+Most `SET` scenarios set `work_mem`, so a `SET` finding for another parameter says so.
+When the pooler's docs say it keeps that parameter per client (PgBouncer:
+`application_name`, `TimeZone` and others), the finding gets a note with the docs instead
+of a verdict.
 
 Without `--pooler`, the exit code is 1 if anything would break under transaction pooling
 (`--strict` also fails on warnings), so it can run in CI. `--format json` prints an object
-with `findings` and the counts `queries`, `unparsed` and `uninspected` (function and DO
-bodies only checked for words). `--format sarif` works with GitHub code scanning:
+with `findings` and the counts `queries`, `unparsed`, `hidden` (pg_stat_statements rows
+shown as `<insufficient privilege>`) and `uninspected` (function and DO bodies only checked
+for words). `--format sarif` works with GitHub code scanning:
 
 ```yaml
 - run: poolproof scan migrations/all.sql --format sarif > poolproof.sarif || true

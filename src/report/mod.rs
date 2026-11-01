@@ -227,22 +227,33 @@ impl Report {
 }
 
 /// The report and target for `--pooler NAME [--postgres VERSION]`; the newest
-/// Postgres version when none is given.
+/// Postgres version when none is given. NAME is a target, or a product (`pgbouncer`),
+/// which picks that product's newest version in its default config: the newest stable
+/// one, when there is one.
 pub fn find_target<'a>(
     reports: &'a [Report],
     name: &str,
     postgres: Option<&str>,
 ) -> Result<(&'a Report, &'a TargetInfo)> {
-    let mut found: Vec<(&Report, &TargetInfo)> = reports
-        .iter()
-        .flat_map(|r| r.targets.iter().map(move |t| (r, t)))
-        .filter(|(_, t)| t.name == name && postgres.is_none_or(|pg| t.postgres.as_deref() == Some(pg)))
-        .collect();
-    found.sort_by(|a, b| {
-        crate::version::cmp(
-            a.1.postgres.as_deref().unwrap_or(""),
-            b.1.postgres.as_deref().unwrap_or(""),
-        )
+    let matching = |pick: &dyn Fn(&TargetInfo) -> bool| -> Vec<(&'a Report, &'a TargetInfo)> {
+        reports
+            .iter()
+            .flat_map(|r| r.targets.iter().map(move |t| (r, t)))
+            .filter(|(_, t)| pick(t) && postgres.is_none_or(|pg| t.postgres.as_deref() == Some(pg)))
+            .collect()
+    };
+    let mut found = matching(&|t| t.name == name);
+    if found.is_empty() {
+        found =
+            matching(&|t| t.product.as_deref() == Some(name) && matches!(t.config.as_deref(), None | Some("default")));
+        if found.iter().any(|(_, t)| is_stable(t)) {
+            found.retain(|(_, t)| is_stable(t));
+        }
+    }
+    let text = |v: &Option<String>| v.as_deref().unwrap_or("").to_string();
+    found.sort_by(|(_, a), (_, b)| {
+        crate::version::cmp(&text(&a.version), &text(&b.version))
+            .then_with(|| crate::version::cmp(&text(&a.postgres), &text(&b.postgres)))
     });
     if let Some(last) = found.pop() {
         return Ok(last);
@@ -255,6 +266,56 @@ pub fn find_target<'a>(
     names.sort();
     names.dedup();
     anyhow::bail!("no results for pooler '{name}'. Available:\n  {}", names.join("\n  "))
+}
+
+fn is_stable(target: &TargetInfo) -> bool {
+    let version = target.version.as_deref().and_then(crate::version::Version::parse);
+    version.is_some_and(|v| !v.is_prerelease())
+}
+
+/// What `--pooler NAME` picked when NAME is a product: the version, and a newer
+/// pre-release it passed over.
+pub fn product_note(reports: &[Report], product: &str, picked: &TargetInfo) -> String {
+    let newer = reports
+        .iter()
+        .flat_map(|r| &r.targets)
+        .filter(|t| t.product.as_deref() == Some(product) && !is_stable(t))
+        .filter(|t| matches!(t.config.as_deref(), None | Some("default")))
+        .filter(|t| {
+            crate::version::cmp(
+                t.version.as_deref().unwrap_or(""),
+                picked.version.as_deref().unwrap_or(""),
+            )
+            .is_gt()
+        })
+        .max_by(|a, b| crate::version::cmp(a.version.as_deref().unwrap_or(""), b.version.as_deref().unwrap_or("")));
+    match (is_stable(picked), newer) {
+        (true, Some(pre)) => format!(
+            "--pooler {product} means {}, the newest stable {product} in the results ({} is a \
+             pre-release: name it to use it).",
+            picked.name, pre.name
+        ),
+        _ => format!(
+            "--pooler {product} means {}, the newest {product} version in the results.",
+            picked.name
+        ),
+    }
+}
+
+/// The same target on the other Postgres versions there are results for, oldest first.
+pub fn other_postgres<'a>(reports: &'a [Report], target: &TargetInfo) -> Vec<(&'a Report, &'a TargetInfo)> {
+    let mut found: Vec<(&Report, &TargetInfo)> = reports
+        .iter()
+        .flat_map(|r| r.targets.iter().map(move |t| (r, t)))
+        .filter(|(_, t)| t.name == target.name && t.postgres != target.postgres)
+        .collect();
+    found.sort_by(|a, b| {
+        crate::version::cmp(
+            a.1.postgres.as_deref().unwrap_or(""),
+            b.1.postgres.as_deref().unwrap_or(""),
+        )
+    });
+    found
 }
 
 /// What `target` did on the given scenarios, or None if none of them ran there.
@@ -299,7 +360,22 @@ pub fn check_finding(report: &Report, target: &TargetInfo, scenarios: &[&str]) -
         documented: if undocumented { vec![] } else { documented },
         fix: None,
         other_postgres: false,
+        stand_in: None,
     })
+}
+
+/// A finding's verdict on `target`: from the scenarios that set its parameter when some
+/// do, then checked against what the pooler's docs say it tracks.
+pub fn judge(finding: &mut crate::scan::Finding, report: &Report, target: &TargetInfo) {
+    let scenarios = crate::scan::scenarios_for_parameter(finding);
+    finding.on_pooler = check_finding(report, target, &scenarios);
+    crate::scan::check_parameter(
+        finding,
+        target.product.as_deref(),
+        target.version.as_deref(),
+        target.postgres.as_deref(),
+        target.config.as_deref(),
+    );
 }
 
 /// The driver verdicts built into the binary, from results/drivers-postgres-*.json:
@@ -394,6 +470,59 @@ mod tests {
     }
 
     #[test]
+    fn finds_target_by_product() {
+        let target = |name: &str, version: &str, config: Option<&str>, pg: &str| {
+            let mut r = sample();
+            r.targets[0].name = name.into();
+            r.targets[0].product = Some("pgb".into());
+            r.targets[0].version = Some(version.into());
+            r.targets[0].config = config.map(Into::into);
+            r.targets[0].postgres = Some(pg.into());
+            r
+        };
+        let reports = [
+            target("pgb-1.9", "1.9", Some("default"), "18"),
+            target("pgb-1.10", "1.10", Some("default"), "17"),
+            target("pgb-1.10", "1.10", Some("default"), "18"),
+            target("pgb-1.10-tls", "1.10", Some("tls"), "18"),
+            target("pgb-1.11-rc.1", "1.11-rc.1", Some("default"), "18"),
+            target("pgb-1.12-x", "1.12", Some("x"), "18"),
+        ];
+        // The newest stable version in the default config, on the newest Postgres.
+        let (_, t) = find_target(&reports, "pgb", None).unwrap();
+        assert_eq!((t.name.as_str(), t.postgres.as_deref()), ("pgb-1.10", Some("18")));
+        let note = product_note(&reports, "pgb", t);
+        assert_eq!(
+            note,
+            "--pooler pgb means pgb-1.10, the newest stable pgb in the results (pgb-1.11-rc.1 is a \
+             pre-release: name it to use it)."
+        );
+        // Only pre-releases: the newest of those.
+        let only_rc = [
+            target("pgb-2.0-rc.1", "2.0-rc.1", None, "18"),
+            target("pgb-2.0-rc.2", "2.0-rc.2", None, "18"),
+        ];
+        let (_, t) = find_target(&only_rc, "pgb", None).unwrap();
+        assert_eq!(t.name, "pgb-2.0-rc.2");
+        assert_eq!(
+            product_note(&only_rc, "pgb", t),
+            "--pooler pgb means pgb-2.0-rc.2, the newest pgb version in the results."
+        );
+        let (_, t) = find_target(&reports, "pgb", Some("17")).unwrap();
+        assert_eq!((t.name.as_str(), t.postgres.as_deref()), ("pgb-1.10", Some("17")));
+        // A target name still means that target.
+        assert_eq!(find_target(&reports, "pgb-1.9", None).unwrap().1.name, "pgb-1.9");
+        assert!(find_target(&reports, "pgb", Some("9.6")).is_err());
+        // The same target on other Postgres versions.
+        let (_, t) = find_target(&reports, "pgb", None).unwrap();
+        let others: Vec<_> = other_postgres(&reports, t)
+            .iter()
+            .map(|(_, o)| o.postgres.clone())
+            .collect();
+        assert_eq!(others, vec![Some("17".to_string())]);
+    }
+
+    #[test]
     fn checks_findings_against_results() {
         use crate::scan::PoolerStatus;
         let report = sample();
@@ -431,6 +560,64 @@ mod tests {
         assert!(mixed.documented.is_empty());
         let line = crate::output::scan::pooler_summary(&only_documented);
         assert_eq!(line, "on p: a fails silently (documented: https://d/)");
+    }
+
+    #[test]
+    fn set_findings_are_judged_by_their_own_parameter() {
+        use crate::scan::{Input, PoolerStatus, Query};
+        // The shape of pgbouncer-1.26.1-pool4 on Postgres 18.4: search_path and the role are
+        // kept per client, work_mem is lost when another client holds the server connection.
+        let row = |scenario: &str, pass: bool| match pass {
+            true => format!(r#"{{"target":"p","scenario":"{scenario}","result":"pass","steps":[]}}"#),
+            false => format!(
+                r#"{{"target":"p","scenario":"{scenario}","result":"fail","mismatch":{{"step":1,"action":"x",
+                "kind":"silent","expected":{{"status":"ok","rows":[],"tags":[]}},
+                "actual":{{"status":"ok","rows":[],"tags":[]}}}},"steps":[]}}"#
+            ),
+        };
+        let report: Report = serde_json::from_str(&format!(
+            r#"{{"poolproof":"0","targets":[{{"name":"p","product":"pgbouncer","version":"1.26.1",
+            "config":"pool4","mode":"transaction","postgres":"18.4"}}],"scenarios":[],"results":[{},{},{}]}}"#,
+            row("search-path-isolated-between-clients", true),
+            row("set-role-isolated-between-clients", true),
+            row("set-survives-server-change", false),
+        ))
+        .unwrap();
+        let judged = |sql: &str| {
+            let input = Input {
+                queries: vec![Query {
+                    text: sql.into(),
+                    calls: 1,
+                    line: 1,
+                }],
+                ..Input::default()
+            };
+            let mut finding = crate::scan::scan(&input).findings.remove(0);
+            judge(&mut finding, &report, &report.targets[0]);
+            finding
+        };
+        let verdict = |sql: &str| judged(sql).on_pooler.unwrap();
+        let search_path = verdict("SET search_path = app, public");
+        assert_eq!(search_path.status, PoolerStatus::Ok);
+        assert_eq!(
+            search_path.scenarios,
+            [("search-path-isolated-between-clients".into(), "pass".into())]
+        );
+        assert_eq!(verdict("SET ROLE r").status, PoolerStatus::Ok);
+        // No scenario sets statement_timeout and PgBouncer doesn't track it: the work_mem
+        // results stand in.
+        let timeout = verdict("SET statement_timeout = '5s'");
+        assert_eq!(timeout.status, PoolerStatus::Breaks);
+        assert_eq!(timeout.stand_in.as_deref(), Some("work_mem"));
+        // PgBouncer tracks application_name by default; pool4 may not change that, but we
+        // don't know: no verdict.
+        let name = judged("SET application_name = 'x'");
+        assert!(name.on_pooler.is_none());
+        assert!(
+            name.pooler_note
+                .unwrap()
+                .contains("this target's config (pool4) may change that")
+        );
     }
 
     #[test]
