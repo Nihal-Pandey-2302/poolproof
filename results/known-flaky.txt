@@ -24,6 +24,9 @@
 # Drop these once a Supavisor release no longer does this.
 supavisor-2.10.0-rc.1 set-local-reverts-after-commit verdict
 supavisor-2.10.0-rc.1 cursor-survives-own-transactions verdict
+# pool_size 4 is no hard cap either: seen in run 41279274761 (variants, 18.4, PASS ->
+# FAIL error, 34000 at CLOSE).
+supavisor-2.10.0-rc.1-pool4 cursor-survives-own-transactions verdict
 supavisor-2.10.0-rc.1 temp-table-survives-own-transactions verdict
 supavisor-2.10.0-rc.1 advisory-lock-survives-own-transactions verdict
 supavisor-2.10.0-rc.1 set-local-default-after-set-local verdict
