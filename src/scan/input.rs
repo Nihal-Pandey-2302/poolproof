@@ -89,7 +89,12 @@ pub fn read_queries(mut reader: impl BufRead, format: Option<InputFormat>) -> Re
 struct Queries {
     texts: HashMap<String, (u64, usize)>,
     names: HashMap<String, Named>,
+    hidden: usize,
 }
+
+/// The query text pg_stat_statements shows for another role's statement, to a role
+/// without pg_read_all_stats.
+const HIDDEN_QUERY: &str = "<insufficient privilege>";
 
 /// One statement name while reading.
 struct Named {
@@ -103,6 +108,11 @@ struct Named {
 
 impl Queries {
     fn add(&mut self, text: &str, calls: u64, line: usize) {
+        // Nothing to parse: one row per hidden statement, only counted.
+        if text.trim() == HIDDEN_QUERY {
+            self.hidden += 1;
+            return;
+        }
         match self.texts.get_mut(text) {
             Some(entry) => {
                 entry.0 += calls;
@@ -160,6 +170,7 @@ impl Queries {
         Input {
             queries,
             statement_names,
+            hidden: self.hidden,
         }
     }
 }
@@ -560,6 +571,24 @@ mod tests {
         assert_eq!(read(csv, Some(InputFormat::Pgss)).unwrap(), want);
         // Without a calls column every query counts once.
         assert_eq!(read("query\nLISTEN a\n", None).unwrap(), vec![q("LISTEN a", 1, 2)]);
+    }
+
+    #[test]
+    fn hidden_rows_are_counted_apart() {
+        // As exported by a role without pg_read_all_stats: other roles' queries hidden.
+        let csv = "query,calls\nLISTEN a\n<insufficient privilege>,9\n<insufficient privilege>,2\n";
+        let input = read_queries(csv.as_bytes(), None).unwrap();
+        assert_eq!(input.hidden, 2);
+        assert_eq!(
+            input.queries,
+            vec![Query {
+                text: "LISTEN a".into(),
+                calls: 1,
+                line: 2
+            }]
+        );
+        let report = crate::scan::scan(&input);
+        assert_eq!((report.queries, report.unparsed, report.hidden), (1, 0, 2));
     }
 
     #[test]

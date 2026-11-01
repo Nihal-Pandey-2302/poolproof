@@ -60,6 +60,8 @@ pub fn scan(input: &Input) -> Report {
             on_pooler: None,
             driver: None,
             pooler_note: None,
+            parameter: hit.parameter,
+            differs_on: vec![],
         }));
     }
     let (drivers, notes) = super::statements::findings(&input.statement_names);
@@ -70,6 +72,7 @@ pub fn scan(input: &Input) -> Report {
         findings,
         queries: merged.len(),
         unparsed,
+        hidden: input.hidden,
         uninspected: uninspected_bodies,
         notes,
     }
@@ -155,6 +158,7 @@ struct Hit {
     severity: Severity,
     detail: String,
     scenarios: Vec<&'static str>,
+    parameter: Option<String>,
 }
 
 impl Hit {
@@ -164,6 +168,7 @@ impl Hit {
             severity,
             detail,
             scenarios: scenarios_for(rule),
+            parameter: None,
         }
     }
 }
@@ -245,6 +250,9 @@ fn check(statements: &[&NodeEnum], scoped: &[String]) -> Vec<Hit> {
                     };
                     if let Some(scenarios) = refined {
                         hit.scenarios = scenarios;
+                    }
+                    if kind != VariableSetKind::VarResetAll {
+                        hit.parameter = Some(set.name.to_lowercase());
                     }
                     hits.push(hit);
                 }
@@ -857,6 +865,7 @@ mod tests {
         super::scan(&Input {
             queries: queries.to_vec(),
             statement_names: vec![],
+            hidden: 0,
         })
     }
 
@@ -1328,11 +1337,32 @@ mod tests {
     }
 
     #[test]
+    fn session_set_records_its_parameter() {
+        let parameter = |sql: &str| scan(&[query(sql, 1)]).findings[0].parameter.clone();
+        assert_eq!(
+            parameter("SET application_name = 'x'").as_deref(),
+            Some("application_name")
+        );
+        assert_eq!(parameter("SET TimeZone TO 'UTC'").as_deref(), Some("timezone"));
+        assert_eq!(
+            parameter("RESET statement_timeout").as_deref(),
+            Some("statement_timeout")
+        );
+        assert_eq!(parameter("SET ROLE r").as_deref(), Some("role"));
+        assert_eq!(
+            parameter("SET SESSION AUTHORIZATION u").as_deref(),
+            Some("session_authorization")
+        );
+        assert_eq!(parameter("RESET ALL"), None);
+        assert_eq!(parameter("LISTEN a"), None);
+    }
+
+    #[test]
     fn json_report_has_counts() {
         let report = scan(&[query("LISTEN a", 1), query("SELEC 1", 1)]);
         let json = serde_json::to_value(&report).unwrap();
         let keys: Vec<_> = json.as_object().unwrap().keys().cloned().collect();
-        assert_eq!(keys, vec!["findings", "queries", "uninspected", "unparsed"]);
+        assert_eq!(keys, vec!["findings", "hidden", "queries", "uninspected", "unparsed"]);
         assert_eq!(
             (json["queries"].as_u64(), json["unparsed"].as_u64()),
             (Some(2), Some(1))

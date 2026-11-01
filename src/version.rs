@@ -48,6 +48,11 @@ impl Version {
         };
         Some(Version { core, pre })
     }
+
+    /// `2.10.0-rc.1`, not `2.9.13`.
+    pub fn is_prerelease(&self) -> bool {
+        !self.pre.is_empty()
+    }
 }
 
 impl Ord for Version {

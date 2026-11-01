@@ -232,6 +232,12 @@ First release.
   too, not only those where other clients see it.
 - `scan --pooler` also checks `SET ROLE` and `SET SESSION AUTHORIZATION` against
   `set-role-reset-after-temp-table-disconnect`.
+- `scan --pooler` takes a product name (`--pooler pgbouncer`) and uses that product's
+  newest stable version in its default config (a pre-release only when there is no stable
+  one), with a note that says which.
+- `scan --pooler` without `--postgres` notes which Postgres version the verdicts are from,
+  and shows a finding's verdict on the other versions where it differs (`differs_on` in
+  JSON).
 
 ### Changed
 
@@ -311,6 +317,18 @@ First release.
   pooler's default settings.
 - README: the pg_stat_statements export needs a superuser or `pg_read_all_stats`, or
   other roles' queries come back as `<insufficient privilege>`.
+- `scan`: pg_stat_statements rows shown as `<insufficient privilege>` (other roles'
+  queries, hidden from the role that exported them) no longer count as unparsed. They are
+  counted apart (`hidden` in JSON), with a hint to export as a superuser or a role with
+  `pg_read_all_stats`.
+- `scan --pooler`: a `SET` finding was judged by the `work_mem` scenarios whatever its
+  parameter. Now it is judged by the scenarios that set its parameter when there are any
+  (`search_path`, `role`). A parameter the pooler's docs say it keeps per client by
+  default (PgBouncer 1.24.1 and later, e.g. `application_name`, which PgBouncer sets
+  itself) gets no verdict but a note with the docs, which for a target in another config
+  says that config may change it. Another parameter no scenario sets is judged by one
+  other parameter's scenarios (`work_mem`, or `role` for `SESSION AUTHORIZATION`) and
+  says so (`parameter` and `stand_in` in JSON).
 
 ### Security
 

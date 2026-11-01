@@ -1,4 +1,4 @@
-use super::scan::{fix_summary, pooler_summary};
+use super::scan::{differs_summary, fix_summary, hidden_hint, pooler_summary};
 use crate::scan;
 
 pub fn sarif(report: &scan::Report, input: &std::path::Path) -> serde_json::Value {
@@ -21,13 +21,18 @@ pub fn sarif(report: &scan::Report, input: &std::path::Path) -> serde_json::Valu
             let fix = |c: &scan::PoolerCheck| c.fix.as_ref().map(|x| format!(" {}.", fix_summary(x)));
             let pooler = match (&f.on_pooler, &f.pooler_note) {
                 (Some(c), _) => format!(" Checked {}.{}", pooler_summary(c), fix(c).unwrap_or_default()),
-                (None, Some(note)) => format!(" {note}."),
+                (None, Some(note)) => format!(" {}.", note.trim_end_matches('.')),
                 (None, None) => String::new(),
             };
+            let differs: String = f
+                .differs_on
+                .iter()
+                .map(|c| format!(" {}.", differs_summary(c)))
+                .collect();
             json!({
                 "ruleId": f.rule,
                 "level": level,
-                "message": {"text": format!("{} Calls: {}.{pooler}", f.detail, f.calls)},
+                "message": {"text": format!("{} Calls: {}.{pooler}{differs}", f.detail, f.calls)},
                 "locations": [{
                     "physicalLocation": {
                         "artifactLocation": {"uri": uri},
@@ -65,6 +70,12 @@ fn notifications(report: &scan::Report) -> Vec<serde_json::Value> {
         out.push(json!({
             "level": "warning",
             "message": {"text": format!("{} queries could not be parsed.", report.unparsed)},
+        }));
+    }
+    if report.hidden > 0 {
+        out.push(json!({
+            "level": "warning",
+            "message": {"text": format!("{}.", hidden_hint(report.hidden))},
         }));
     }
     if report.uninspected > 0 {

@@ -318,13 +318,42 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
                     limitations.apply(r, &scenarios);
                 }
                 let (results, target) = report::find_target(&reports, pooler, postgres.as_deref())?;
+                if target.name != *pooler {
+                    report.notes.push(report::product_note(&reports, pooler, target));
+                }
+                // Without --postgres, the server's version is unknown: say where verdicts differ.
+                let others = match postgres {
+                    Some(_) => vec![],
+                    None => report::other_postgres(&reports, target),
+                };
+                if let (Some(pg), false) = (&target.postgres, others.is_empty()) {
+                    let versions: Vec<&str> = others.iter().filter_map(|(_, t)| t.postgres.as_deref()).collect();
+                    report.notes.push(format!(
+                        "Verdicts are from Postgres {pg}, the newest with results for {}. There are results \
+                         for {} too: pass --postgres to match your server.",
+                        target.name,
+                        versions.join(", ")
+                    ));
+                }
                 for finding in &mut report.findings {
                     match finding.driver {
                         // From the driver results, not the core ones.
                         Some(_) => {
                             scan::check_driver(finding, &target.name, target.postgres.as_deref(), postgres.is_some())
                         }
-                        None => finding.on_pooler = report::check_finding(results, target, &finding.scenarios),
+                        None => {
+                            report::judge(finding, results, target);
+                            for (other_results, other) in &others {
+                                let mut there = finding.clone();
+                                there.pooler_note = None;
+                                report::judge(&mut there, other_results, other);
+                                if let Some(check) = there.on_pooler
+                                    && finding.on_pooler.as_ref().map(|c| c.status) != Some(check.status)
+                                {
+                                    finding.differs_on.push(check);
+                                }
+                            }
+                        }
                     }
                 }
                 // Proven problems first. Findings without results keep their place after them.

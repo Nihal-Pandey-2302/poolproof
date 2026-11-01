@@ -1,6 +1,15 @@
 use crate::scan;
 
 pub fn pooler_summary(check: &scan::PoolerCheck) -> String {
+    let from = match (check.other_postgres, &check.postgres) {
+        (true, Some(pg)) => format!(", driver results from Postgres {pg}"),
+        _ => String::new(),
+    };
+    format!("on {}{from}: {}", check.target, scenario_results(check))
+}
+
+/// Each scenario's result, the docs that describe its FAILs, and what was measured.
+fn scenario_results(check: &scan::PoolerCheck) -> String {
     let parts: Vec<String> = check
         .scenarios
         .iter()
@@ -19,11 +28,37 @@ pub fn pooler_summary(check: &scan::PoolerCheck) -> String {
         [] => String::new(),
         docs => format!(" (documented: {})", docs.join(", ")),
     };
-    let from = match (check.other_postgres, &check.postgres) {
-        (true, Some(pg)) => format!(", driver results from Postgres {pg}"),
-        _ => String::new(),
+    let stand_in = match &check.stand_in {
+        Some(p) => format!(" (these set {p}: no scenario sets this parameter)"),
+        None => String::new(),
     };
-    format!("on {}{from}: {}{documented}", check.target, parts.join(", "))
+    format!("{}{documented}{stand_in}", parts.join(", "))
+}
+
+/// The same check on another Postgres version, where the verdict differs.
+pub fn differs_summary(check: &scan::PoolerCheck) -> String {
+    format!(
+        "on Postgres {} instead: {}, {}",
+        check.postgres.as_deref().unwrap_or("?"),
+        status_label(check.status),
+        scenario_results(check)
+    )
+}
+
+fn status_label(status: scan::PoolerStatus) -> &'static str {
+    match status {
+        scan::PoolerStatus::Breaks => "BREAKS",
+        scan::PoolerStatus::Rejected => "REJECTED",
+        scan::PoolerStatus::Ok => "OK",
+    }
+}
+
+/// The hint for pg_stat_statements rows another role's queries were hidden in.
+pub fn hidden_hint(hidden: usize) -> String {
+    format!(
+        "{hidden} queries hidden by pg_stat_statements (<insufficient privilege>): export as a \
+         superuser or a role with pg_read_all_stats to scan them"
+    )
 }
 
 /// A driver finding's documented fix and how it does on the pooler.
@@ -39,11 +74,7 @@ pub fn fix_summary(fix: &scan::FixCheck) -> String {
 pub fn print_scan(report: &scan::Report) {
     for f in &report.findings {
         let label = match (&f.on_pooler, f.severity) {
-            (Some(check), _) => match check.status {
-                scan::PoolerStatus::Breaks => "BREAKS",
-                scan::PoolerStatus::Rejected => "REJECTED",
-                scan::PoolerStatus::Ok => "OK",
-            },
+            (Some(check), _) => status_label(check.status),
             (None, scan::Severity::Breaks) => "BREAKS",
             (None, scan::Severity::Warn) => "WARN",
         };
@@ -58,6 +89,9 @@ pub fn print_scan(report: &scan::Report) {
             if let Some(fix) = &check.fix {
                 println!("         {}", fix_summary(fix));
             }
+        }
+        for other in &f.differs_on {
+            println!("         {}", differs_summary(other));
         }
         if let Some(note) = &f.pooler_note {
             println!("         {note}");
@@ -106,6 +140,9 @@ pub fn print_scan(report: &scan::Report) {
 /// Bodies only word-scanned are not parse failures, but the reader should know. Nor
 /// are the notes.
 fn print_uninspected(report: &scan::Report) {
+    if report.hidden > 0 {
+        println!("{}", hidden_hint(report.hidden));
+    }
     for note in &report.notes {
         println!("Note: {note}");
     }
