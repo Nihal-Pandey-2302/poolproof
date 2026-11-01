@@ -1,0 +1,80 @@
+name: release action
+
+# The action as a user runs it, against a published release: download, SHA256SUMS,
+# attestation check, then scan, on Linux, macOS and Windows. Weekly, so a broken
+# download or verification shows up without a new release, and on a PR that changes
+# this file.
+on:
+  schedule:
+    - cron: "41 5 * * 2"
+  pull_request:
+    paths: [.github/workflows/release-action.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: scan ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - run: printf 'SELECT 1;\n' > queries.sql
+      # Bump with every release; the latest-release check below fails until then.
+      - id: scan
+        uses: Nihal-Pandey-2302/poolproof@v0.1.0
+        # gh only says "Verification succeeded" on a terminal; this makes it say so in
+        # the log too, so the log job can tell the attestation check passed.
+        env:
+          GH_FORCE_TTY: "1"
+        with:
+          command: scan
+          args: queries.sql
+      - env:
+          CODE: ${{ steps.scan.outputs.exit-code }}
+        run: '[ "$CODE" = 0 ]'
+
+  # Reads each scan job's log: the archive's checksum line, gh's "Verification
+  # succeeded", and poolproof's version, which the install step (bash -e) only prints
+  # after both.
+  log:
+    needs: scan
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PINNED: v0.1.0
+    steps:
+      - run: |
+          set -euo pipefail
+          jobs=repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs
+          version=${PINNED#v}
+          for pair in ubuntu-latest:x86_64-unknown-linux-gnu.tar.gz \
+                      macos-latest:aarch64-apple-darwin.tar.gz \
+                      windows-latest:x86_64-pc-windows-msvc.zip; do
+            os=${pair%%:*} archive=poolproof-${pair#*:}
+            id=$(gh api "$jobs" --jq ".jobs[] | select(.name == \"scan $os\") | .id")
+            for _ in 1 2 3 4 5 6; do
+              gh api "repos/$GITHUB_REPOSITORY/actions/jobs/$id/logs" | tr -d '\r' > "$os.log" && [ -s "$os.log" ] && break
+              sleep 10
+            done
+            echo "== $os"
+            grep -F "$archive: OK" "$os.log"
+            grep -F 'Verification succeeded' "$os.log"
+            grep -E "Z poolproof ${version//./\\.}\$" "$os.log"
+          done
+      - run: |
+          latest=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
+          if [ "$latest" != "$PINNED" ]; then
+            echo "::error::The latest release is $latest; bump uses: and PINNED in release-action.yml"
+            exit 1
+          fi
