@@ -99,7 +99,8 @@ First release.
   expected FAILs apart from bugs (an outlined chip, separate counts for passes, expected
   failures and bugs, an optional filter that is off on every load, the doc quoted in the
   trace), and RESULTS.md marks them "(expected)" in their own section. Both list stale
-  entries.
+  entries. Built in: PgBouncer (12 scenarios, from the SQL feature map) and PgCat (9, from
+  its README's transaction mode section), each with the quote it rests on.
 - Version notes in the HTML report name both tested versions, e.g. "fails from 0.1.56
   (passed in 0.1.50)", since the tested versions skip releases.
 - Results for PgBouncer 1.24.1, 1.25.2, 1.26.1 (also with TLS between client and

@@ -1,0 +1,94 @@
+# PgCat's documented limitations, as in pgbouncer.toml: a result that matches an entry
+# exactly is reported as expected, still a FAIL; anything else stays a bug.
+#
+# The quote is the README's "Transaction mode" section at the v1.2.0 tag (4a7a6a8), the
+# version the test bed runs. Not covered by it, so left as FAILs: SET LOCAL, which the
+# same sentence offers as the alternative (set-local-reverts-after-commit,
+# set-local-default-after-set-local); temp tables, WITH HOLD cursors, LISTEN, LOAD and
+# set_config(), which it doesn't mention; the unnamed protocol statement, an error held
+# back until Sync (protocol-error-after-flush) and 58000 for the next client while an
+# abandoned query holds the only server connection (abandoned-query-does-not-block-pool).
+
+# SET, advisory locks and prepared statements, which the README says transaction mode
+# doesn't support.
+
+[[limitation]]
+scenario = "set-isolated-between-clients"
+mode = "transaction"
+since = "1.2.0"
+differs = [{ step = 7, pooler = { status = "ok", rows = [["4MB"]], tags = [0] } }]
+doc = "https://github.com/postgresml/pgcat/blob/4a7a6a8e7a78354b889002a4db118a8e2f2d6d79/README.md#transaction-mode"
+quote = "Prepared statements, `SET`, and advisory locks are not supported; alternatives are to use `SET LOCAL` and `pg_advisory_xact_lock` which are scoped to the transaction."
+note = "README \"Transaction mode\" section, at the v1.2.0 tag."
+
+[[limitation]]
+scenario = "search-path-isolated-between-clients"
+mode = "transaction"
+since = "1.2.0"
+differs = [{ step = 7, pooler = { status = "ok", rows = [["\"$user\", public"]], tags = [0] } }]
+doc = "https://github.com/postgresml/pgcat/blob/4a7a6a8e7a78354b889002a4db118a8e2f2d6d79/README.md#transaction-mode"
+quote = "Prepared statements, `SET`, and advisory locks are not supported; alternatives are to use `SET LOCAL` and `pg_advisory_xact_lock` which are scoped to the transaction."
+note = "README \"Transaction mode\" section, at the v1.2.0 tag. SET search_path is a SET."
+
+[[limitation]]
+scenario = "advisory-lock-released-on-disconnect"
+mode = "transaction"
+since = "1.2.0"
+differs = [{ step = 4, pooler = { status = "ok", rows = [["1"]], tags = [1] } }]
+doc = "https://github.com/postgresml/pgcat/blob/4a7a6a8e7a78354b889002a4db118a8e2f2d6d79/README.md#transaction-mode"
+quote = "Prepared statements, `SET`, and advisory locks are not supported; alternatives are to use `SET LOCAL` and `pg_advisory_xact_lock` which are scoped to the transaction."
+note = "README \"Transaction mode\" section, at the v1.2.0 tag."
+
+[[limitation]]
+scenario = "sql-prepare-isolated-between-clients"
+mode = "transaction"
+since = "1.2.0"
+differs = [{ step = 9, pooler = { status = "error", code = "26000" } }]
+doc = "https://github.com/postgresml/pgcat/blob/4a7a6a8e7a78354b889002a4db118a8e2f2d6d79/README.md#transaction-mode"
+quote = "Prepared statements, `SET`, and advisory locks are not supported; alternatives are to use `SET LOCAL` and `pg_advisory_xact_lock` which are scoped to the transaction."
+note = "README \"Transaction mode\" section, at the v1.2.0 tag. SQL PREPARE."
+
+[[limitation]]
+scenario = "deallocate-all-isolated"
+mode = "transaction"
+since = "1.2.0"
+differs = [{ step = 11, pooler = { status = "error", code = "26000" } }]
+doc = "https://github.com/postgresml/pgcat/blob/4a7a6a8e7a78354b889002a4db118a8e2f2d6d79/README.md#transaction-mode"
+quote = "Prepared statements, `SET`, and advisory locks are not supported; alternatives are to use `SET LOCAL` and `pg_advisory_xact_lock` which are scoped to the transaction."
+note = "README \"Transaction mode\" section, at the v1.2.0 tag. SQL PREPARE and DEALLOCATE ALL."
+
+[[limitation]]
+scenario = "prepared-statement-survives-other-clients"
+mode = "transaction"
+since = "1.2.0"
+differs = [{ step = 8, pooler = { status = "error", code = "26000" } }]
+doc = "https://github.com/postgresml/pgcat/blob/4a7a6a8e7a78354b889002a4db118a8e2f2d6d79/README.md#transaction-mode"
+quote = "Prepared statements, `SET`, and advisory locks are not supported; alternatives are to use `SET LOCAL` and `pg_advisory_xact_lock` which are scoped to the transaction."
+note = "README \"Transaction mode\" section, at the v1.2.0 tag. A protocol-level named statement, with prepared_statements_cache_size at its default of 0."
+
+[[limitation]]
+scenario = "protocol-statement-names-isolated"
+mode = "transaction"
+since = "1.2.0"
+differs = [{ step = 8, pooler = { status = "messages", messages = ["Error 26000", "ReadyForQuery I"] } }, { step = 10, pooler = { status = "messages", messages = ["Error 26000", "ReadyForQuery I"] } }]
+doc = "https://github.com/postgresml/pgcat/blob/4a7a6a8e7a78354b889002a4db118a8e2f2d6d79/README.md#transaction-mode"
+quote = "Prepared statements, `SET`, and advisory locks are not supported; alternatives are to use `SET LOCAL` and `pg_advisory_xact_lock` which are scoped to the transaction."
+note = "README \"Transaction mode\" section, at the v1.2.0 tag. Protocol-level named statements, with prepared_statements_cache_size at its default of 0."
+
+[[limitation]]
+scenario = "protocol-statement-reparsed-after-close"
+mode = "transaction"
+since = "1.2.0"
+differs = [{ step = 10, pooler = { status = "messages", messages = ["Error 26000", "ReadyForQuery I"] } }]
+doc = "https://github.com/postgresml/pgcat/blob/4a7a6a8e7a78354b889002a4db118a8e2f2d6d79/README.md#transaction-mode"
+quote = "Prepared statements, `SET`, and advisory locks are not supported; alternatives are to use `SET LOCAL` and `pg_advisory_xact_lock` which are scoped to the transaction."
+note = "README \"Transaction mode\" section, at the v1.2.0 tag. A protocol-level named statement, with prepared_statements_cache_size at its default of 0."
+
+[[limitation]]
+scenario = "protocol-pipelined-statements"
+mode = "transaction"
+since = "1.2.0"
+differs = [{ step = 2, pooler = { status = "messages", messages = ["Error 26000", "ReadyForQuery I"] } }]
+doc = "https://github.com/postgresml/pgcat/blob/4a7a6a8e7a78354b889002a4db118a8e2f2d6d79/README.md#transaction-mode"
+quote = "Prepared statements, `SET`, and advisory locks are not supported; alternatives are to use `SET LOCAL` and `pg_advisory_xact_lock` which are scoped to the transaction."
+note = "README \"Transaction mode\" section, at the v1.2.0 tag. Protocol-level named statements, with prepared_statements_cache_size at its default of 0."
