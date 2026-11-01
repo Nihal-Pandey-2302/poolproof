@@ -109,8 +109,8 @@ pub enum Outcome {
     Abandoned,
     /// Every reply to a `send` step, one line each.
     Messages { messages: Vec<String> },
-    /// The step didn't run: a precondition on Postgres, or a step after a precondition
-    /// that wasn't met through the pooler.
+    /// The step didn't run: an evidence or precondition step on Postgres, or a step after
+    /// a precondition that wasn't met through the pooler.
     #[serde(rename = "not_run")]
     NotRun,
 }

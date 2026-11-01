@@ -339,7 +339,7 @@
           "type": "object"
         },
         {
-          "description": "The step didn't run: a precondition on Postgres, or a step after a precondition\nthat wasn't met through the pooler.",
+          "description": "The step didn't run: an evidence or precondition step on Postgres, or a step after\na precondition that wasn't met through the pooler.",
           "properties": {
             "status": {
               "const": "not_run",

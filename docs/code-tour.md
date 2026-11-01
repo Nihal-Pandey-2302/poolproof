@@ -8,7 +8,7 @@ hours, the longest stops being `check.rs`, `steps.rs` and `pg.rs`.
 Before reading, watch one scenario run, so the names below match something you've seen:
 
 ```sh
-docker compose -f docker/compose.yml up -d --wait
+docker compose -f docker/compose.yml up -d --wait postgres pgbouncer-1.26.1
 cargo run -- run --target pgbouncer-1.26.1 --filter advisory-lock-released -v
 ```
 
@@ -31,54 +31,74 @@ stop 4.
 
 ## 2. `runner/mod.rs`: the vocabulary (10 min)
 
-Two types. `Outcome` is what a client saw for one step: rows and command tags, an error
-(SQLSTATE and message), `Abandoned`, or the reply lines of a raw protocol step. Every
-comparison in the project is between two `Outcome`s. `Timeouts` holds every limit the
-harness uses, with a comment on each; read it once so later code that picks
-`t.step` or `t.housekeeping` makes sense. The distinction that matters: `step` is how
-long the system under test may take, `housekeeping` is how long the harness's own waits
-may take, and the second is never shortened.
+Two types. `Outcome` is what a client saw for one step: rows and affected-row counts
+(`tags`, from CommandComplete), an error (SQLSTATE and message), `Abandoned`, the reply
+lines of a raw protocol step, or `NotRun`. `NotRun` is what an evidence or precondition
+step records on Postgres, and what the steps after an unmet precondition record through
+the pooler; you'll see it in `-v` output. Every comparison in the project is between two
+`Outcome`s. `Timeouts` holds every configurable limit, with a comment on each (a few
+fixed waits, such as settling, are constants next to their code); read it once so later
+code that picks `t.step` or `t.housekeeping` makes sense. The distinction that matters:
+`step` is how long the system under test may take, `housekeeping` is how long the
+harness's own waits may take, and the second is never shortened.
 
 ## 3. `runner/check.rs`: one scenario on one target (45 min)
 
-This is the heart. Read `check` first: it runs the scenario on plain Postgres
-(`run_once` with `direct` for both endpoints), refuses to compare if that baseline
-itself failed (`baseline_failure`), then runs it through the pooler `repeat` times and
-keeps the first failing run. Then `run_once`: reset, setup, steps, teardown, with
-teardown running even after a failure. `Run` keeps teardown apart from the steps, and
-`after_teardown` explains why: on the pooler run, a teardown that fails because of a
+This is the heart. Read `check_reuse` first (`check` is a one-line wrapper, and
+`suite::run` calls `check_reuse`). It runs the scenario on plain Postgres (`run_once`
+with `direct` for both endpoints), refuses to compare if that baseline itself failed
+(`baseline_failure`), then runs it through the pooler `repeat` times and keeps the first
+failing run. Some runs don't count: one whose precondition wasn't met, or whose
+`same_backend` evidence shows the clients never shared a server connection. They are
+left out of `runs`, and if no run counted, the first one's SKIP is the result ("(in all
+N runs)" with `repeat`). `reuse` is false for `ignore_server_requirements` targets, so
+there every run counts; see After the tour. Then `run_once`: reset, setup, steps,
+teardown. Teardown runs whenever setup was attempted, even after a failure; a failed
+reset or `wait_ready` returns before setup. `Run` keeps teardown apart from the steps,
+and `after_teardown` explains why: on the pooler run, a teardown that fails because of a
 leaked lock must not hide the FAIL that found the leak.
 
-Then the private `compare` at the bottom: it walks the steps in order and stops at the
-first mismatch. Note the special case for a `direct` step that couldn't connect; that
-says nothing about the pooler, so it's an ERROR unless the pooler already went wrong.
-Finish with `deterministic`, which `--check-scenarios` uses: two baselines that differ
-mean the scenario tests timing, not the pooler. `preflight` and `run_direct` are small
-helpers; skim them.
+Then `compare_with`: it walks the steps in order and stops at the first mismatch.
+(`compare` is a test-only wrapper around it.) Note the special case for a `direct` step
+that couldn't connect; that says nothing about the pooler, so it's an ERROR unless the
+pooler already went wrong. Finish with `deterministic`, which `--check-scenarios` uses:
+two baselines that differ mean the scenario tests timing, not the pooler. `preflight`
+and `run_direct` are small helpers; skim them.
 
 ## 4. `runner/compare.rs`: when two outcomes are "the same" (30 min)
 
 `Outcome::matches` is short and worth reading slowly. Error messages never count, only
 codes, because wording changes between Postgres versions and poolers. With
 `compare = "status"` only success vs error and the code matter. For raw protocol replies,
-ParameterStatus lines are compared as a set (`split_parameter_status`), since poolers
-move them around harmlessly, and everything else in order.
+ParameterStatus lines are sorted and compared as a multiset (`split_parameter_status`),
+since poolers move them around harmlessly, and everything else in order; with `status`,
+only their failure lines (Error codes, `TIMEOUT`, `CLOSED`) are compared, in order.
 
 `FailKind::of` decides how a failure shows up to an application: `hang` (TIMEOUT, or
 replies that stop short of Postgres's with nothing wrong in them), `error` (an error
 Postgres didn't give) or `silent` (a different result and no error, the dangerous kind).
-`HARNESS_CODES` and `baseline_failure` are the other half of stop 3: they are the
-pseudo-codes the harness itself produces (`CONNECT`, `TIMEOUT`, `CLIENT`, `CLOSED`), and
-a baseline containing one can't be the oracle. The unit tests at the bottom are a good
+`from_harness` and `baseline_failure` are the other half of stop 3: an outcome the
+harness itself produced can't be the oracle. That is one of the `HARNESS_CODES`
+(`CONNECT`, `TIMEOUT`, `CLIENT`, `CLOSED`), a refused connect, a `DRIVER:` code, or a raw
+`TIMEOUT` or `CLOSED` line. The unit tests at the bottom are a good
 summary of the rules.
 
 ## 5. `runner/steps.rs`: running the steps (40 min)
 
-`run_steps(scenario, pooled, direct)` is called for both runs. For the baseline,
-`pooled` and `direct` are the same Postgres URL, which is the whole trick: the same code
-produces the expected and the actual outcomes. In `run_until_done`, `on_postgres` is
-true for every client in the baseline and for `direct` clients in the pooler run. It
-decides whether closing a client waits for its backend to exit.
+`run_steps_on(scenario, pooled, direct, baseline, t)` is called for both runs, with
+`baseline` saying which. For the baseline, `pooled` and `direct` are the same Postgres
+URL, which is the whole trick: the same code produces the expected and the actual
+outcomes. The explicit flag is there because the URLs alone don't tell: Postgres can
+stand in for its own pooler. In `run_until_done`, `on_postgres` is true for every client
+in the baseline and for `direct` clients in the pooler run. It decides whether closing a
+client waits for its backend to exit.
+
+`run_until_done` also runs evidence and preconditions; `check.rs` only judges them. On
+the baseline both record `NotRun`. Through the pooler, an unmet precondition ends the
+run and fills the rest with `NotRun`. An evidence step sends `SELECT pg_backend_pid()`
+and reads that backend's start time on direct (`evidence`), checks whether an earlier
+backend has exited for `same_backend_or_closed` (`closed_since`), and refuses to run on
+a raw connection mid-exchange (`MID_EXCHANGE`).
 
 Each client connects on its first step and keeps its connection until it disconnects.
 Clients with a `send` step get a raw connection (stop 7) and are handled at the top of
@@ -102,7 +122,10 @@ The biggest file; read it in three parts and skip the rest.
    CancelRequest over the same TLS settings.
 2. Reset: `resolve_reset`, `check_reach` and `cannot_end`. A reset turns into
    statements once per target. `auto` asks the pooler which address and user Postgres
-   sees, `all` ends every other session the direct user may end, and both refuse
+   sees, and refuses when the pooler connects from poolproof's own address, has no
+   client address (a Unix socket) or one that isn't an IP. `all` ends every other
+   session the direct user may end, and refuses without `--yes` off this machine.
+   `exact` only checks reach here and returns no statements (stop 8). All of them refuse
    (`ResetRefusal`) when they couldn't end the pooler's sessions, rather than reset half
    of them and produce results that depend on luck. `RESET_ALL` and `reset_auto_sql`
    are the statements; values from the system under test get into the SQL only after
@@ -122,22 +145,28 @@ Some scenarios test what drivers hide: statement names, Sync vs Flush, pipelinin
 `RawConn::connect` does startup and authentication itself; `negotiate_tls` reads exactly
 one byte after SSLRequest, so nothing a server sends early is taken as plaintext.
 `exchange` writes the messages and reads until one ReadyForQuery per Sync, Query or
-CopyDone, or until the server goes quiet when there was none (a Flush), ending with a
-`TIMEOUT` or `CLOSED` line if replies stop. `summary` turns each backend message into
-the line you saw in `-v` output. `MAX_MESSAGE` and `check_header` keep a hostile server
-from making poolproof allocate gigabytes; the fuzz targets in `fuzz/` exercise this
-file.
+CopyDone (a CopyInResponse also ends a cycle, which is how a COPY FROM STDIN step
+returns before its data step), or until the server goes quiet when there was none (a
+Flush), ending with a `TIMEOUT` or `CLOSED` line if replies stop. `summary` turns each
+backend message into the line you saw in `-v` output. `MAX_MESSAGE` and `check_header`
+keep a hostile server from making poolproof allocate gigabytes; the fuzz targets in
+`fuzz/` exercise this file.
 
 ## 8. `runner/suite.rs`: the loop behind `run` (20 min)
 
 `run` is the outer loop: for each target, preflight (both URLs must answer), resolve the
-reset, read the direct user's privileges, then for each scenario `before_run` (SKIP for
-another mode or missing privileges, ERROR for an unreachable target) and `check`. The
-first three only happen when some scenario applies to the target, so a target filtered
-down to nothing is never reset (`reset_is_not_resolved_when_no_scenario_applies`); only
-its server version is read, for the report. The
-`determinism` list caches `--check-scenarios` results per scenario, direct URL and reset,
-so a scenario is checked once even with many targets. `FailOn` is the exit code ladder.
+reset, read the direct user's privileges, probe the pool (`probe_target`, then
+`mode_error`) and, for `reset = "exact"`, check its size (`exact.check_start`). Then for
+each scenario `before_run` and `check_reuse`. `before_run` SKIPs for another mode,
+missing privileges, unmet server-connection requirements or, in session mode, a pool
+without room for the scenario's clients (`Probes::unmet`). It is an ERROR when the target
+can't be tested: unreachable, a refused reset, a failed probe or a contradiction with the
+mode, or a failed exact-reset check. These target checks only happen when some scenario
+applies to the target, so a target filtered down to nothing is never reset
+(`reset_is_not_resolved_when_no_scenario_applies`); only its server version is read, for
+the report. The `determinism` list caches `--check-scenarios` results per scenario,
+direct URL and reset, so a scenario is checked once even with many targets. `FailOn` is
+the exit code ladder.
 `cli.rs` (the `Command::Run` arm of `run`) is where the result becomes a `Report` and
 gets printed; read that arm next, it's short.
 
@@ -147,17 +176,20 @@ gets printed; read that arm next, it's short.
 format with `SCHEMA_VERSION`; read the versioning section of CHANGELOG.md alongside it.
 `bundled` loads the results in `results/`, built into the binary, which `scan --pooler`
 uses through `find_target` and `check_finding`. `compare.rs` is `run --compare-to`:
-`classify` decides whether a change between two runs is a regression, using the same
-ladder as `--fail-on`. `markdown.rs` renders `RESULTS.md`; `html.rs` fills
-`report.html`, the self-contained results page. `schema.rs` is only tests: they fail
-when `schemas/v1` no longer matches the Rust types.
+`classify` decides whether a change between two runs is a regression, a fix or another
+change (a FAIL whose kind got worse, hang to error to silent, is a regression; with
+`repeat`, only a change); the `Gate` from `--fail-on` and `--ignore-expected` decides
+which of them make `--compare-to` fail. `markdown.rs` renders `RESULTS.md`; `html.rs`
+fills `report.html`, the self-contained results page. `schema.rs` is only tests: they
+fail when `schemas/v1` no longer matches the Rust types.
 
 ## After the tour
 
 The tour leaves out what decides whether a run counts at all: the pool probes
-(`runner/probe.rs`), evidence and preconditions (in `check.rs`), the exact reset
-(`runner/exact.rs`) and documented limitations (`limitations.rs`). architecture.md has
-a short section on each; read it next, before changing a verdict.
+(`runner/probe.rs`), evidence and preconditions (run in `steps.rs`, judged in
+`check.rs`), the exact reset (`runner/exact.rs`) and documented limitations
+(`limitations.rs`). architecture.md has a short section on each; read it next, before
+changing a verdict.
 
 What's left is reference rather than core: `targets.rs` (URL parsing, passwords,
 `${VAR}`), `tls.rs` (sslmode as in libpq), `doctor.rs` and `runner/doctor.rs`, and
