@@ -1,0 +1,26 @@
+# PgDog's documented limitations: FAILs its own docs say happen. A result that matches an
+# entry exactly is reported as expected, still a FAIL; anything else stays a bug. See
+# README "Documented limitations" for the format and the rules.
+#
+# Read: pgdogdev/docs at 9087f5cc (connection-pooler pages). Left as FAILs:
+# - listen-notify-delivered: pub/sub is documented as off by default, but PgDog then
+#   closes the client's connection after LISTEN, which the docs don't say;
+# - SQL PREPARE between clients: the docs say prepared_statements = "full" rewrites the
+#   names, not what happens without it;
+# - temp tables: the docs don't mention them (pinning on CREATE TEMP is in the CHANGELOG);
+# - the multi-statement, SET LOCAL, set_config, abandoned-query and protocol FAILs, which
+#   are bugs, some reported upstream.
+
+# Pinning a client to the server connection that holds its advisory lock needs the query
+# parser, which an unsharded deployment without read/write split doesn't run by default.
+# So the lock stays on the server connection after the client disconnects. With the
+# parser on (config "full" turns it on) the scenario passes.
+[[limitation]]
+scenario = "advisory-lock-released-on-disconnect"
+mode = "transaction"
+config = ["default", "pubsub"]
+since = "0.1.50"
+differs = [{ step = 4, pooler = { status = "ok", rows = [["1"]], tags = [1] } }]
+doc = "https://github.com/pgdogdev/docs/blob/9087f5cc4a5cc1047830c32c078fd84bc9c2e472/docs/features/connection-pooler/transaction-mode.md#handling-advisory-locks"
+quote = "If your PgDog deployment is unsharded and isn't using the load balancer for read/write separation, this feature is disabled by default."
+note = "\"This feature\" is pinning the server connection to the client that took the lock, until it unlocks or disconnects. The doc's link on \"load balancer\" and its bold on \"disabled\" are left out. pgdog#1407 reports this leak; with the defaults it follows from this doc (no pinning without the query parser). With the parser on, a clean disconnect releases the lock (config full passes)."

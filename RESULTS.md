@@ -14,21 +14,21 @@ run counts.
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | `abandoned-query-does-not-block-pool` | pass | pass | pass | FAIL error | FAIL error | FAIL error | FAIL error | FAIL error | pass | skip | skip | skip | pass | pass | pass | pass | FAIL error | FAIL error | FAIL error | FAIL error | FAIL error | pass | skip | skip | skip | pass |
 | `aborted-transaction-not-reused` | pass | pass | pass | FAIL error | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | FAIL error | pass | pass | pass | pass | pass | pass | pass | pass | pass |
-| `advisory-lock-released-on-disconnect` | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | FAIL silent (expected) | pass | **FAIL** silent | **FAIL** silent | FAIL error | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | FAIL silent (expected) | pass | **FAIL** silent | **FAIL** silent | FAIL error | FAIL silent (expected) |
+| `advisory-lock-released-on-disconnect` | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | pass | FAIL silent (expected) | FAIL silent (expected) | FAIL error | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | pass | FAIL silent (expected) | FAIL silent (expected) | FAIL error | FAIL silent (expected) |
 | `advisory-lock-survives-own-transactions` | pass | pass | pass | pass | pass | pass | pass | pass | **FAIL** silent | pass | pass | FAIL error | pass | pass | pass | pass | pass | pass | pass | pass | pass | **FAIL** silent | pass | pass | FAIL error | pass |
 | `cancel-from-idle-client-is-harmless` | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass |
 | `cancel-reaches-running-query` | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass |
 | `cancel-under-saturated-pool` | pass | pass | pass | pass | pass | pass | pass | pass | pass | skip | skip | skip | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | skip | skip | skip | pass |
 | `copy-from-stdin` | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass |
 | `copy-to-stdout` | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass |
-| `cursor-isolated-between-clients` | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | **FAIL** silent | **FAIL** silent | FAIL error | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | **FAIL** silent | **FAIL** silent | FAIL error | FAIL silent (expected) |
+| `cursor-isolated-between-clients` | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | FAIL silent (expected) | FAIL silent (expected) | FAIL error | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | FAIL silent (expected) | FAIL silent (expected) | FAIL error | FAIL silent (expected) |
 | `cursor-survives-own-transactions` | pass | pass | pass | pass | pass | pass | pass | pass | FAIL error | pass | pass | FAIL error | pass | pass | pass | pass | pass | pass | pass | pass | pass | FAIL error | pass | pass | FAIL error | pass |
 | `deallocate-all-isolated` | pass | pass | pass | pass | pass | pass | pass | FAIL error (expected) | pass | FAIL error | FAIL error | FAIL error | pass | pass | pass | pass | pass | pass | pass | pass | FAIL error (expected) | pass | FAIL error | FAIL error | FAIL error | pass |
 | `discard-all-in-transaction-fails` | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | FAIL error | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | FAIL error | pass |
 | `discard-all-resets-settings` | pass | pass | pass | **FAIL** silent | **FAIL** silent | pass | pass | pass | pass | pass | pass | FAIL error | pass | pass | pass | pass | **FAIL** silent | **FAIL** silent | pass | pass | pass | pass | pass | pass | FAIL error | pass |
 | `empty-search-path-from-set-config` | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | FAIL error | **FAIL** silent | **FAIL** silent | **FAIL** silent | FAIL error | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | FAIL error | FAIL error |
-| `listen-notify-delivered` | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | FAIL error | FAIL error | FAIL error | pass | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | FAIL error | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | FAIL error | FAIL error | FAIL error | pass | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | FAIL error | FAIL silent (expected) |
-| `load-isolated-between-clients` | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | FAIL error | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | FAIL error | FAIL silent (expected) |
+| `listen-notify-delivered` | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | FAIL error | FAIL error | FAIL error | pass | **FAIL** silent | **FAIL** silent | FAIL silent (expected) | FAIL silent (expected) | FAIL error | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | FAIL error | FAIL error | FAIL error | pass | **FAIL** silent | **FAIL** silent | FAIL silent (expected) | FAIL silent (expected) | FAIL error | FAIL silent (expected) |
+| `load-isolated-between-clients` | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | FAIL silent (expected) | FAIL silent (expected) | FAIL error | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | FAIL silent (expected) | FAIL silent (expected) | FAIL error | FAIL silent (expected) |
 | `multi-statement-begin` | pass | pass | pass | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | pass | pass | pass | pass | pass | pass | pass | pass | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | pass | pass | pass | pass | pass |
 | `multi-statement-begin-error` | pass | pass | pass | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | pass | pass | pass | pass | pass | pass | pass | pass | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | pass | pass | pass | pass | pass |
 | `multi-statement-begin-left-open` | pass | pass | pass | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | pass | pass | pass | pass | pass | pass | pass | pass | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | pass | pass | pass | pass | pass |
@@ -48,18 +48,18 @@ run counts.
 | `protocol-statement-names-isolated` | pass | pass | pass | pass | pass | pass | pass | FAIL error (expected) | pass | FAIL error | FAIL error | FAIL error | pass | pass | pass | pass | pass | pass | pass | pass | FAIL error (expected) | pass | FAIL error | FAIL error | FAIL error | pass |
 | `protocol-statement-reparsed-after-close` | pass | pass | pass | pass | pass | pass | pass | FAIL error (expected) 5/5 | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | FAIL error (expected) 5/5 | pass | pass | pass | pass | pass |
 | `protocol-unnamed-statement-survives-other-clients` | FAIL error | FAIL error | FAIL error | pass | pass | pass | pass | FAIL error | pass | FAIL error | FAIL error | FAIL error | FAIL error | FAIL error | FAIL error | FAIL error | pass | pass | pass | pass | FAIL error | pass | FAIL error | FAIL error | FAIL error | FAIL error |
-| `search-path-isolated-between-clients` | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | pass | pass | pass | pass | FAIL silent (expected) | **FAIL** silent | **FAIL** silent | **FAIL** silent | FAIL error | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | pass | pass | pass | pass | pass | FAIL silent (expected) | **FAIL** silent | **FAIL** silent | **FAIL** silent | FAIL error | pass |
-| `set-does-not-leak-after-disconnect` | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | pass | pass | pass | pass | pass | pass | **FAIL** silent | **FAIL** silent | FAIL error | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | pass | pass | pass | pass | pass | pass | **FAIL** silent | **FAIL** silent | FAIL error | FAIL silent (expected) |
-| `set-isolated-between-clients` | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | pass | pass | pass | pass | FAIL silent (expected) | **FAIL** silent | **FAIL** silent | **FAIL** silent | FAIL error | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | pass | pass | pass | pass | FAIL silent (expected) | **FAIL** silent | **FAIL** silent | **FAIL** silent | FAIL error | FAIL silent (expected) |
+| `search-path-isolated-between-clients` | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | pass | pass | pass | pass | FAIL silent (expected) | **FAIL** silent | FAIL silent (expected) | FAIL silent (expected) | FAIL error | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | pass | pass | pass | pass | pass | FAIL silent (expected) | **FAIL** silent | FAIL silent (expected) | FAIL silent (expected) | FAIL error | pass |
+| `set-does-not-leak-after-disconnect` | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | pass | pass | pass | pass | pass | pass | FAIL silent (expected) | FAIL silent (expected) | FAIL error | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | pass | pass | pass | pass | pass | pass | FAIL silent (expected) | FAIL silent (expected) | FAIL error | FAIL silent (expected) |
+| `set-isolated-between-clients` | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | pass | pass | pass | pass | FAIL silent (expected) | **FAIL** silent | FAIL silent (expected) | FAIL silent (expected) | FAIL error | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | pass | pass | pass | pass | FAIL silent (expected) | **FAIL** silent | FAIL silent (expected) | FAIL silent (expected) | FAIL error | FAIL silent (expected) |
 | `set-local-default-after-set-local` | pass | pass | pass | pass | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | pass | FAIL error | pass | pass | pass | pass | pass | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | pass | FAIL error | pass |
 | `set-local-reverts-after-commit` | pass | pass | pass | pass | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | pass | FAIL error | pass | pass | pass | pass | pass | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | pass | FAIL error | pass |
-| `set-role-isolated-between-clients` | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | pass | pass | pass | pass | pass | pass | **FAIL** silent | **FAIL** silent | FAIL error | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | pass | pass | pass | pass | pass | pass | **FAIL** silent | **FAIL** silent | FAIL error | FAIL silent (expected) |
-| `set-role-reset-after-pinned-disconnect` | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | pass | pass | pass | pass | pass | pass | **FAIL** silent | **FAIL** silent | FAIL error | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | pass | pass | pass | pass | pass | pass | **FAIL** silent | **FAIL** silent | FAIL error | FAIL silent (expected) |
-| `set-role-reset-after-temp-table-disconnect` | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | pass | pass | pass | pass | pass | pass | **FAIL** silent | **FAIL** silent | FAIL error | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | pass | pass | pass | pass | pass | pass | **FAIL** silent | **FAIL** silent | FAIL error | FAIL silent (expected) |
+| `set-role-isolated-between-clients` | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | pass | pass | pass | pass | pass | pass | FAIL silent (expected) | FAIL silent (expected) | FAIL error | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | pass | pass | pass | pass | pass | pass | FAIL silent (expected) | FAIL silent (expected) | FAIL error | FAIL silent (expected) |
+| `set-role-reset-after-pinned-disconnect` | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | pass | pass | pass | pass | pass | pass | FAIL silent (expected) | FAIL silent (expected) | FAIL error | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | pass | pass | pass | pass | pass | pass | FAIL silent (expected) | FAIL silent (expected) | FAIL error | FAIL silent (expected) |
+| `set-role-reset-after-temp-table-disconnect` | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | pass | pass | pass | pass | pass | pass | FAIL silent (expected) | FAIL silent (expected) | FAIL error | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | pass | pass | pass | pass | pass | pass | FAIL silent (expected) | FAIL silent (expected) | FAIL error | FAIL silent (expected) |
 | `set-survives-server-change` | skip | skip | skip | skip | skip | skip | skip | skip | skip | **FAIL** silent 5/5 (precondition 5/5) | **FAIL** silent 5/5 (precondition 5/5) | FAIL error 5/5 (precondition 5/5) | skip | skip | skip | skip | skip | skip | skip | skip | skip | skip | **FAIL** silent 5/5 (precondition 5/5) | **FAIL** silent 5/5 (precondition 5/5) | FAIL error 5/5 (precondition 5/5) | skip |
-| `sql-prepare-isolated-between-clients` | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | FAIL error (expected) | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | FAIL error (expected) | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | FAIL silent (expected) |
+| `sql-prepare-isolated-between-clients` | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | FAIL error (expected) | **FAIL** silent | FAIL silent (expected) | FAIL silent (expected) | **FAIL** silent | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | FAIL error (expected) | **FAIL** silent | FAIL silent (expected) | FAIL silent (expected) | **FAIL** silent | FAIL silent (expected) |
 | `sql-prepare-survives-server-change` | skip | skip | skip | skip | skip | skip | skip | skip | skip | FAIL error 5/5 (precondition 5/5) | FAIL error 5/5 (precondition 5/5) | FAIL error 5/5 (precondition 5/5) | skip | skip | skip | skip | skip | skip | skip | skip | skip | skip | FAIL error 5/5 (precondition 5/5) | FAIL error 5/5 (precondition 5/5) | FAIL error 5/5 (precondition 5/5) | skip |
-| `temp-table-isolated-between-clients` | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | **FAIL** silent | **FAIL** silent | FAIL error | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | **FAIL** silent | **FAIL** silent | FAIL error | FAIL silent (expected) |
+| `temp-table-isolated-between-clients` | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | FAIL silent (expected) | FAIL silent (expected) | FAIL error | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | FAIL silent (expected) | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | **FAIL** silent | pass | FAIL silent (expected) | FAIL silent (expected) | FAIL error | FAIL silent (expected) |
 | `temp-table-survives-own-transactions` | pass | pass | pass | pass | pass | pass | pass | pass | FAIL error | pass | pass | FAIL error | pass | pass | pass | pass | pass | pass | pass | pass | pass | FAIL error | pass | pass | FAIL error | pass |
 | `temp-table-survives-server-change` | skip | skip | skip | skip | skip | skip | skip | skip | skip | FAIL error 5/5 (precondition 5/5) | FAIL error 5/5 (precondition 5/5) | FAIL error 5/5 (precondition 5/5) | skip | skip | skip | skip | skip | skip | skip | skip | skip | skip | FAIL error 5/5 (precondition 5/5) | FAIL error 5/5 (precondition 5/5) | FAIL error 5/5 (precondition 5/5) | skip |
 
@@ -165,60 +165,6 @@ A client that disconnects inside an aborted transaction must not pass it to the 
 - pooler: `error 42601: multi-statement queries cannot mix SET with other commands`
 - related: https://github.com/pgbouncer/pgbouncer/issues/1415
 
-### pgdog-0.1.50 (pg 17.11) / advisory-lock-released-on-disconnect (silent)
-
-A session advisory lock must be released when the client that took it disconnects.
-
-- step 4: `[check (direct)] simple: SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 424242`
-- postgres: `ok rows=[(0)] tags=[1]`
-- pooler: `ok rows=[(1)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1407
-
-### pgdog-0.1.56 (pg 17.11) / advisory-lock-released-on-disconnect (silent)
-
-A session advisory lock must be released when the client that took it disconnects.
-
-- step 4: `[check (direct)] simple: SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 424242`
-- postgres: `ok rows=[(0)] tags=[1]`
-- pooler: `ok rows=[(1)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1407
-
-### pgdog-0.1.62 (pg 17.11) / advisory-lock-released-on-disconnect (silent)
-
-A session advisory lock must be released when the client that took it disconnects.
-
-- step 4: `[check (direct)] simple: SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 424242`
-- postgres: `ok rows=[(0)] tags=[1]`
-- pooler: `ok rows=[(1)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1407
-
-### pgdog-0.1.62-pubsub (pg 17.11) / advisory-lock-released-on-disconnect (silent)
-
-A session advisory lock must be released when the client that took it disconnects.
-
-- step 4: `[check (direct)] simple: SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 424242`
-- postgres: `ok rows=[(0)] tags=[1]`
-- pooler: `ok rows=[(1)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1407
-
-### supavisor-2.9.13 (pg 17.11) / advisory-lock-released-on-disconnect (silent)
-
-A session advisory lock must be released when the client that took it disconnects.
-
-- step 4: `[check (direct)] simple: SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 424242`
-- postgres: `ok rows=[(0)] tags=[1]`
-- pooler: `ok rows=[(1)] tags=[1]`
-- related: https://github.com/pgdogdev/pgdog/issues/1407
-
-### supavisor-2.10.0-rc.1 (pg 17.11) / advisory-lock-released-on-disconnect (silent)
-
-A session advisory lock must be released when the client that took it disconnects.
-
-- step 4: `[check (direct)] simple: SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 424242`
-- postgres: `ok rows=[(0)] tags=[1]`
-- pooler: `ok rows=[(1)] tags=[1]`
-- related: https://github.com/pgdogdev/pgdog/issues/1407
-
 ### supavisor-2.10.0-rc.1-strict (pg 17.11) / advisory-lock-released-on-disconnect (error)
 
 A session advisory lock must be released when the client that took it disconnects.
@@ -226,60 +172,6 @@ A session advisory lock must be released when the client that took it disconnect
 - step 1: `[a] simple: SELECT pg_advisory_lock(424242)::text`
 - postgres: `ok rows=[()] tags=[1]`
 - pooler: `error XX000: (ESESSIONLEAK) session-level advisory lock is not allowed in transaction mode`
-- related: https://github.com/pgdogdev/pgdog/issues/1407
-
-### pgdog-0.1.50 (pg 18.4) / advisory-lock-released-on-disconnect (silent)
-
-A session advisory lock must be released when the client that took it disconnects.
-
-- step 4: `[check (direct)] simple: SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 424242`
-- postgres: `ok rows=[(0)] tags=[1]`
-- pooler: `ok rows=[(1)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1407
-
-### pgdog-0.1.56 (pg 18.4) / advisory-lock-released-on-disconnect (silent)
-
-A session advisory lock must be released when the client that took it disconnects.
-
-- step 4: `[check (direct)] simple: SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 424242`
-- postgres: `ok rows=[(0)] tags=[1]`
-- pooler: `ok rows=[(1)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1407
-
-### pgdog-0.1.62 (pg 18.4) / advisory-lock-released-on-disconnect (silent)
-
-A session advisory lock must be released when the client that took it disconnects.
-
-- step 4: `[check (direct)] simple: SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 424242`
-- postgres: `ok rows=[(0)] tags=[1]`
-- pooler: `ok rows=[(1)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1407
-
-### pgdog-0.1.62-pubsub (pg 18.4) / advisory-lock-released-on-disconnect (silent)
-
-A session advisory lock must be released when the client that took it disconnects.
-
-- step 4: `[check (direct)] simple: SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 424242`
-- postgres: `ok rows=[(0)] tags=[1]`
-- pooler: `ok rows=[(1)] tags=[1]`
-- from https://github.com/pgdogdev/pgdog/issues/1407
-
-### supavisor-2.9.13 (pg 18.4) / advisory-lock-released-on-disconnect (silent)
-
-A session advisory lock must be released when the client that took it disconnects.
-
-- step 4: `[check (direct)] simple: SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 424242`
-- postgres: `ok rows=[(0)] tags=[1]`
-- pooler: `ok rows=[(1)] tags=[1]`
-- related: https://github.com/pgdogdev/pgdog/issues/1407
-
-### supavisor-2.10.0-rc.1 (pg 18.4) / advisory-lock-released-on-disconnect (silent)
-
-A session advisory lock must be released when the client that took it disconnects.
-
-- step 4: `[check (direct)] simple: SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 424242`
-- postgres: `ok rows=[(0)] tags=[1]`
-- pooler: `ok rows=[(1)] tags=[1]`
 - related: https://github.com/pgdogdev/pgdog/issues/1407
 
 ### supavisor-2.10.0-rc.1-strict (pg 18.4) / advisory-lock-released-on-disconnect (error)
@@ -363,22 +255,6 @@ A WITH HOLD cursor declared by one client must not be visible to another client.
 - postgres: `error 34000: cursor "pp_cur" does not exist`
 - pooler: `ok rows=[(1)] tags=[1]`
 
-### supavisor-2.9.13 (pg 17.11) / cursor-isolated-between-clients (silent)
-
-A WITH HOLD cursor declared by one client must not be visible to another client.
-
-- step 7: `[b] simple: FETCH 1 FROM pp_cur`
-- postgres: `error 34000: cursor "pp_cur" does not exist`
-- pooler: `ok rows=[(1)] tags=[1]`
-
-### supavisor-2.10.0-rc.1 (pg 17.11) / cursor-isolated-between-clients (silent)
-
-A WITH HOLD cursor declared by one client must not be visible to another client.
-
-- step 7: `[b] simple: FETCH 1 FROM pp_cur`
-- postgres: `error 34000: cursor "pp_cur" does not exist`
-- pooler: `ok rows=[(1)] tags=[1]`
-
 ### supavisor-2.10.0-rc.1-strict (pg 17.11) / cursor-isolated-between-clients (error)
 
 A WITH HOLD cursor declared by one client must not be visible to another client.
@@ -420,22 +296,6 @@ A WITH HOLD cursor declared by one client must not be visible to another client.
 - pooler: `ok rows=[(1)] tags=[1]`
 
 ### pgcat-1.2.0 (pg 18.4) / cursor-isolated-between-clients (silent)
-
-A WITH HOLD cursor declared by one client must not be visible to another client.
-
-- step 7: `[b] simple: FETCH 1 FROM pp_cur`
-- postgres: `error 34000: cursor "pp_cur" does not exist`
-- pooler: `ok rows=[(1)] tags=[1]`
-
-### supavisor-2.9.13 (pg 18.4) / cursor-isolated-between-clients (silent)
-
-A WITH HOLD cursor declared by one client must not be visible to another client.
-
-- step 7: `[b] simple: FETCH 1 FROM pp_cur`
-- postgres: `error 34000: cursor "pp_cur" does not exist`
-- pooler: `ok rows=[(1)] tags=[1]`
-
-### supavisor-2.10.0-rc.1 (pg 18.4) / cursor-isolated-between-clients (silent)
 
 A WITH HOLD cursor declared by one client must not be visible to another client.
 
@@ -874,24 +734,6 @@ A client that ran LISTEN must receive NOTIFY messages sent by another client.
 - pooler: `ok rows=[] tags=[]`
 - related: https://github.com/pgbouncer/pgbouncer/issues/655
 
-### supavisor-2.9.13 (pg 17.11) / listen-notify-delivered (silent)
-
-A client that ran LISTEN must receive NOTIFY messages sent by another client.
-
-- step 9: `[a] notifications`
-- postgres: `ok rows=[(pp_chan, hello)] tags=[]`
-- pooler: `ok rows=[] tags=[]`
-- related: https://github.com/pgbouncer/pgbouncer/issues/655
-
-### supavisor-2.10.0-rc.1 (pg 17.11) / listen-notify-delivered (silent)
-
-A client that ran LISTEN must receive NOTIFY messages sent by another client.
-
-- step 9: `[a] notifications`
-- postgres: `ok rows=[(pp_chan, hello)] tags=[]`
-- pooler: `ok rows=[] tags=[]`
-- related: https://github.com/pgbouncer/pgbouncer/issues/655
-
 ### supavisor-2.10.0-rc.1-strict (pg 17.11) / listen-notify-delivered (error)
 
 A client that ran LISTEN must receive NOTIFY messages sent by another client.
@@ -938,24 +780,6 @@ A client that ran LISTEN must receive NOTIFY messages sent by another client.
 - related: https://github.com/pgbouncer/pgbouncer/issues/655
 
 ### odyssey-1.5.2 (pg 18.4) / listen-notify-delivered (silent)
-
-A client that ran LISTEN must receive NOTIFY messages sent by another client.
-
-- step 9: `[a] notifications`
-- postgres: `ok rows=[(pp_chan, hello)] tags=[]`
-- pooler: `ok rows=[] tags=[]`
-- related: https://github.com/pgbouncer/pgbouncer/issues/655
-
-### supavisor-2.9.13 (pg 18.4) / listen-notify-delivered (silent)
-
-A client that ran LISTEN must receive NOTIFY messages sent by another client.
-
-- step 9: `[a] notifications`
-- postgres: `ok rows=[(pp_chan, hello)] tags=[]`
-- pooler: `ok rows=[] tags=[]`
-- related: https://github.com/pgbouncer/pgbouncer/issues/655
-
-### supavisor-2.10.0-rc.1 (pg 18.4) / listen-notify-delivered (silent)
 
 A client that ran LISTEN must receive NOTIFY messages sent by another client.
 
@@ -1021,22 +845,6 @@ A library one client loads with LOAD must not show up for another client.
 - postgres: `ok rows=[(NULL)] tags=[1]`
 - pooler: `ok rows=[(-1)] tags=[1]`
 
-### supavisor-2.9.13 (pg 17.11) / load-isolated-between-clients (silent)
-
-A library one client loads with LOAD must not show up for another client.
-
-- step 8: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
-- postgres: `ok rows=[(NULL)] tags=[1]`
-- pooler: `ok rows=[(-1)] tags=[1]`
-
-### supavisor-2.10.0-rc.1 (pg 17.11) / load-isolated-between-clients (silent)
-
-A library one client loads with LOAD must not show up for another client.
-
-- step 8: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
-- postgres: `ok rows=[(NULL)] tags=[1]`
-- pooler: `ok rows=[(-1)] tags=[1]`
-
 ### supavisor-2.10.0-rc.1-strict (pg 17.11) / load-isolated-between-clients (error)
 
 A library one client loads with LOAD must not show up for another client.
@@ -1086,22 +894,6 @@ A library one client loads with LOAD must not show up for another client.
 - pooler: `ok rows=[(-1)] tags=[1]`
 
 ### odyssey-1.5.2 (pg 18.4) / load-isolated-between-clients (silent)
-
-A library one client loads with LOAD must not show up for another client.
-
-- step 8: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
-- postgres: `ok rows=[(NULL)] tags=[1]`
-- pooler: `ok rows=[(-1)] tags=[1]`
-
-### supavisor-2.9.13 (pg 18.4) / load-isolated-between-clients (silent)
-
-A library one client loads with LOAD must not show up for another client.
-
-- step 8: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
-- postgres: `ok rows=[(NULL)] tags=[1]`
-- pooler: `ok rows=[(-1)] tags=[1]`
-
-### supavisor-2.10.0-rc.1 (pg 18.4) / load-isolated-between-clients (silent)
 
 A library one client loads with LOAD must not show up for another client.
 
@@ -1983,22 +1775,6 @@ A client's empty search_path must still be empty after another client changed it
 - postgres: `ok rows=[("")] tags=[0]`
 - pooler: `ok rows=[("$user", public)] tags=[0]`
 
-### supavisor-2.9.13 (pg 17.11) / search-path-isolated-between-clients (silent)
-
-A client's empty search_path must still be empty after another client changed it.
-
-- step 7: `[a] simple: SHOW search_path`
-- postgres: `ok rows=[("")] tags=[0]`
-- pooler: `ok rows=[(public)] tags=[0]`
-
-### supavisor-2.10.0-rc.1 (pg 17.11) / search-path-isolated-between-clients (silent)
-
-A client's empty search_path must still be empty after another client changed it.
-
-- step 7: `[a] simple: SHOW search_path`
-- postgres: `ok rows=[("")] tags=[0]`
-- pooler: `ok rows=[(public)] tags=[0]`
-
 ### supavisor-2.10.0-rc.1-strict (pg 17.11) / search-path-isolated-between-clients (error)
 
 A client's empty search_path must still be empty after another client changed it.
@@ -2015,22 +1791,6 @@ A client's empty search_path must still be empty after another client changed it
 - postgres: `ok rows=[("")] tags=[0]`
 - pooler: `ok rows=[("""""")] tags=[0]`
 
-### supavisor-2.9.13 (pg 18.4) / search-path-isolated-between-clients (silent)
-
-A client's empty search_path must still be empty after another client changed it.
-
-- step 7: `[a] simple: SHOW search_path`
-- postgres: `ok rows=[("")] tags=[0]`
-- pooler: `ok rows=[(public)] tags=[0]`
-
-### supavisor-2.10.0-rc.1 (pg 18.4) / search-path-isolated-between-clients (silent)
-
-A client's empty search_path must still be empty after another client changed it.
-
-- step 7: `[a] simple: SHOW search_path`
-- postgres: `ok rows=[("")] tags=[0]`
-- pooler: `ok rows=[(public)] tags=[0]`
-
 ### supavisor-2.10.0-rc.1-strict (pg 18.4) / search-path-isolated-between-clients (error)
 
 A client's empty search_path must still be empty after another client changed it.
@@ -2039,24 +1799,6 @@ A client's empty search_path must still be empty after another client changed it
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error XX000: (ESESSIONLEAK) session-level SET statement is not allowed in transaction mode`
 
-### supavisor-2.9.13 (pg 17.11) / set-does-not-leak-after-disconnect (silent)
-
-Settings from a client that disconnected must not show up for the next client.
-
-- step 8: `[b] simple: SHOW work_mem`
-- postgres: `ok rows=[(4MB)] tags=[0]`
-- pooler: `ok rows=[(7MB)] tags=[0]`
-- related: https://github.com/pgdogdev/pgdog/issues/1850
-
-### supavisor-2.10.0-rc.1 (pg 17.11) / set-does-not-leak-after-disconnect (silent)
-
-Settings from a client that disconnected must not show up for the next client.
-
-- step 8: `[b] simple: SHOW work_mem`
-- postgres: `ok rows=[(4MB)] tags=[0]`
-- pooler: `ok rows=[(7MB)] tags=[0]`
-- related: https://github.com/pgdogdev/pgdog/issues/1850
-
 ### supavisor-2.10.0-rc.1-strict (pg 17.11) / set-does-not-leak-after-disconnect (error)
 
 Settings from a client that disconnected must not show up for the next client.
@@ -2064,24 +1806,6 @@ Settings from a client that disconnected must not show up for the next client.
 - step 3: `[a] simple: SET work_mem = '7MB'`
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error XX000: (ESESSIONLEAK) session-level SET statement is not allowed in transaction mode`
-- related: https://github.com/pgdogdev/pgdog/issues/1850
-
-### supavisor-2.9.13 (pg 18.4) / set-does-not-leak-after-disconnect (silent)
-
-Settings from a client that disconnected must not show up for the next client.
-
-- step 8: `[b] simple: SHOW work_mem`
-- postgres: `ok rows=[(4MB)] tags=[0]`
-- pooler: `ok rows=[(7MB)] tags=[0]`
-- related: https://github.com/pgdogdev/pgdog/issues/1850
-
-### supavisor-2.10.0-rc.1 (pg 18.4) / set-does-not-leak-after-disconnect (silent)
-
-Settings from a client that disconnected must not show up for the next client.
-
-- step 8: `[b] simple: SHOW work_mem`
-- postgres: `ok rows=[(4MB)] tags=[0]`
-- pooler: `ok rows=[(7MB)] tags=[0]`
 - related: https://github.com/pgdogdev/pgdog/issues/1850
 
 ### supavisor-2.10.0-rc.1-strict (pg 18.4) / set-does-not-leak-after-disconnect (error)
@@ -2102,24 +1826,6 @@ A plain SET from one client must not change the setting another client sees.
 - pooler: `ok rows=[(4MB)] tags=[0]`
 - related: https://github.com/pgdogdev/pgdog/issues/1850
 
-### supavisor-2.9.13 (pg 17.11) / set-isolated-between-clients (silent)
-
-A plain SET from one client must not change the setting another client sees.
-
-- step 7: `[a] simple: SHOW work_mem`
-- postgres: `ok rows=[(7MB)] tags=[0]`
-- pooler: `ok rows=[(9MB)] tags=[0]`
-- related: https://github.com/pgdogdev/pgdog/issues/1850
-
-### supavisor-2.10.0-rc.1 (pg 17.11) / set-isolated-between-clients (silent)
-
-A plain SET from one client must not change the setting another client sees.
-
-- step 7: `[a] simple: SHOW work_mem`
-- postgres: `ok rows=[(7MB)] tags=[0]`
-- pooler: `ok rows=[(9MB)] tags=[0]`
-- related: https://github.com/pgdogdev/pgdog/issues/1850
-
 ### supavisor-2.10.0-rc.1-strict (pg 17.11) / set-isolated-between-clients (error)
 
 A plain SET from one client must not change the setting another client sees.
@@ -2136,24 +1842,6 @@ A plain SET from one client must not change the setting another client sees.
 - step 7: `[a] simple: SHOW work_mem`
 - postgres: `ok rows=[(7MB)] tags=[0]`
 - pooler: `ok rows=[(4MB)] tags=[0]`
-- related: https://github.com/pgdogdev/pgdog/issues/1850
-
-### supavisor-2.9.13 (pg 18.4) / set-isolated-between-clients (silent)
-
-A plain SET from one client must not change the setting another client sees.
-
-- step 7: `[a] simple: SHOW work_mem`
-- postgres: `ok rows=[(7MB)] tags=[0]`
-- pooler: `ok rows=[(9MB)] tags=[0]`
-- related: https://github.com/pgdogdev/pgdog/issues/1850
-
-### supavisor-2.10.0-rc.1 (pg 18.4) / set-isolated-between-clients (silent)
-
-A plain SET from one client must not change the setting another client sees.
-
-- step 7: `[a] simple: SHOW work_mem`
-- postgres: `ok rows=[(7MB)] tags=[0]`
-- pooler: `ok rows=[(9MB)] tags=[0]`
 - related: https://github.com/pgdogdev/pgdog/issues/1850
 
 ### supavisor-2.10.0-rc.1-strict (pg 18.4) / set-isolated-between-clients (error)
@@ -2381,22 +2069,6 @@ SET LOCAL ... TO DEFAULT must not change the session value, outside or inside a 
 - pooler: `error XX000: (ESESSIONLEAK) session-level SET statement is not allowed in transaction mode`
 - related: https://github.com/pgdogdev/pgdog/issues/1770
 
-### supavisor-2.9.13 (pg 17.11) / set-role-isolated-between-clients (silent)
-
-SET ROLE from one client must not change the role another client runs as.
-
-- step 7: `[b] simple: SELECT current_user::text`
-- postgres: `ok rows=[(postgres)] tags=[1]`
-- pooler: `ok rows=[(pp_role)] tags=[1]`
-
-### supavisor-2.10.0-rc.1 (pg 17.11) / set-role-isolated-between-clients (silent)
-
-SET ROLE from one client must not change the role another client runs as.
-
-- step 7: `[b] simple: SELECT current_user::text`
-- postgres: `ok rows=[(postgres)] tags=[1]`
-- pooler: `ok rows=[(pp_role)] tags=[1]`
-
 ### supavisor-2.10.0-rc.1-strict (pg 17.11) / set-role-isolated-between-clients (error)
 
 SET ROLE from one client must not change the role another client runs as.
@@ -2404,22 +2076,6 @@ SET ROLE from one client must not change the role another client runs as.
 - step 3: `[a] simple: SET ROLE pp_role`
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error XX000: (ESESSIONLEAK) session-level SET statement is not allowed in transaction mode`
-
-### supavisor-2.9.13 (pg 18.4) / set-role-isolated-between-clients (silent)
-
-SET ROLE from one client must not change the role another client runs as.
-
-- step 7: `[b] simple: SELECT current_user::text`
-- postgres: `ok rows=[(postgres)] tags=[1]`
-- pooler: `ok rows=[(pp_role)] tags=[1]`
-
-### supavisor-2.10.0-rc.1 (pg 18.4) / set-role-isolated-between-clients (silent)
-
-SET ROLE from one client must not change the role another client runs as.
-
-- step 7: `[b] simple: SELECT current_user::text`
-- postgres: `ok rows=[(postgres)] tags=[1]`
-- pooler: `ok rows=[(pp_role)] tags=[1]`
 
 ### supavisor-2.10.0-rc.1-strict (pg 18.4) / set-role-isolated-between-clients (error)
 
@@ -2429,24 +2085,6 @@ SET ROLE from one client must not change the role another client runs as.
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error XX000: (ESESSIONLEAK) session-level SET statement is not allowed in transaction mode`
 
-### supavisor-2.9.13 (pg 17.11) / set-role-reset-after-pinned-disconnect (silent)
-
-A client that held an advisory lock and ran SET ROLE must not pass its role to the next client.
-
-- step 8: `[b] simple: SELECT current_user::text`
-- postgres: `ok rows=[(postgres)] tags=[1]`
-- pooler: `ok rows=[(pp_role)] tags=[1]`
-- related: https://github.com/pgdogdev/pgdog/issues/1341
-
-### supavisor-2.10.0-rc.1 (pg 17.11) / set-role-reset-after-pinned-disconnect (silent)
-
-A client that held an advisory lock and ran SET ROLE must not pass its role to the next client.
-
-- step 8: `[b] simple: SELECT current_user::text`
-- postgres: `ok rows=[(postgres)] tags=[1]`
-- pooler: `ok rows=[(pp_role)] tags=[1]`
-- related: https://github.com/pgdogdev/pgdog/issues/1341
-
 ### supavisor-2.10.0-rc.1-strict (pg 17.11) / set-role-reset-after-pinned-disconnect (error)
 
 A client that held an advisory lock and ran SET ROLE must not pass its role to the next client.
@@ -2454,24 +2092,6 @@ A client that held an advisory lock and ran SET ROLE must not pass its role to t
 - step 1: `[a] simple: SELECT pg_advisory_lock(707519)::text`
 - postgres: `ok rows=[()] tags=[1]`
 - pooler: `error XX000: (ESESSIONLEAK) session-level advisory lock is not allowed in transaction mode`
-- related: https://github.com/pgdogdev/pgdog/issues/1341
-
-### supavisor-2.9.13 (pg 18.4) / set-role-reset-after-pinned-disconnect (silent)
-
-A client that held an advisory lock and ran SET ROLE must not pass its role to the next client.
-
-- step 8: `[b] simple: SELECT current_user::text`
-- postgres: `ok rows=[(postgres)] tags=[1]`
-- pooler: `ok rows=[(pp_role)] tags=[1]`
-- related: https://github.com/pgdogdev/pgdog/issues/1341
-
-### supavisor-2.10.0-rc.1 (pg 18.4) / set-role-reset-after-pinned-disconnect (silent)
-
-A client that held an advisory lock and ran SET ROLE must not pass its role to the next client.
-
-- step 8: `[b] simple: SELECT current_user::text`
-- postgres: `ok rows=[(postgres)] tags=[1]`
-- pooler: `ok rows=[(pp_role)] tags=[1]`
 - related: https://github.com/pgdogdev/pgdog/issues/1341
 
 ### supavisor-2.10.0-rc.1-strict (pg 18.4) / set-role-reset-after-pinned-disconnect (error)
@@ -2483,24 +2103,6 @@ A client that held an advisory lock and ran SET ROLE must not pass its role to t
 - pooler: `error XX000: (ESESSIONLEAK) session-level advisory lock is not allowed in transaction mode`
 - related: https://github.com/pgdogdev/pgdog/issues/1341
 
-### supavisor-2.9.13 (pg 17.11) / set-role-reset-after-temp-table-disconnect (silent)
-
-A client that created a temp table and ran SET ROLE must not pass its role to the next client.
-
-- step 8: `[b] simple: SELECT current_user::text`
-- postgres: `ok rows=[(postgres)] tags=[1]`
-- pooler: `ok rows=[(pp_role)] tags=[1]`
-- related: https://github.com/pgdogdev/pgdog/issues/1341
-
-### supavisor-2.10.0-rc.1 (pg 17.11) / set-role-reset-after-temp-table-disconnect (silent)
-
-A client that created a temp table and ran SET ROLE must not pass its role to the next client.
-
-- step 8: `[b] simple: SELECT current_user::text`
-- postgres: `ok rows=[(postgres)] tags=[1]`
-- pooler: `ok rows=[(pp_role)] tags=[1]`
-- related: https://github.com/pgdogdev/pgdog/issues/1341
-
 ### supavisor-2.10.0-rc.1-strict (pg 17.11) / set-role-reset-after-temp-table-disconnect (error)
 
 A client that created a temp table and ran SET ROLE must not pass its role to the next client.
@@ -2508,24 +2110,6 @@ A client that created a temp table and ran SET ROLE must not pass its role to th
 - step 1: `[a] simple: CREATE TEMP TABLE pp_role_tmp (x int)`
 - postgres: `ok rows=[] tags=[0]`
 - pooler: `error XX000: (ESESSIONLEAK) temporary table creation is not allowed in transaction mode`
-- related: https://github.com/pgdogdev/pgdog/issues/1341
-
-### supavisor-2.9.13 (pg 18.4) / set-role-reset-after-temp-table-disconnect (silent)
-
-A client that created a temp table and ran SET ROLE must not pass its role to the next client.
-
-- step 8: `[b] simple: SELECT current_user::text`
-- postgres: `ok rows=[(postgres)] tags=[1]`
-- pooler: `ok rows=[(pp_role)] tags=[1]`
-- related: https://github.com/pgdogdev/pgdog/issues/1341
-
-### supavisor-2.10.0-rc.1 (pg 18.4) / set-role-reset-after-temp-table-disconnect (silent)
-
-A client that created a temp table and ran SET ROLE must not pass its role to the next client.
-
-- step 8: `[b] simple: SELECT current_user::text`
-- postgres: `ok rows=[(postgres)] tags=[1]`
-- pooler: `ok rows=[(pp_role)] tags=[1]`
 - related: https://github.com/pgdogdev/pgdog/issues/1341
 
 ### supavisor-2.10.0-rc.1-strict (pg 18.4) / set-role-reset-after-temp-table-disconnect (error)
@@ -2631,22 +2215,6 @@ A statement made with SQL PREPARE must be usable by the client that made it, and
 - postgres: `error 26000: prepared statement "pp_q" does not exist`
 - pooler: `ok rows=[(from a)] tags=[1]`
 
-### supavisor-2.9.13 (pg 17.11) / sql-prepare-isolated-between-clients (silent)
-
-A statement made with SQL PREPARE must be usable by the client that made it, and only by it.
-
-- step 7: `[b] simple: EXECUTE pp_q`
-- postgres: `error 26000: prepared statement "pp_q" does not exist`
-- pooler: `ok rows=[(from a)] tags=[1]`
-
-### supavisor-2.10.0-rc.1 (pg 17.11) / sql-prepare-isolated-between-clients (silent)
-
-A statement made with SQL PREPARE must be usable by the client that made it, and only by it.
-
-- step 7: `[b] simple: EXECUTE pp_q`
-- postgres: `error 26000: prepared statement "pp_q" does not exist`
-- pooler: `ok rows=[(from a)] tags=[1]`
-
 ### supavisor-2.10.0-rc.1-strict (pg 17.11) / sql-prepare-isolated-between-clients (silent)
 
 A statement made with SQL PREPARE must be usable by the client that made it, and only by it.
@@ -2688,22 +2256,6 @@ A statement made with SQL PREPARE must be usable by the client that made it, and
 - pooler: `ok rows=[(from a)] tags=[1]`
 
 ### odyssey-1.5.2 (pg 18.4) / sql-prepare-isolated-between-clients (silent)
-
-A statement made with SQL PREPARE must be usable by the client that made it, and only by it.
-
-- step 7: `[b] simple: EXECUTE pp_q`
-- postgres: `error 26000: prepared statement "pp_q" does not exist`
-- pooler: `ok rows=[(from a)] tags=[1]`
-
-### supavisor-2.9.13 (pg 18.4) / sql-prepare-isolated-between-clients (silent)
-
-A statement made with SQL PREPARE must be usable by the client that made it, and only by it.
-
-- step 7: `[b] simple: EXECUTE pp_q`
-- postgres: `error 26000: prepared statement "pp_q" does not exist`
-- pooler: `ok rows=[(from a)] tags=[1]`
-
-### supavisor-2.10.0-rc.1 (pg 18.4) / sql-prepare-isolated-between-clients (silent)
 
 A statement made with SQL PREPARE must be usable by the client that made it, and only by it.
 
@@ -2818,24 +2370,6 @@ A temp table created by one client must not be visible to another client.
 - pooler: `ok rows=[(0)] tags=[1]`
 - related: https://github.com/pgdogdev/pgdog/issues/1733
 
-### supavisor-2.9.13 (pg 17.11) / temp-table-isolated-between-clients (silent)
-
-A temp table created by one client must not be visible to another client.
-
-- step 7: `[b] simple: SELECT count(*) FROM pp_tmp`
-- postgres: `error 42P01: relation "pp_tmp" does not exist`
-- pooler: `ok rows=[(0)] tags=[1]`
-- related: https://github.com/pgdogdev/pgdog/issues/1733
-
-### supavisor-2.10.0-rc.1 (pg 17.11) / temp-table-isolated-between-clients (silent)
-
-A temp table created by one client must not be visible to another client.
-
-- step 7: `[b] simple: SELECT count(*) FROM pp_tmp`
-- postgres: `error 42P01: relation "pp_tmp" does not exist`
-- pooler: `ok rows=[(0)] tags=[1]`
-- related: https://github.com/pgdogdev/pgdog/issues/1733
-
 ### supavisor-2.10.0-rc.1-strict (pg 17.11) / temp-table-isolated-between-clients (error)
 
 A temp table created by one client must not be visible to another client.
@@ -2882,24 +2416,6 @@ A temp table created by one client must not be visible to another client.
 - from https://github.com/pgdogdev/pgdog/issues/1733
 
 ### pgcat-1.2.0 (pg 18.4) / temp-table-isolated-between-clients (silent)
-
-A temp table created by one client must not be visible to another client.
-
-- step 7: `[b] simple: SELECT count(*) FROM pp_tmp`
-- postgres: `error 42P01: relation "pp_tmp" does not exist`
-- pooler: `ok rows=[(0)] tags=[1]`
-- related: https://github.com/pgdogdev/pgdog/issues/1733
-
-### supavisor-2.9.13 (pg 18.4) / temp-table-isolated-between-clients (silent)
-
-A temp table created by one client must not be visible to another client.
-
-- step 7: `[b] simple: SELECT count(*) FROM pp_tmp`
-- postgres: `error 42P01: relation "pp_tmp" does not exist`
-- pooler: `ok rows=[(0)] tags=[1]`
-- related: https://github.com/pgdogdev/pgdog/issues/1733
-
-### supavisor-2.10.0-rc.1 (pg 18.4) / temp-table-isolated-between-clients (silent)
 
 A temp table created by one client must not be visible to another client.
 
@@ -3021,9 +2537,33 @@ A session advisory lock must be released when the client that took it disconnect
 
 A session advisory lock must be released when the client that took it disconnects.
 
+- on pgdog-0.1.50 (pg 17.11), pgdog-0.1.56 (pg 17.11), pgdog-0.1.62 (pg 17.11), pgdog-0.1.62-pubsub (pg 17.11), pgdog-0.1.50 (pg 18.4), pgdog-0.1.56 (pg 18.4), pgdog-0.1.62 (pg 18.4), pgdog-0.1.62-pubsub (pg 18.4)
+- documented: "If your PgDog deployment is unsharded and isn't using the load balancer for read/write separation, this feature is disabled by default.", https://github.com/pgdogdev/docs/blob/9087f5cc4a5cc1047830c32c078fd84bc9c2e472/docs/features/connection-pooler/transaction-mode.md#handling-advisory-locks
+- note: "This feature" is pinning the server connection to the client that took the lock, until it unlocks or disconnects. The doc's link on "load balancer" and its bold on "disabled" are left out. pgdog#1407 reports this leak; with the defaults it follows from this doc (no pinning without the query parser). With the parser on, a clean disconnect releases the lock (config full passes).
+- step 4: `[check (direct)] simple: SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 424242`
+- postgres: `ok rows=[(0)] tags=[1]`
+- pooler: `ok rows=[(1)] tags=[1]`
+- from https://github.com/pgdogdev/pgdog/issues/1407
+
+### advisory-lock-released-on-disconnect (silent)
+
+A session advisory lock must be released when the client that took it disconnects.
+
 - on pgcat-1.2.0 (pg 17.11), pgcat-1.2.0 (pg 18.4)
 - documented: "Prepared statements, `SET`, and advisory locks are not supported; alternatives are to use `SET LOCAL` and `pg_advisory_xact_lock` which are scoped to the transaction.", https://github.com/postgresml/pgcat/blob/4a7a6a8e7a78354b889002a4db118a8e2f2d6d79/README.md#transaction-mode
 - note: README "Transaction mode" section, at the v1.2.0 tag.
+- step 4: `[check (direct)] simple: SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 424242`
+- postgres: `ok rows=[(0)] tags=[1]`
+- pooler: `ok rows=[(1)] tags=[1]`
+- related: https://github.com/pgdogdev/pgdog/issues/1407
+
+### advisory-lock-released-on-disconnect (silent)
+
+A session advisory lock must be released when the client that took it disconnects.
+
+- on supavisor-2.9.13 (pg 17.11), supavisor-2.10.0-rc.1 (pg 17.11), supavisor-2.9.13 (pg 18.4), supavisor-2.10.0-rc.1 (pg 18.4)
+- documented: "Both `transaction` and `session` pool mode behavior for Supavisor is the same as PgBouncer.", https://github.com/supabase/supavisor/blob/b3c0236b57adcf29b4c026866a0456e28d5fd5c4/docs/migrating/pgbouncer.md?plain=1#L5-L6
+- note: Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes): "Session-level advisory locks | Yes | Never", a row of its table "SQL feature map for pooling modes" (Feature, Session pooling, Transaction pooling) with padding collapsed.
 - step 4: `[check (direct)] simple: SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 424242`
 - postgres: `ok rows=[(0)] tags=[1]`
 - pooler: `ok rows=[(1)] tags=[1]`
@@ -3036,6 +2576,17 @@ A WITH HOLD cursor declared by one client must not be visible to another client.
 - on pgbouncer-1.24.1 (pg 17.11), pgbouncer-1.25.2 (pg 17.11), pgbouncer-1.26.1 (pg 17.11), pgbouncer-1.26.1-tls (pg 17.11), pgbouncer-1.24.1 (pg 18.4), pgbouncer-1.25.2 (pg 18.4), pgbouncer-1.26.1 (pg 18.4), pgbouncer-1.26.1-tls (pg 18.4)
 - documented: "WITH HOLD CURSOR | Yes | Never", https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes
 - note: Row of the table "SQL feature map for pooling modes" (columns: Feature, Session pooling, Transaction pooling), with the table's padding spaces collapsed.
+- step 7: `[b] simple: FETCH 1 FROM pp_cur`
+- postgres: `error 34000: cursor "pp_cur" does not exist`
+- pooler: `ok rows=[(1)] tags=[1]`
+
+### cursor-isolated-between-clients (silent)
+
+A WITH HOLD cursor declared by one client must not be visible to another client.
+
+- on supavisor-2.9.13 (pg 17.11), supavisor-2.10.0-rc.1 (pg 17.11), supavisor-2.9.13 (pg 18.4), supavisor-2.10.0-rc.1 (pg 18.4)
+- documented: "Both `transaction` and `session` pool mode behavior for Supavisor is the same as PgBouncer.", https://github.com/supabase/supavisor/blob/b3c0236b57adcf29b4c026866a0456e28d5fd5c4/docs/migrating/pgbouncer.md?plain=1#L5-L6
+- note: Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes): "WITH HOLD CURSOR | Yes | Never", a row of its table "SQL feature map for pooling modes" (Feature, Session pooling, Transaction pooling) with padding collapsed.
 - step 7: `[b] simple: FETCH 1 FROM pp_cur`
 - postgres: `error 34000: cursor "pp_cur" does not exist`
 - pooler: `ok rows=[(1)] tags=[1]`
@@ -3063,6 +2614,18 @@ A client that ran LISTEN must receive NOTIFY messages sent by another client.
 - pooler: `ok rows=[] tags=[]`
 - from https://github.com/pgbouncer/pgbouncer/issues/655
 
+### listen-notify-delivered (silent)
+
+A client that ran LISTEN must receive NOTIFY messages sent by another client.
+
+- on supavisor-2.9.13 (pg 17.11), supavisor-2.10.0-rc.1 (pg 17.11), supavisor-2.9.13 (pg 18.4), supavisor-2.10.0-rc.1 (pg 18.4)
+- documented: "Both `transaction` and `session` pool mode behavior for Supavisor is the same as PgBouncer.", https://github.com/supabase/supavisor/blob/b3c0236b57adcf29b4c026866a0456e28d5fd5c4/docs/migrating/pgbouncer.md?plain=1#L5-L6
+- note: Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes): "LISTEN | Yes | Never", a row of its table "SQL feature map for pooling modes" (Feature, Session pooling, Transaction pooling) with padding collapsed.
+- step 9: `[a] notifications`
+- postgres: `ok rows=[(pp_chan, hello)] tags=[]`
+- pooler: `ok rows=[] tags=[]`
+- related: https://github.com/pgbouncer/pgbouncer/issues/655
+
 ### load-isolated-between-clients (silent)
 
 A library one client loads with LOAD must not show up for another client.
@@ -3070,6 +2633,17 @@ A library one client loads with LOAD must not show up for another client.
 - on pgbouncer-1.24.1 (pg 17.11), pgbouncer-1.25.2 (pg 17.11), pgbouncer-1.26.1 (pg 17.11), pgbouncer-1.26.1-tls (pg 17.11), pgbouncer-1.24.1 (pg 18.4), pgbouncer-1.25.2 (pg 18.4), pgbouncer-1.26.1 (pg 18.4), pgbouncer-1.26.1-tls (pg 18.4)
 - documented: "LOAD statement | Yes | Never", https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes
 - note: Row of the table "SQL feature map for pooling modes" (columns: Feature, Session pooling, Transaction pooling), with the table's padding spaces collapsed.
+- step 8: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
+- postgres: `ok rows=[(NULL)] tags=[1]`
+- pooler: `ok rows=[(-1)] tags=[1]`
+
+### load-isolated-between-clients (silent)
+
+A library one client loads with LOAD must not show up for another client.
+
+- on supavisor-2.9.13 (pg 17.11), supavisor-2.10.0-rc.1 (pg 17.11), supavisor-2.9.13 (pg 18.4), supavisor-2.10.0-rc.1 (pg 18.4)
+- documented: "Both `transaction` and `session` pool mode behavior for Supavisor is the same as PgBouncer.", https://github.com/supabase/supavisor/blob/b3c0236b57adcf29b4c026866a0456e28d5fd5c4/docs/migrating/pgbouncer.md?plain=1#L5-L6
+- note: Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes): "LOAD statement | Yes | Never", a row of its table "SQL feature map for pooling modes" (Feature, Session pooling, Transaction pooling) with padding collapsed.
 - step 8: `[b] simple: SELECT current_setting('auto_explain.log_min_duration', true) AS loaded_for_b`
 - postgres: `ok rows=[(NULL)] tags=[1]`
 - pooler: `ok rows=[(-1)] tags=[1]`
@@ -3151,6 +2725,17 @@ A client's empty search_path must still be empty after another client changed it
 - postgres: `ok rows=[("")] tags=[0]`
 - pooler: `ok rows=[("$user", public)] tags=[0]`
 
+### search-path-isolated-between-clients (silent)
+
+A client's empty search_path must still be empty after another client changed it.
+
+- on supavisor-2.9.13 (pg 17.11), supavisor-2.10.0-rc.1 (pg 17.11), supavisor-2.9.13 (pg 18.4), supavisor-2.10.0-rc.1 (pg 18.4)
+- documented: "Both `transaction` and `session` pool mode behavior for Supavisor is the same as PgBouncer.", https://github.com/supabase/supavisor/blob/b3c0236b57adcf29b4c026866a0456e28d5fd5c4/docs/migrating/pgbouncer.md?plain=1#L5-L6
+- note: Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes): "SET/RESET | Yes | Never", a row of its table "SQL feature map for pooling modes" (Feature, Session pooling, Transaction pooling) with padding collapsed.
+- step 7: `[a] simple: SHOW search_path`
+- postgres: `ok rows=[("")] tags=[0]`
+- pooler: `ok rows=[(public)] tags=[0]`
+
 ### set-does-not-leak-after-disconnect (silent)
 
 Settings from a client that disconnected must not show up for the next client.
@@ -3158,6 +2743,18 @@ Settings from a client that disconnected must not show up for the next client.
 - on pgbouncer-1.24.1 (pg 17.11), pgbouncer-1.25.2 (pg 17.11), pgbouncer-1.26.1 (pg 17.11), pgbouncer-1.26.1-tls (pg 17.11), pgbouncer-1.24.1 (pg 18.4), pgbouncer-1.25.2 (pg 18.4), pgbouncer-1.26.1 (pg 18.4), pgbouncer-1.26.1-tls (pg 18.4)
 - documented: "SET/RESET | Yes | Never", https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes
 - note: Row of the table "SQL feature map for pooling modes" (columns: Feature, Session pooling, Transaction pooling), with the table's padding spaces collapsed.
+- step 8: `[b] simple: SHOW work_mem`
+- postgres: `ok rows=[(4MB)] tags=[0]`
+- pooler: `ok rows=[(7MB)] tags=[0]`
+- related: https://github.com/pgdogdev/pgdog/issues/1850
+
+### set-does-not-leak-after-disconnect (silent)
+
+Settings from a client that disconnected must not show up for the next client.
+
+- on supavisor-2.9.13 (pg 17.11), supavisor-2.10.0-rc.1 (pg 17.11), supavisor-2.9.13 (pg 18.4), supavisor-2.10.0-rc.1 (pg 18.4)
+- documented: "Both `transaction` and `session` pool mode behavior for Supavisor is the same as PgBouncer.", https://github.com/supabase/supavisor/blob/b3c0236b57adcf29b4c026866a0456e28d5fd5c4/docs/migrating/pgbouncer.md?plain=1#L5-L6
+- note: Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes): "SET/RESET | Yes | Never", a row of its table "SQL feature map for pooling modes" (Feature, Session pooling, Transaction pooling) with padding collapsed.
 - step 8: `[b] simple: SHOW work_mem`
 - postgres: `ok rows=[(4MB)] tags=[0]`
 - pooler: `ok rows=[(7MB)] tags=[0]`
@@ -3187,6 +2784,18 @@ A plain SET from one client must not change the setting another client sees.
 - pooler: `ok rows=[(4MB)] tags=[0]`
 - related: https://github.com/pgdogdev/pgdog/issues/1850
 
+### set-isolated-between-clients (silent)
+
+A plain SET from one client must not change the setting another client sees.
+
+- on supavisor-2.9.13 (pg 17.11), supavisor-2.10.0-rc.1 (pg 17.11), supavisor-2.9.13 (pg 18.4), supavisor-2.10.0-rc.1 (pg 18.4)
+- documented: "Both `transaction` and `session` pool mode behavior for Supavisor is the same as PgBouncer.", https://github.com/supabase/supavisor/blob/b3c0236b57adcf29b4c026866a0456e28d5fd5c4/docs/migrating/pgbouncer.md?plain=1#L5-L6
+- note: Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes): "SET/RESET | Yes | Never", a row of its table "SQL feature map for pooling modes" (Feature, Session pooling, Transaction pooling) with padding collapsed.
+- step 7: `[a] simple: SHOW work_mem`
+- postgres: `ok rows=[(7MB)] tags=[0]`
+- pooler: `ok rows=[(9MB)] tags=[0]`
+- related: https://github.com/pgdogdev/pgdog/issues/1850
+
 ### set-role-isolated-between-clients (silent)
 
 SET ROLE from one client must not change the role another client runs as.
@@ -3194,6 +2803,17 @@ SET ROLE from one client must not change the role another client runs as.
 - on pgbouncer-1.24.1 (pg 17.11), pgbouncer-1.25.2 (pg 17.11), pgbouncer-1.26.1 (pg 17.11), pgbouncer-1.26.1-tls (pg 17.11), pgbouncer-1.24.1 (pg 18.4), pgbouncer-1.25.2 (pg 18.4), pgbouncer-1.26.1 (pg 18.4), pgbouncer-1.26.1-tls (pg 18.4)
 - documented: "SET/RESET | Yes | Never", https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes
 - note: Row of the table "SQL feature map for pooling modes" (columns: Feature, Session pooling, Transaction pooling), with the table's padding spaces collapsed. SET ROLE is a SET command.
+- step 7: `[b] simple: SELECT current_user::text`
+- postgres: `ok rows=[(postgres)] tags=[1]`
+- pooler: `ok rows=[(pp_role)] tags=[1]`
+
+### set-role-isolated-between-clients (silent)
+
+SET ROLE from one client must not change the role another client runs as.
+
+- on supavisor-2.9.13 (pg 17.11), supavisor-2.10.0-rc.1 (pg 17.11), supavisor-2.9.13 (pg 18.4), supavisor-2.10.0-rc.1 (pg 18.4)
+- documented: "Both `transaction` and `session` pool mode behavior for Supavisor is the same as PgBouncer.", https://github.com/supabase/supavisor/blob/b3c0236b57adcf29b4c026866a0456e28d5fd5c4/docs/migrating/pgbouncer.md?plain=1#L5-L6
+- note: Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes): "SET/RESET | Yes | Never", a row of its table "SQL feature map for pooling modes" (Feature, Session pooling, Transaction pooling) with padding collapsed. SET ROLE is a SET command.
 - step 7: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
@@ -3210,6 +2830,18 @@ A client that held an advisory lock and ran SET ROLE must not pass its role to t
 - pooler: `ok rows=[(pp_role)] tags=[1]`
 - related: https://github.com/pgdogdev/pgdog/issues/1341
 
+### set-role-reset-after-pinned-disconnect (silent)
+
+A client that held an advisory lock and ran SET ROLE must not pass its role to the next client.
+
+- on supavisor-2.9.13 (pg 17.11), supavisor-2.10.0-rc.1 (pg 17.11), supavisor-2.9.13 (pg 18.4), supavisor-2.10.0-rc.1 (pg 18.4)
+- documented: "Both `transaction` and `session` pool mode behavior for Supavisor is the same as PgBouncer.", https://github.com/supabase/supavisor/blob/b3c0236b57adcf29b4c026866a0456e28d5fd5c4/docs/migrating/pgbouncer.md?plain=1#L5-L6
+- note: Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes): "SET/RESET | Yes | Never", a row of its table "SQL feature map for pooling modes" (Feature, Session pooling, Transaction pooling) with padding collapsed. SET ROLE is a SET command.
+- step 8: `[b] simple: SELECT current_user::text`
+- postgres: `ok rows=[(postgres)] tags=[1]`
+- pooler: `ok rows=[(pp_role)] tags=[1]`
+- related: https://github.com/pgdogdev/pgdog/issues/1341
+
 ### set-role-reset-after-temp-table-disconnect (silent)
 
 A client that created a temp table and ran SET ROLE must not pass its role to the next client.
@@ -3217,6 +2849,18 @@ A client that created a temp table and ran SET ROLE must not pass its role to th
 - on pgbouncer-1.24.1 (pg 17.11), pgbouncer-1.25.2 (pg 17.11), pgbouncer-1.26.1 (pg 17.11), pgbouncer-1.26.1-tls (pg 17.11), pgbouncer-1.24.1 (pg 18.4), pgbouncer-1.25.2 (pg 18.4), pgbouncer-1.26.1 (pg 18.4), pgbouncer-1.26.1-tls (pg 18.4)
 - documented: "SET/RESET | Yes | Never", https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes
 - note: Row of the table "SQL feature map for pooling modes" (columns: Feature, Session pooling, Transaction pooling), with the table's padding spaces collapsed. SET ROLE is a SET command.
+- step 8: `[b] simple: SELECT current_user::text`
+- postgres: `ok rows=[(postgres)] tags=[1]`
+- pooler: `ok rows=[(pp_role)] tags=[1]`
+- related: https://github.com/pgdogdev/pgdog/issues/1341
+
+### set-role-reset-after-temp-table-disconnect (silent)
+
+A client that created a temp table and ran SET ROLE must not pass its role to the next client.
+
+- on supavisor-2.9.13 (pg 17.11), supavisor-2.10.0-rc.1 (pg 17.11), supavisor-2.9.13 (pg 18.4), supavisor-2.10.0-rc.1 (pg 18.4)
+- documented: "Both `transaction` and `session` pool mode behavior for Supavisor is the same as PgBouncer.", https://github.com/supabase/supavisor/blob/b3c0236b57adcf29b4c026866a0456e28d5fd5c4/docs/migrating/pgbouncer.md?plain=1#L5-L6
+- note: Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes): "SET/RESET | Yes | Never", a row of its table "SQL feature map for pooling modes" (Feature, Session pooling, Transaction pooling) with padding collapsed. SET ROLE is a SET command.
 - step 8: `[b] simple: SELECT current_user::text`
 - postgres: `ok rows=[(postgres)] tags=[1]`
 - pooler: `ok rows=[(pp_role)] tags=[1]`
@@ -3244,6 +2888,17 @@ A statement made with SQL PREPARE must be usable by the client that made it, and
 - postgres: `ok rows=[(from a)] tags=[1]`
 - pooler: `error 26000: prepared statement "pp_q" does not exist`
 
+### sql-prepare-isolated-between-clients (silent)
+
+A statement made with SQL PREPARE must be usable by the client that made it, and only by it.
+
+- on supavisor-2.9.13 (pg 17.11), supavisor-2.10.0-rc.1 (pg 17.11), supavisor-2.9.13 (pg 18.4), supavisor-2.10.0-rc.1 (pg 18.4)
+- documented: "Both `transaction` and `session` pool mode behavior for Supavisor is the same as PgBouncer.", https://github.com/supabase/supavisor/blob/b3c0236b57adcf29b4c026866a0456e28d5fd5c4/docs/migrating/pgbouncer.md?plain=1#L5-L6
+- note: Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes): "PREPARE / DEALLOCATE | Yes | Never", a row of its table "SQL feature map for pooling modes" (Feature, Session pooling, Transaction pooling) with padding collapsed.
+- step 7: `[b] simple: EXECUTE pp_q`
+- postgres: `error 26000: prepared statement "pp_q" does not exist`
+- pooler: `ok rows=[(from a)] tags=[1]`
+
 ### temp-table-isolated-between-clients (silent)
 
 A temp table created by one client must not be visible to another client.
@@ -3251,6 +2906,18 @@ A temp table created by one client must not be visible to another client.
 - on pgbouncer-1.24.1 (pg 17.11), pgbouncer-1.25.2 (pg 17.11), pgbouncer-1.26.1 (pg 17.11), pgbouncer-1.26.1-tls (pg 17.11), pgbouncer-1.24.1 (pg 18.4), pgbouncer-1.25.2 (pg 18.4), pgbouncer-1.26.1 (pg 18.4), pgbouncer-1.26.1-tls (pg 18.4)
 - documented: "PRESERVE/DELETE ROWS temp tables | Yes | Never", https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes
 - note: Row of the table "SQL feature map for pooling modes" (columns: Feature, Session pooling, Transaction pooling), with the table's padding spaces collapsed. CREATE TEMP TABLE without ON COMMIT preserves rows.
+- step 7: `[b] simple: SELECT count(*) FROM pp_tmp`
+- postgres: `error 42P01: relation "pp_tmp" does not exist`
+- pooler: `ok rows=[(0)] tags=[1]`
+- related: https://github.com/pgdogdev/pgdog/issues/1733
+
+### temp-table-isolated-between-clients (silent)
+
+A temp table created by one client must not be visible to another client.
+
+- on supavisor-2.9.13 (pg 17.11), supavisor-2.10.0-rc.1 (pg 17.11), supavisor-2.9.13 (pg 18.4), supavisor-2.10.0-rc.1 (pg 18.4)
+- documented: "Both `transaction` and `session` pool mode behavior for Supavisor is the same as PgBouncer.", https://github.com/supabase/supavisor/blob/b3c0236b57adcf29b4c026866a0456e28d5fd5c4/docs/migrating/pgbouncer.md?plain=1#L5-L6
+- note: Supavisor's docs say it behaves as PgBouncer. PgBouncer's feature map (https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes): "PRESERVE/DELETE ROWS temp tables | Yes | Never", a row of its table "SQL feature map for pooling modes" (Feature, Session pooling, Transaction pooling) with padding collapsed. CREATE TEMP TABLE without ON COMMIT preserves rows.
 - step 7: `[b] simple: SELECT count(*) FROM pp_tmp`
 - postgres: `error 42P01: relation "pp_tmp" does not exist`
 - pooler: `ok rows=[(0)] tags=[1]`
