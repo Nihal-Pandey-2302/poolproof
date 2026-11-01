@@ -30,16 +30,17 @@ quote = "SET/RESET | Yes | Never"
 note = "Row of the table \"SQL feature map for pooling modes\" (columns: Feature, Session pooling, Transaction pooling), with the table's padding spaces collapsed."
 
 # With server_reset_query_always the server connection is reset after every transaction,
-# so client a gets the server default back instead of client b's value. Still the SET row.
+# so client a gets the server default back instead of client b's value. PgBouncer's config
+# docs say so for that setting.
 [[limitation]]
 scenario = "set-isolated-between-clients"
 mode = "transaction"
 config = ["reset-always"]
 since = "1.26.1"
 differs = [{ step = 7, pooler = { status = "ok", rows = [["4MB"]], tags = [0] } }]
-doc = "https://github.com/pgbouncer/pgbouncer.github.io/blob/ccb120f859a47fe3a6f3b2120d16194fd11f562f/features.md#sql-feature-map-for-pooling-modes"
-quote = "SET/RESET | Yes | Never"
-note = "Row of the table \"SQL feature map for pooling modes\" (columns: Feature, Session pooling, Transaction pooling), with the table's padding spaces collapsed. With server_reset_query_always the client loses its own SET instead of seeing another client's."
+doc = "https://github.com/pgbouncer/pgbouncer/blob/f03e9bf263d7ccd5d1d152a61811bf3258dd6b87/doc/config.md#server_reset_query_always"
+quote = "This setting is for working around broken setups that run applications that use session features over a transaction-pooled PgBouncer.  It changes non-deterministic breakage to deterministic breakage: Clients always lose their state after each transaction."
+note = "doc/config.md at tag pgbouncer_1_26_1, section server_reset_query_always, second paragraph, with its line breaks joined by spaces (the double space after the first sentence is the doc's). Client a loses its own SET instead of seeing client b's value."
 
 [[limitation]]
 scenario = "set-does-not-leak-after-disconnect"
