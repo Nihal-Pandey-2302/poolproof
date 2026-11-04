@@ -3,13 +3,20 @@
 Binaries for Linux and macOS (x86_64 and arm64) and Windows (x86_64) are on the
 [releases page](https://github.com/Nihal-Pandey-2302/poolproof/releases), with SHA256SUMS
 and a build attestation (`gh attestation verify FILE --repo Nihal-Pandey-2302/poolproof`).
-To build it yourself (it isn't on crates.io yet):
+From crates.io, as the release binary or built from source:
 
 ```sh
-cargo install --locked --git https://github.com/Nihal-Pandey-2302/poolproof --tag v0.1.0 poolproof
+cargo binstall poolproof          # downloads the release binary
+cargo install --locked poolproof  # builds it
 ```
 
-Leave out `--tag v0.1.0` for the code on main. The last `poolproof` picks the package,
+Or build a tag, or main, from git:
+
+```sh
+cargo install --locked --git https://github.com/Nihal-Pandey-2302/poolproof --tag v0.1.1 poolproof
+```
+
+Leave out `--tag v0.1.1` for the code on main. The last `poolproof` picks the package,
 since the repository holds other, internal ones, and `--locked` builds with the
 dependency versions in Cargo.lock, the ones CI tests. Building needs Rust 1.88 or newer,
 a C compiler and libclang, since poolproof uses the Postgres parser (C, through bindgen):

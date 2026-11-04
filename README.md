@@ -56,10 +56,11 @@ Every cell with its step-by-step trace is on the
 Binaries for Linux and macOS (x86_64 and arm64) and Windows (x86_64) are on the
 [releases page](https://github.com/Nihal-Pandey-2302/poolproof/releases), with SHA256SUMS
 and a build attestation (`gh attestation verify FILE --repo Nihal-Pandey-2302/poolproof`).
-To build it yourself (it isn't on crates.io yet):
+From crates.io, as the release binary or built from source:
 
 ```sh
-cargo install --locked --git https://github.com/Nihal-Pandey-2302/poolproof --tag v0.1.0 poolproof
+cargo binstall poolproof          # downloads the release binary
+cargo install --locked poolproof  # builds it
 ```
 
 Building needs Rust 1.88 or newer, a C compiler and libclang:
@@ -134,7 +135,7 @@ The repository is also a GitHub Action. It downloads the release binary, checks 
 against SHA256SUMS and its build attestation, and runs `scan` or `run`:
 
 ```yaml
-- uses: Nihal-Pandey-2302/poolproof@v0.1.0
+- uses: Nihal-Pandey-2302/poolproof@v0.1.1
   with:
     command: scan
     args: migrations/all.sql
