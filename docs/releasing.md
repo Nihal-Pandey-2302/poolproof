@@ -3,8 +3,8 @@
 ## Once (repository admin)
 
 These are repository and crates.io settings, so only a repository admin can do them.
-Steps 1 and 2 come before the first release. v0.1.0 was released on GitHub only, without
-crates.io, so steps 3 to 8 still wait for the first release that goes to crates.io.
+Steps 1 and 2 come before the first release. v0.1.0 was released on GitHub only; steps 3
+to 8 came with v0.1.1, the first release on crates.io.
 
 1. Done: the repository is public, and GitHub Pages is enabled with GitHub Actions as
    the source. The `pages` job in `ci.yml` deploys the results site on every push to
@@ -46,8 +46,8 @@ creates the GitHub release, nothing more.
 ## Every release
 
 1. Move the `Unreleased` entries in CHANGELOG.md under the new version and date. Pick the
-   version by the policy in CHANGELOG.md. Change the `--tag` in the install command in
-   README.md and docs/install.md to the new version.
+   version by the policy in CHANGELOG.md. Change the `--tag` in the git install command in
+   docs/install.md to the new version.
 2. Bump `version` in Cargo.toml, run `cargo check` so Cargo.lock follows, commit
    "Release vX.Y.Z", push, and wait for CI to be green on main.
 3. Tag and push the tag:
@@ -65,7 +65,7 @@ creates the GitHub release, nothing more.
    ```sh
    gh release download vX.Y.Z --repo Nihal-Pandey-2302/poolproof -p 'poolproof-x86_64-unknown-linux-gnu.tar.gz'
    gh attestation verify poolproof-x86_64-unknown-linux-gnu.tar.gz --repo Nihal-Pandey-2302/poolproof
-   cargo binstall poolproof   # once the crate is on crates.io
+   cargo binstall poolproof
    ```
 
    Then the action's download path, which CI can't test before a release exists: in

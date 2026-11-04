@@ -38,6 +38,11 @@ a verdict, new `scan` rules, and new pooler versions in the published results.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-04
+
+The first release on crates.io: `cargo install --locked poolproof` and
+`cargo binstall poolproof` work from this version on.
+
 ### Added
 
 - Documented limitations also mark the variant configs where the doc holds: the pool of
@@ -377,5 +382,6 @@ First release.
   `rel="noopener noreferrer"`, and the page has a Content-Security-Policy that allows only
   its own inline script and style (by hash).
 
-[Unreleased]: https://github.com/Nihal-Pandey-2302/poolproof/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Nihal-Pandey-2302/poolproof/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/Nihal-Pandey-2302/poolproof/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Nihal-Pandey-2302/poolproof/releases/tag/v0.1.0

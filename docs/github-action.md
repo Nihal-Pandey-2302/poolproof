@@ -13,7 +13,7 @@ permissions:
 
 steps:
   - uses: actions/checkout@v7
-  - uses: Nihal-Pandey-2302/poolproof@v0.1.0
+  - uses: Nihal-Pandey-2302/poolproof@v0.1.1
     with:
       command: scan
       args: migrations/all.sql
@@ -24,7 +24,7 @@ steps:
 `docker compose up --wait`). The results table goes to the job summary:
 
 ```yaml
-  - uses: Nihal-Pandey-2302/poolproof@v0.1.0
+  - uses: Nihal-Pandey-2302/poolproof@v0.1.1
     with:
       command: run
       args: |
