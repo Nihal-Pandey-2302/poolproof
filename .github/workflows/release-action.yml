@@ -29,7 +29,7 @@ jobs:
       - run: printf 'SELECT 1;\n' > queries.sql
       # Bump with every release; the latest-release check below fails until then.
       - id: scan
-        uses: Nihal-Pandey-2302/poolproof@v0.1.0
+        uses: Nihal-Pandey-2302/poolproof@v0.1.1
         # gh only says "Verification succeeded" on a terminal; this makes it say so in
         # the log too, so the log job can tell the attestation check passed.
         env:
@@ -52,7 +52,7 @@ jobs:
       contents: read
     env:
       GH_TOKEN: ${{ github.token }}
-      PINNED: v0.1.0
+      PINNED: v0.1.1
     steps:
       - run: |
           set -euo pipefail
